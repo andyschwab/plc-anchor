@@ -1,0 +1,21 @@
+[package]
+name = "plc_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# On-chain contracts (REFERENCE.md §3, components 2–3). STUB scaffolding; built after
+# the DRISL keystone is green. Depends on the `drisl` library for CID/encoding.
+[dependencies]
+starknet.workspace = true
+drisl = { path = "../drisl" }
+
+[dev-dependencies]
+snforge_std.workspace = true
+assert_macros.workspace = true
+
+[[target.starknet-contract]]
+sierra = true
+
+[tool.scarb]
+allow-prebuilt-plugins = ["snforge_std"]

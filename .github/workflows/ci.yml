@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Path filters so unrelated changes skip expensive jobs. Other jobs gate on these.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      cairo: ${{ steps.filter.outputs.cairo }}
+      rust: ${{ steps.filter.outputs.rust }}
+      ts: ${{ steps.filter.outputs.ts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            cairo:
+              - 'cairo/**'
+              - 'conformance/vectors/**'
+              - '.github/workflows/ci.yml'
+            rust:
+              - 'ingest/**'
+              - 'oracle/**'
+              - 'Cargo.*'
+              - 'rust-toolchain.toml'
+            ts:
+              - 'conformance/**'
+
+  cairo:
+    needs: changes
+    if: ${{ needs.changes.outputs.cairo == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: software-mansion/setup-scarb@v1
+        with:
+          scarb-version: "2.18.0"
+      - uses: foundry-rs/setup-snfoundry@v3
+        with:
+          starknet-foundry-version: "0.61.0"
+      - run: cd cairo && scarb fmt --check
+      - run: cd cairo && scarb build
+      - run: cd cairo && snforge test
+
+  rust:
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.96.0"
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo test --workspace
+
+  ts:
+    needs: changes
+    if: ${{ needs.changes.outputs.ts == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node conformance/src/check.mjs
+
+  # The consensus gate: three-way DRISL/CID agreement. Required for merge once DRISL lands.
+  differential:
+    needs: [cairo, rust, ts]
+    if: ${{ !cancelled() && needs.cairo.result != 'failure' && needs.rust.result != 'failure' && needs.ts.result != 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: software-mansion/setup-scarb@v1
+        with:
+          scarb-version: "2.18.0"
+      - uses: foundry-rs/setup-snfoundry@v3
+        with:
+          starknet-foundry-version: "0.61.0"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.96.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd cairo && snforge test --package drisl
+      - run: cargo run -q -p oracle
+      - run: node conformance/src/check.mjs

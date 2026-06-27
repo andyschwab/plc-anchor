@@ -1,0 +1,5 @@
+# Pin the Rust toolchain for the Cargo workspace (ingest / oracle).
+# Bump deliberately alongside Cargo.lock.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]

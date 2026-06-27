@@ -1,0 +1,20 @@
+[package]
+name = "ingest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Firehose sync indexer (REFERENCE.md §3, component 4). STUB.
+# Consumes wss://plc.directory/export/stream (or a Eurosky/microcosm mirror) using
+# sequence-number cursors and, for anchored DIDs, submits deltas to the anchor endpoint.
+# Where ongoing update cost lives and is allocated. When built, add: tokio,
+# tokio-tungstenite, reqwest, starknet (submission), serde.
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "ingest"
+path = "src/main.rs"
