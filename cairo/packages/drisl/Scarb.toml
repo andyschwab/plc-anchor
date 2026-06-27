@@ -1,0 +1,17 @@
+[package]
+name = "drisl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The keystone library (REFERENCE.md §3, §5): DRISL / dCBOR42 canonical encoding
+# + DASL CID derivation. Consensus-critical; acceptance test is the vendored
+# conformance suite under ../../../conformance/vectors (see tests/).
+[dependencies]
+
+[dev-dependencies]
+snforge_std.workspace = true
+assert_macros.workspace = true
+
+[tool.scarb]
+allow-prebuilt-plugins = ["snforge_std"]

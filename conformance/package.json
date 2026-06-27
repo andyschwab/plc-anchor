@@ -1,0 +1,13 @@
+{
+  "name": "@plc-anchor/conformance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Differential harness: authoritative TS oracle (@did-plc/lib, @atcute/cbor) + vendored DASL vectors",
+  "scripts": {
+    "check": "node src/check.mjs",
+    "test": "node src/check.mjs"
+  },
+  "comment": "Deps pinned deliberately — they are the differential AUTHORITY. Add when wiring op-verify: \"@did-plc/lib\", \"@atcute/cbor\". Bump intentionally.",
+  "dependencies": {}
+}
