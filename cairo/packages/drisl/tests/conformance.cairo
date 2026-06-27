@@ -1,16 +1,34 @@
-//! DASL conformance acceptance test (REFERENCE.md §3, §5).
+//! DASL / dCBOR42 conformance — the keystone acceptance gate (REFERENCE.md §3, §5).
 //!
-//! The real version reads the vendored vectors under ../../../../conformance/vectors
-//! (dasl-cbor fixtures) and asserts the Cairo encoder/CID match byte-for-byte.
-//! Getting this green is the precondition for everything downstream.
-//!
-//! STUB until the DRISL encoder lands. Kept as a compiling placeholder so the test
-//! target and CI wiring exist from day one.
+//! Drives the codec over every in-scope vector (generated from conformance/vectors by
+//! `make gen-vectors`). The contract per case:
+//!   - `roundtrip`  : decode succeeds AND encode(decode(x)) == x  (canonical form preserved).
+//!   - `invalid_in` : decode rejects the bytes (non-canonical / out-of-subset).
+//!   - `invalid_out`: decode also rejects — every forbidden-to-emit value (NaN, Inf,
+//!                    undefined, datetime, bignum, integer map key) is unrepresentable in
+//!                    `Value` and additionally refused on decode, so it can never be encoded.
 
-use drisl::drisl::encode_placeholder;
+use drisl::drisl::{decode, encode};
+use super::common::from_hex;
+use super::vectors_generated::vectors;
 
 #[test]
-fn placeholder_roundtrip() {
-    let input: ByteArray = "plc-anchor";
-    assert(encode_placeholder(input.clone()) == input, 'placeholder failed');
+fn dasl_conformance() {
+    let cases = vectors();
+    let mut i = 0;
+    while i < cases.len() {
+        let (expected, hex) = cases.at(i);
+        let bytes = from_hex(hex);
+        match decode(@bytes) {
+            Result::Ok(value) => {
+                assert!(*expected == 'roundtrip', "case {}: decoded a non-roundtrip vector", i);
+                let reencoded = encode(@value);
+                assert!(reencoded == bytes, "case {}: re-encoding is not canonical", i);
+            },
+            Result::Err(_) => {
+                assert!(*expected != 'roundtrip', "case {}: rejected a valid roundtrip vector", i);
+            },
+        }
+        i += 1;
+    }
 }

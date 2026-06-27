@@ -4,8 +4,9 @@
 //! THE KEYSTONE (REFERENCE.md §3, component 1). Everything composes around this module
 //! and it is consensus-critical: any divergence from the reference encoders is a fork.
 //!
-//! Status: STUB. Implementation is gated on the conformance harness being wired
-//! (see ../../../conformance) and is the long pole of the build order (§3).
+//! Acceptance is the vendored DASL conformance suite (see ../../../conformance): the
+//! `drisl` module is the codec, `cid` is CID validation/derivation. Green against the
+//! in-scope dag-cbor/DASL-CID vectors (`tests/`).
 //!
 //! Blessed set (do not widen without a governance decision — REFERENCE.md §5):
 //!   - CIDv1 only

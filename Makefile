@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup cairo-build cairo-test rust-build rust-test conformance fmt ci clean
+.PHONY: help setup gen-vectors gen-vectors-check cairo-build cairo-test rust-build rust-test conformance fmt ci clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -16,6 +16,18 @@ setup: ## Install/refresh toolchain deps (asdf tools, cargo, npm)
 	@command -v asdf >/dev/null && asdf install || echo "asdf not found — see CLAUDE.md install notes"
 	cargo fetch
 	@echo "setup: toolchains ready (restart shell if asdf shims were just added)"
+
+# ---- Conformance codegen -----------------------------------------------------
+# The Cairo VM has no filesystem at test time, so the DASL vectors are compiled into a
+# generated Cairo table. The JSON under conformance/vectors stays the source of truth; the
+# table is committed (so `scarb test` is self-contained) and `scarb fmt`-normalized so it
+# is both drift-checkable and fmt-clean. Run this whenever the vectors change.
+gen-vectors: ## Regenerate + format the Cairo conformance table from conformance/vectors
+	node conformance/src/gen-cairo-vectors.mjs
+	cd cairo && scarb fmt
+
+gen-vectors-check: gen-vectors ## Fail if the generated table drifted from the JSON (CI gate)
+	git diff --exit-code -- cairo/packages/drisl/tests/vectors_generated.cairo
 
 # ---- Cairo (Scarb workspace) -------------------------------------------------
 cairo-build: ## Build the Cairo workspace (drisl, plc_core)
@@ -44,7 +56,7 @@ fmt: ## Format Rust + Cairo
 	cargo fmt
 	cd cairo && scarb fmt
 
-ci: cairo-build cairo-test rust-test conformance ## Everything CI runs
+ci: gen-vectors-check cairo-build cairo-test rust-test conformance ## Everything CI runs
 
 clean: ## Remove build artifacts
 	cargo clean

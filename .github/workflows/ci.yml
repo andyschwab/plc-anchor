@@ -29,6 +29,7 @@ jobs:
             cairo:
               - 'cairo/**'
               - 'conformance/vectors/**'
+              - 'conformance/src/gen-cairo-vectors.mjs'
               - '.github/workflows/ci.yml'
             rust:
               - 'ingest/**'
@@ -50,9 +51,18 @@ jobs:
       - uses: foundry-rs/setup-snfoundry@v3
         with:
           starknet-foundry-version: "0.61.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: cd cairo && scarb fmt --check
       - run: cd cairo && scarb build
       - run: cd cairo && snforge test
+      # The generated conformance table must match the vendored JSON (no hand-edits):
+      # regenerate + format and assert the committed file is unchanged. Run last so it
+      # does not dirty the tree before fmt --check.
+      - run: node conformance/src/gen-cairo-vectors.mjs
+      - run: cd cairo && scarb fmt
+      - run: git diff --exit-code -- cairo/packages/drisl/tests/vectors_generated.cairo
 
   rust:
     needs: changes

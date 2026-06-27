@@ -65,12 +65,12 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 
 ## Build order & status (REFERENCE.md §3)
 
-1. ⏳ **DRISL + DASL CID in Cairo**, green against the conformance suite. *Long pole; next.*
-2. PLC op verification + 72h recovery state machine (differential vs `@did-plc/lib`).
+1. ✅ **DRISL + DASL CID in Cairo**, green against the conformance suite (`cairo/packages/drisl`).
+2. ⏳ **PLC op verification + 72h recovery state machine** (differential vs `@did-plc/lib`). *Next.*
 3. State commitment + confirmed/tentative roots + the permissionless `import`/`submit_op`
    endpoint (native-AA authorization).
 4. Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.
 5. Resolver verification library (the adoption surface).
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
-**Current phase: bootstrap done → 1 (keystone).**
+**Current phase: 1 (keystone) done → 2 (op verification + recovery).**
