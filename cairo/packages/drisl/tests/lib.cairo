@@ -6,4 +6,6 @@ mod cid;
 mod codec;
 mod common;
 mod conformance;
+mod plc_ops;
+mod plc_vectors_generated;
 mod vectors_generated;

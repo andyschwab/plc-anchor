@@ -30,6 +30,7 @@ jobs:
               - 'cairo/**'
               - 'conformance/vectors/**'
               - 'conformance/src/gen-cairo-vectors.mjs'
+              - 'conformance/src/gen-plc-vectors.mjs'
               - '.github/workflows/ci.yml'
             rust:
               - 'ingest/**'
@@ -57,12 +58,13 @@ jobs:
       - run: cd cairo && scarb fmt --check
       - run: cd cairo && scarb build
       - run: cd cairo && snforge test
-      # The generated conformance table must match the vendored JSON (no hand-edits):
-      # regenerate + format and assert the committed file is unchanged. Run last so it
-      # does not dirty the tree before fmt --check.
+      # Drift checks: generated Cairo tables must match their JSON sources.
+      # Run last so they do not dirty the tree before fmt --check.
+      - run: npm --prefix conformance ci
       - run: node conformance/src/gen-cairo-vectors.mjs
+      - run: node conformance/src/gen-plc-vectors.mjs
       - run: cd cairo && scarb fmt
-      - run: git diff --exit-code -- cairo/packages/drisl/tests/vectors_generated.cairo
+      - run: git diff --exit-code -- cairo/packages/drisl/tests/vectors_generated.cairo cairo/packages/drisl/tests/plc_vectors_generated.cairo
 
   rust:
     needs: changes
@@ -87,6 +89,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - run: npm --prefix conformance ci
       - run: node conformance/src/check.mjs
 
   # The consensus gate: three-way DRISL/CID agreement. Required for merge once DRISL lands.
@@ -108,6 +111,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - run: npm --prefix conformance ci
       - run: cd cairo && snforge test --package drisl
       - run: cargo run -q -p oracle
       - run: node conformance/src/check.mjs

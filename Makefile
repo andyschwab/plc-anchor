@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check cairo-build cairo-test rust-build rust-test conformance fmt ci clean
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check cairo-build cairo-test rust-build rust-test conformance fmt ci clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -28,6 +28,16 @@ gen-vectors: ## Regenerate + format the Cairo conformance table from conformance
 
 gen-vectors-check: gen-vectors ## Fail if the generated table drifted from the JSON (CI gate)
 	git diff --exit-code -- cairo/packages/drisl/tests/vectors_generated.cairo
+
+gen-plc-corpus: ## (Re)generate PLC-op corpus from @did-plc/lib; commit the result
+	cd conformance && node src/gen-plc-corpus.mjs
+
+gen-plc-vectors: ## Re-validate corpus and regenerate the Cairo PLC-op vector table
+	cd conformance && node src/gen-plc-vectors.mjs
+	cd cairo && scarb fmt
+
+gen-plc-vectors-check: gen-plc-vectors ## Fail if the Cairo PLC-op vector table drifted (CI gate)
+	git diff --exit-code -- cairo/packages/drisl/tests/plc_vectors_generated.cairo
 
 # ---- Cairo (Scarb workspace) -------------------------------------------------
 cairo-build: ## Build the Cairo workspace (drisl, plc_core)
@@ -56,7 +66,7 @@ fmt: ## Format Rust + Cairo
 	cargo fmt
 	cd cairo && scarb fmt
 
-ci: gen-vectors-check cairo-build cairo-test rust-test conformance ## Everything CI runs
+ci: gen-vectors-check gen-plc-vectors-check cairo-build cairo-test rust-test conformance ## Everything CI runs
 
 clean: ## Remove build artifacts
 	cargo clean

@@ -3,11 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Differential harness: authoritative TS oracle (@did-plc/lib, @atcute/cbor) + vendored DASL vectors",
+  "description": "Differential harness: authoritative TS oracle (@did-plc/lib, @ipld/dag-cbor) + vendored DASL vectors + PLC-op corpus",
   "scripts": {
     "check": "node src/check.mjs",
-    "test": "node src/check.mjs"
+    "test": "node src/check.mjs",
+    "gen-plc-corpus": "node src/gen-plc-corpus.mjs",
+    "gen-plc-vectors": "node src/gen-plc-vectors.mjs"
   },
-  "comment": "Deps pinned deliberately — they are the differential AUTHORITY. Add when wiring op-verify: \"@did-plc/lib\", \"@atcute/cbor\". Bump intentionally.",
-  "dependencies": {}
+  "dependencies": {
+    "@did-plc/lib": "^0.0.4",
+    "@ipld/dag-cbor": "^10.0.1",
+    "multiformats": "^14.0.2"
+  }
 }
