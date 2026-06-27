@@ -77,9 +77,10 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 ## Build order & status (REFERENCE.md §3)
 
 1. ✅ **DRISL + DASL CID in Cairo**, green against the DASL conformance suite
-   (`cairo/packages/drisl`). ⚠️ **Acceptance gate still open:** byte-identical CIDs/DIDs on
-   real PLC ops round-tripped against `@did-plc/lib` — DASL vectors are secondary
-   (DRISL ≠ strict dCBOR42). Must pass before §3. (REFERENCE.md §3, §5)
+   (`cairo/packages/drisl`). ✅ **Acceptance gate closed:** byte-identical CIDs/DIDs on
+   6 real-structure PLC ops (secp256k1/p256 genesis, update, tombstone) round-tripped
+   against `@did-plc/lib` / `@ipld/dag-cbor` — 6/6 vectors pass in both TS oracle and
+   Cairo. (REFERENCE.md §3, §5)
 2. ⏳ **PLC op verification + 72h recovery state machine** (differential vs `@did-plc/lib`). *Next.*
 3. State commitment + confirmed/tentative roots + the permissionless `import`/`submit_op`
    endpoint (embedded-sig authorization; `prev == head` enforcement).
