@@ -41,18 +41,29 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 ## Do NOT relitigate (settled — see the cited REFERENCE.md sections)
 
 - **The approach:** per-DID, lazy, on-chain verification via a permissionless endpoint; no
-  bulk genesis replay; no in-protocol membership; public Starknet first (appchain deferred). (§2)
+  bulk genesis replay; no in-protocol membership; public Starknet first. (§2)
+- **Appchain timing is an open question** — depends on whether public Starknet's L1→L2
+  forced-inclusion guarantee is strong enough for CR. Resolve before §3 settlement wiring.
+  Do not treat "appchain deferred" as settled. (§6a)
 - **Crypto is a corelib library call** — `sha256`/`secp256k1`/`secp256r1` syscalls, because
   verification runs in a contract. No pure-Cairo crypto, no Garaga unless an exotic curve
   appears. (§8)
 - **Blessed CID set only:** CIDv1, sha2-256 (0x12, 32B), dag-cbor (0x71) / raw (0x55),
   dCBOR42 canonical. Reject everything else. (§5)
+- **Map key ordering:** implement CBOR-encoded-bytewise ordering (RFC 8949 §4.2.1), not a
+  content-length sort. They coincide for PLC today (all keys < 24 bytes) but the
+  encoded-bytewise rule is what must be in code — a content-length sort forks at ≥24B. (§5)
+- **Signed vs unsigned — do not conflate:** DID/CID derivation hashes the *signed* op (sig
+  field included); signature verification is over the *unsigned* op (sig removed, then
+  DRISL-encoded). Two distinct byte strings; conflating them fails every check. (§5)
 - **Two-tier roots:** confirmed (past 72h, immutable) vs tentative tip. (§4)
 - **Recovery:** lower-index rotation key nullifies within 72h. (§5)
-- **Native AA:** the user's PLC rotation key is the Starknet signer; paymasters allocate
-  commitment cost. (§2)
-- **Membership = off-chain policy** over the permissionless endpoint (Layer 2). (§2, §6)
-- **Frozen core scoped narrowly**, freeze on a maturity gate not a calendar. (§6)
+- **Authorization = the op's embedded signature, verified in-contract.** The Starknet
+  transaction signer / fee payer is irrelevant and may be anyone — that is the
+  permissionless property. Native AA + paymasters are for gas/UX only, never authorization.
+  Do not require the PLC key to be the Starknet account signer. (§2)
+- **Membership = off-chain policy** over the permissionless endpoint (Layer 2). (§2, §6b)
+- **Frozen core scoped narrowly**, freeze on a maturity gate not a calendar. (§6b)
 
 ## Guardrails
 
@@ -65,10 +76,13 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 
 ## Build order & status (REFERENCE.md §3)
 
-1. ✅ **DRISL + DASL CID in Cairo**, green against the conformance suite (`cairo/packages/drisl`).
+1. ✅ **DRISL + DASL CID in Cairo**, green against the DASL conformance suite
+   (`cairo/packages/drisl`). ⚠️ **Acceptance gate still open:** byte-identical CIDs/DIDs on
+   real PLC ops round-tripped against `@did-plc/lib` — DASL vectors are secondary
+   (DRISL ≠ strict dCBOR42). Must pass before §3. (REFERENCE.md §3, §5)
 2. ⏳ **PLC op verification + 72h recovery state machine** (differential vs `@did-plc/lib`). *Next.*
 3. State commitment + confirmed/tentative roots + the permissionless `import`/`submit_op`
-   endpoint (native-AA authorization).
+   endpoint (embedded-sig authorization; `prev == head` enforcement).
 4. Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.
 5. Resolver verification library (the adoption surface).
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
