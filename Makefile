@@ -43,8 +43,8 @@ gen-plc-vectors-check: gen-plc-vectors ## Fail if the Cairo PLC-op vector table 
 cairo-build: ## Build the Cairo workspace (drisl, plc_core)
 	cd cairo && scarb build
 
-cairo-test: ## Run snforge tests (incl. DASL conformance fixtures; reports gas)
-	cd cairo && snforge test
+cairo-test: ## Run Cairo tests (drisl conformance + plc_core op_verify gate; reports gas estimates)
+	cd cairo && scarb cairo-test
 
 # ---- Rust (Cargo workspace) --------------------------------------------------
 rust-build: ## Build the Rust workspace (ingest, oracle)
@@ -57,7 +57,7 @@ rust-test: ## Test + lint the Rust workspace
 
 # ---- Conformance / differential harness --------------------------------------
 conformance: ## Three-way DRISL/CID agreement (Cairo vs Rust oracle vs TS sidecar)
-	cd cairo && snforge test --package drisl
+	cd cairo && scarb cairo-test --package drisl
 	cargo run -q -p oracle
 	node conformance/src/check.mjs
 

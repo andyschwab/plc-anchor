@@ -1,8 +1,3 @@
-# Scarb workspace for the on-chain / in-circuit Cairo.
-#
-# Package split mirrors the REFERENCE.md §6 governance seam: `drisl` is a reusable
-# library (the keystone — DRISL/dCBOR42 encoding + DASL CID) and `plc_core` holds the
-# contracts that compose around it (op verification, recovery, state, the anchor endpoint).
 [workspace]
 members = ["packages/drisl", "packages/plc_core"]
 
@@ -12,15 +7,10 @@ edition = "2024_07"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-# Pinned deliberately; bump alongside the toolchain in .tool-versions. Crypto
-# (sha256/secp256k1/secp256r1) comes from the corelib syscalls — contracts, not
-# standalone executables — so no extra crypto deps are needed here.
 starknet = "2.18.0"
-snforge_std = "0.61.0"
 assert_macros = "2.18.0"
+cairo_test = "2.18.0"
 
 [workspace.scripts]
-test = "snforge test"
+test = "cairo-test"
 
-[workspace.tool.scarb]
-allow-prebuilt-plugins = ["snforge_std"]

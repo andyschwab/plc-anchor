@@ -11,11 +11,8 @@ starknet.workspace = true
 drisl = { path = "../drisl" }
 
 [dev-dependencies]
-snforge_std.workspace = true
+cairo_test.workspace = true
 assert_macros.workspace = true
 
 [[target.starknet-contract]]
 sierra = true
-
-[tool.scarb]
-allow-prebuilt-plugins = ["snforge_std"]

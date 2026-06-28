@@ -12,6 +12,7 @@ import { encode } from "@ipld/dag-cbor";
 import { CID } from "multiformats";
 import { sha256 } from "multiformats/hashes/sha2";
 import { base32 } from "multiformats/bases/base32";
+import { assureValidSig } from "@did-plc/lib";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -79,4 +80,24 @@ for (const e of corpus) {
 }
 console.log(
   `conformance(ts) phase 2: ${passed}/${corpus.length} PLC-op fixtures validated (CID + DID agreement with @ipld/dag-cbor)`,
+);
+
+// ── Phase 3: PLC-op signature validation ─────────────────────────────────────
+// Uses @did-plc/lib assureValidSig to verify each corpus op's signature against
+// the known signer (the differential oracle for Phase 2 / op_verify).
+let sigPassed = 0;
+for (const e of corpus) {
+  // For plc_operation/create ops, rotationKeys is in the op. For tombstone, use
+  // signer_did_key from the corpus (tombstone has no rotationKeys field).
+  const allowedDids = e.operation.rotationKeys ?? [e.signer_did_key];
+  const signerDid = await assureValidSig(allowedDids, e.operation);
+  if (!allowedDids.includes(signerDid)) {
+    throw new Error(
+      `[${e.label}] assureValidSig returned unexpected signer: ${signerDid}`,
+    );
+  }
+  sigPassed += 1;
+}
+console.log(
+  `conformance(ts) phase 3: ${sigPassed}/${corpus.length} PLC-op signatures validated (@did-plc/lib)`,
 );
