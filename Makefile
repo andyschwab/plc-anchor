@@ -6,7 +6,13 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check cairo-build cairo-test rust-build rust-test conformance fmt ci clean
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check cairo-build cairo-test rust-build rust-test conformance fmt ci clean test-backend test-snforge test-offline
+
+# Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
+# (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
+# `snforge`. CAIRO_TEST auto-detects the runner from the active manifest so the
+# `cairo-test`/`conformance` targets work under either backend, unchanged.
+CAIRO_TEST := $(shell grep -q '^snforge_std' cairo/Scarb.toml && echo 'snforge test' || echo 'scarb cairo-test')
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -44,7 +50,16 @@ cairo-build: ## Build the Cairo workspace (drisl, plc_core)
 	cd cairo && scarb build
 
 cairo-test: ## Run Cairo tests (drisl conformance + plc_core op_verify gate; reports gas estimates)
-	cd cairo && scarb cairo-test
+	cd cairo && $(CAIRO_TEST)
+
+test-offline: ## Switch the Cairo test backend to `cairo-test` (offline; no registry)
+	cairo/scripts/test-backend.sh offline
+
+test-snforge: ## Switch the Cairo test backend to real `snforge` (needs network)
+	cairo/scripts/test-backend.sh snforge
+
+test-backend: ## Show which Cairo test backend is active
+	@cairo/scripts/test-backend.sh status
 
 # ---- Rust (Cargo workspace) --------------------------------------------------
 rust-build: ## Build the Rust workspace (ingest, oracle)
@@ -57,7 +72,7 @@ rust-test: ## Test + lint the Rust workspace
 
 # ---- Conformance / differential harness --------------------------------------
 conformance: ## Three-way DRISL/CID agreement (Cairo vs Rust oracle vs TS sidecar)
-	cd cairo && scarb cairo-test --package drisl
+	cd cairo && $(CAIRO_TEST) --package drisl
 	cargo run -q -p oracle
 	node conformance/src/check.mjs
 

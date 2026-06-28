@@ -57,7 +57,9 @@ jobs:
           node-version: "22"
       - run: cd cairo && scarb fmt --check
       - run: cd cairo && scarb build
-      - run: cd cairo && snforge test
+      # Runner tracks the committed test backend (cairo/TESTING.md): `make cairo-test`
+      # auto-detects `scarb cairo-test` (offline default) vs `snforge test`.
+      - run: make cairo-test
       # Drift checks: generated Cairo tables must match their JSON sources.
       # Run last so they do not dirty the tree before fmt --check.
       - run: npm --prefix conformance ci
@@ -112,6 +114,7 @@ jobs:
         with:
           node-version: "22"
       - run: npm --prefix conformance ci
-      - run: cd cairo && snforge test --package drisl
+      # Backend per cairo/TESTING.md; matches the committed default (offline `cairo-test`).
+      - run: cd cairo && scarb cairo-test --package drisl
       - run: cargo run -q -p oracle
       - run: node conformance/src/check.mjs

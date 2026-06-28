@@ -35,12 +35,11 @@ fn op_verify_unsigned_bytes_match() {
         let signed_bytes = from_hex(v.signed_drisl_hex);
         let expected_unsigned = from_hex(v.unsigned_drisl_hex);
 
-        let result: Result<(ByteArray, ByteArray), felt252> =
-            extract_sig_and_unsigned_bytes(@signed_bytes);
-        let (_, unsigned_bytes) = result.expect('extract failed');
-        assert!(
-            unsigned_bytes == expected_unsigned, "vector {}: unsigned bytes mismatch", i,
+        let result: Result<(ByteArray, ByteArray), felt252> = extract_sig_and_unsigned_bytes(
+            @signed_bytes,
         );
+        let (_, unsigned_bytes) = result.expect('extract failed');
+        assert!(unsigned_bytes == expected_unsigned, "vector {}: unsigned bytes mismatch", i);
         i += 1;
     }
 }

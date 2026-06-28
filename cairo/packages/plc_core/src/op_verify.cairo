@@ -10,7 +10,6 @@
 //!   - `sig` is always the first map key in canonical CBOR (len 3 < all other PLC keys).
 
 use core::sha256::compute_sha256_byte_array;
-
 use super::key_parse::parse_did_key;
 use super::sig_verify::verify_ecdsa;
 
@@ -20,9 +19,7 @@ use super::sig_verify::verify_ecdsa;
 /// `signer_key_str` - did:key string of the expected signer
 ///
 /// Returns Ok(()) if the signature is valid, Err on any failure.
-pub fn verify_op_sig(
-    signed_bytes: @ByteArray, signer_key_str: @ByteArray,
-) -> Result<(), felt252> {
+pub fn verify_op_sig(signed_bytes: @ByteArray, signer_key_str: @ByteArray) -> Result<(), felt252> {
     // 1. Extract the base64url sig string and the unsigned DRISL bytes.
     let (sig_b64, unsigned_bytes) = extract_sig_and_unsigned_bytes(signed_bytes)?;
 
@@ -83,7 +80,7 @@ pub fn extract_sig_and_unsigned_bytes(
     Result::Ok((sig_b64, out))
 }
 
-// ── Minimal CBOR helpers (only what op_verify needs) ─────────────────────────
+// ── Minimal CBOR helpers (only what op_verify needs) ──
 
 fn cbor_byte(data: @ByteArray, pos: usize) -> Result<u8, felt252> {
     match data.at(pos) {
@@ -145,7 +142,7 @@ fn cbor_write_tiny_map_head(ref out: ByteArray, count: u64) {
     out.append_byte(0xa0_u8 + count.try_into().unwrap());
 }
 
-// ── Digest → u256 ────────────────────────────────────────────────────────────
+// ── Digest → u256 ──
 
 /// Convert a [u32; 8] sha-256 digest (big-endian words) to a big-endian u256.
 fn digest_words_to_u256(digest: [u32; 8]) -> u256 {

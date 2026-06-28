@@ -16,10 +16,17 @@ no sequencer. Not a PLC replacement. (REFERENCE.md §1–2.)
 | Command | Does |
 |---|---|
 | `make setup` | install/refresh toolchain deps |
-| `make cairo-build` / `make cairo-test` | Scarb build / snforge tests (reports gas) |
+| `make cairo-build` / `make cairo-test` | Scarb build / Cairo tests (reports gas; runner per active backend) |
 | `make rust-test` | fmt-check + clippy(-D warnings) + cargo test |
 | `make conformance` | three-way DRISL/CID agreement (the consensus gate) |
 | `make ci` | everything CI runs |
+| `make test-backend` / `make test-{offline,snforge}` | show / switch the Cairo test backend ([cairo/TESTING.md](cairo/TESTING.md)) |
+
+**Cairo test backend:** committed default is **offline** (Scarb builtin `cairo-test`, no
+registry); switch to real `snforge` on a networked box with `make test-snforge`. `snforge_std`
+pulls a proc-macro cdylib that the static-musl Scarb in the sandbox can't `dlopen`, so it can't
+run there — the offline builtin gives `#[test]` with no proc macro. Tests are backend-agnostic
+(only `#[test]`/`assert!`); revisit when one first needs a real snforge feature. (cairo/TESTING.md.)
 
 ## Layout
 

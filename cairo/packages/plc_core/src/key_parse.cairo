@@ -87,7 +87,7 @@ pub fn parse_did_key(s: @ByteArray) -> Result<ParsedKey, felt252> {
     Result::Ok(ParsedKey { key_type, x, y_parity })
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ──
 
 /// Decode a base58btc string into exactly `out_len` bytes (big-endian).
 /// Uses the standard carry-propagation algorithm with a Felt252Dict accumulator.

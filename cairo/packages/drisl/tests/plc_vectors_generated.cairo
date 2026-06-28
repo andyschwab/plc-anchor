@@ -51,6 +51,6 @@ pub fn plc_vectors() -> Array<PlcVector> {
             cid_hex: "01711220cdef81de1b9bcca4e644cc29a88e3e2d068a5908e1767e66e3c17a0cd15e5b70",
             is_genesis: false,
             did_fragment: "",
-        }, // secp256k1 tombstone
+        } // secp256k1 tombstone
     ]
 }

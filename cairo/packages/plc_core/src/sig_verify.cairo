@@ -3,20 +3,17 @@
 //! Verifies a low-S secp256k1 or secp256r1 signature over a sha-256 message hash.
 //! The sig is base64url-nopad encoded (64 bytes = r‖s); decoding is also here.
 
+use starknet::SyscallResultTrait;
+use starknet::secp256_trait::{Secp256Trait, is_valid_signature};
 use starknet::secp256k1::Secp256k1Point;
 use starknet::secp256r1::Secp256r1Point;
-use starknet::secp256_trait::{Secp256Trait, is_valid_signature};
-use starknet::SyscallResultTrait;
-
 use super::key_parse::{KeyType, ParsedKey, read_u256_be};
 
 /// Verify an ECDSA signature produced by `key` over `msg_hash`.
 ///
 /// `sig_b64` - base64url-nopad encoded signature (86 chars → 64 bytes → r‖s)
 /// Returns Ok(()) on success, Err on any structural or cryptographic failure.
-pub fn verify_ecdsa(
-    msg_hash: u256, sig_b64: @ByteArray, key: @ParsedKey,
-) -> Result<(), felt252> {
+pub fn verify_ecdsa(msg_hash: u256, sig_b64: @ByteArray, key: @ParsedKey) -> Result<(), felt252> {
     let sig_bytes = decode_base64url(sig_b64)?;
     if sig_bytes.len() != 64 {
         return Result::Err('sig-wrong-length');
@@ -26,15 +23,17 @@ pub fn verify_ecdsa(
 
     let valid = match key.key_type {
         KeyType::Secp256k1 => {
-            let point =
-                Secp256Trait::<Secp256k1Point>::secp256_ec_get_point_from_x_syscall(*key.x, *key.y_parity)
+            let point = Secp256Trait::<
+                Secp256k1Point,
+            >::secp256_ec_get_point_from_x_syscall(*key.x, *key.y_parity)
                 .unwrap_syscall()
                 .expect('invalid-pubkey-k256');
             is_valid_signature::<Secp256k1Point>(msg_hash, r, s, point)
         },
         KeyType::Secp256r1 => {
-            let point =
-                Secp256Trait::<Secp256r1Point>::secp256_ec_get_point_from_x_syscall(*key.x, *key.y_parity)
+            let point = Secp256Trait::<
+                Secp256r1Point,
+            >::secp256_ec_get_point_from_x_syscall(*key.x, *key.y_parity)
                 .unwrap_syscall()
                 .expect('invalid-pubkey-r256');
             is_valid_signature::<Secp256r1Point>(msg_hash, r, s, point)
@@ -48,7 +47,7 @@ pub fn verify_ecdsa(
     }
 }
 
-// ── Base64url decode ──────────────────────────────────────────────────────────
+// ── Base64url decode ──
 
 /// Decode a base64url-nopad string to raw bytes.
 /// Valid lengths: 0 mod 4, 2 mod 4, or 3 mod 4 (1 mod 4 is invalid).
