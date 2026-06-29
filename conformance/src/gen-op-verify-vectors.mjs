@@ -82,6 +82,7 @@ for (const e of corpus) {
     allowed_keys: allowedKeys,
     signer_index: signerIndex,
     prev_signed_hex: prevSignedHex,
+    did: e.did,
   });
 }
 
@@ -144,6 +145,7 @@ const lines = vectors.map(
             allowed_keys: array![${v.allowed_keys.map((k) => `"${k}"`).join(", ")}],
             signer_index: ${v.signer_index},
             prev_signed_hex: "${v.prev_signed_hex}",
+            did: "${v.did}",
         }, // ${v.label}`,
 );
 
@@ -173,6 +175,8 @@ pub struct OpVerifyVector {
     /// The predecessor op's signed DRISL bytes (hex), for the prev-linkage gate. Empty
     /// for a genesis op.
     pub prev_signed_hex: ByteArray,
+    /// The did:plc this op belongs to (derived from the genesis op's signed bytes).
+    pub did: ByteArray,
 }
 
 pub fn op_verify_vectors() -> Array<OpVerifyVector> {

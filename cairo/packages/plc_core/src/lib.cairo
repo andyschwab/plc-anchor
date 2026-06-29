@@ -22,4 +22,5 @@ pub mod op_decode;
 pub mod op_verify;
 pub mod recovery;
 pub mod sig_verify;
+pub mod state;
 pub mod verify;

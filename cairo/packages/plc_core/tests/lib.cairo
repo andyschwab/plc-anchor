@@ -9,4 +9,5 @@ mod op_verify;
 mod op_verify_vectors_generated;
 mod recovery;
 mod recovery_vectors_generated;
+mod state;
 mod verify;
