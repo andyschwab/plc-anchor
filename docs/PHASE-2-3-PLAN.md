@@ -178,3 +178,48 @@ P2.5 are a chain. Phase 3 starts only when §1 is differential-green end-to-end.
   supplies the chain context (head, nullified set from stored history) and maps `OpClass` +
   the 72h window onto the confirmed/tentative tiers (P3.3); genesis `import` verifies against
   the op's own rotation keys + DID derivation (a separate entry point to build in P3.4).
+
+---
+
+## 6. Session handoff (for the next session)
+
+Phase 2 and most of Phase 3 landed. Test counts: **plc_core 35/35, drisl 9/9, conformance
+7/7**, all on the offline `scarb cairo-test` backend (contracts test via
+`contract_state_for_testing`, no deploy). A SessionStart hook (`.claude/hooks/`) installs the
+toolchain on the web — Scarb comes from its GitHub release because the pinned installer host
+is egress-blocked.
+
+### Done (modules in `cairo/packages/plc_core/src/`)
+- **Phase 2:** `key_parse`, `sig_verify`, `op_decode`, `op_verify`, `link`, `recovery`,
+  `verify` — full PLC op verification, differential vs `@did-plc/lib`.
+- **Phase 3:** `state` (head/chain model + `apply_op` + tiers), `anchor` (the
+  `#[starknet::contract]` endpoint with import/submit/recovery + confirmed/tentative views).
+
+### Decisions made this session (don't relitigate)
+- **p256 is malleable, k256 is low-S** (verified vs `@atproto/crypto`; `REFERENCE.md` §5
+  corrected). `sig_verify` folds high-S→low-S for p256 only; guarded by a forced-high-S p256
+  vector + a high-S-k256 reject vector.
+- **Commitment accumulator = sha256 Merkle** (P3.2). Chosen for resolver portability (any
+  language, no new crypto; matches the CID hash stack) over a Poseidon trie / storage proofs.
+- **Contract storage** = per-DID `Vec<StoredOp>` (signed bytes + `created_at` + signer index);
+  CID / rotation keys / tombstone all rederive from the bytes.
+- **Timestamp** = block timestamp × 1000 (ms), used as the pragmatic `createdAt` the 72h
+  window measures against (§1).
+
+### Next, in order
+1. **P3.2 — sha256 Merkle commitment root.** Commit a root over the DID→head (document) map
+   so resolution = root + inclusion proof; expose **confirmed** and **tentative** roots
+   separately (§4). Maintain the tree in contract storage (sha256 syscalls); the on-chain
+   write cost vs proof cost is the thing to measure. Inclusion-proof *verification* is the
+   resolver library (Phase 5) — but pin the leaf/node hashing format here and add a TS
+   cross-check in `conformance`. Leaf suggestion: `sha256(did_bytes ‖ head_cid_bytes)`; settle
+   the exact preimage + node-ordering convention and document it (it's the format resolvers
+   depend on — hard to change later).
+2. **P3.4 — multi-op genesis `import`.** Today `import_genesis` is single-op; add
+   `import(did, chain)` that replays genesis + each op (reusing `genesis_record` + `apply_op`)
+   to anchor a DID with existing history in one call.
+3. Then build order item 4 (sync indexer, `ingest/`) and item 5 (resolver library).
+
+### Open question still pending (REFERENCE.md §6a)
+Appchain timing — whether public Starknet's L1→L2 forced-inclusion is strong enough for CR.
+Resolve before any settlement wiring; not blocking P3.2/P3.4.
