@@ -12,4 +12,5 @@ pub mod key_parse;
 pub mod link;
 pub mod op_decode;
 pub mod op_verify;
+pub mod recovery;
 pub mod sig_verify;

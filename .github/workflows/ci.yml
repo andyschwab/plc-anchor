@@ -32,6 +32,7 @@ jobs:
               - 'conformance/src/gen-cairo-vectors.mjs'
               - 'conformance/src/gen-plc-vectors.mjs'
               - 'conformance/src/gen-op-verify-vectors.mjs'
+              - 'conformance/src/gen-recovery-vectors.mjs'
               - '.github/workflows/ci.yml'
             rust:
               - 'ingest/**'
@@ -67,8 +68,9 @@ jobs:
       - run: node conformance/src/gen-cairo-vectors.mjs
       - run: node conformance/src/gen-plc-vectors.mjs
       - run: node conformance/src/gen-op-verify-vectors.mjs
+      - run: node conformance/src/gen-recovery-vectors.mjs
       - run: cd cairo && scarb fmt
-      - run: git diff --exit-code -- cairo/packages/drisl/tests/vectors_generated.cairo cairo/packages/drisl/tests/plc_vectors_generated.cairo cairo/packages/plc_core/tests/op_verify_vectors_generated.cairo
+      - run: git diff --exit-code -- cairo/packages/drisl/tests/vectors_generated.cairo cairo/packages/drisl/tests/plc_vectors_generated.cairo cairo/packages/plc_core/tests/op_verify_vectors_generated.cairo cairo/packages/plc_core/tests/recovery_vectors_generated.cairo
 
   rust:
     needs: changes
