@@ -26,32 +26,46 @@ const outPath = join(
 
 const corpus = JSON.parse(readFileSync(corpusPath, "utf8"));
 
+// The op's OWN declared rotation set (empty for a tombstone); legacy `create` normalizes
+// to [recoveryKey, signingKey] to mirror the Cairo decoder.
+function ownRotationKeys(op) {
+  if (op.type === "create") return [op.recoveryKey, op.signingKey];
+  return op.rotationKeys ?? [];
+}
+
 const vectors = [];
 for (const e of corpus) {
-  // Validate the signature via the TS oracle before emitting Cairo vectors.
-  const allowedDids = e.operation.rotationKeys ?? [e.signer_did_key];
-  const signerDid = await assureValidSig(allowedDids, e.operation);
-  if (!allowedDids.includes(signerDid)) {
-    throw new Error(
-      `[${e.label}] assureValidSig returned unexpected signer: ${signerDid}`,
-    );
+  const op = e.operation;
+  const isGenesis = op.prev === null || op.prev === undefined;
+
+  // Authorized signer set (P2.3): a genesis op is authorized by its own rotation keys; a
+  // non-genesis op by the PREVIOUS op's rotation keys (found by matching prev → cid in the
+  // corpus chain). This is the set the embedded signature is checked against.
+  let allowedKeys;
+  if (isGenesis) {
+    allowedKeys = ownRotationKeys(op);
+  } else {
+    const prevEntry = corpus.find((x) => x.cid === op.prev);
+    if (!prevEntry) {
+      throw new Error(`[${e.label}] prev CID ${op.prev} not found in corpus chain`);
+    }
+    allowedKeys = ownRotationKeys(prevEntry.operation);
   }
 
-  // Decode-side expectations (P2.1 op_decode gate): the structural view of the op as
-  // @did-plc/lib / the canonical JSON sees it. `rotation_keys` is the op's OWN declared
-  // set (empty for a tombstone); legacy `create` is normalized to [recoveryKey,
-  // signingKey] to mirror the Cairo decoder.
-  const op = e.operation;
-  const isCreate = op.type === "create";
-  const rotationKeys = isCreate
-    ? [op.recoveryKey, op.signingKey]
-    : (op.rotationKeys ?? []);
-  const vmCount = isCreate
-    ? 1
-    : op.verificationMethods
-      ? Object.keys(op.verificationMethods).length
-      : 0;
-  const isGenesis = op.prev === null || op.prev === undefined;
+  // Differential: @did-plc/lib must accept the sig against the authorized set, and the
+  // signer's index in that set is the recovery-priority operand (P2.5).
+  const signerDid = await assureValidSig(allowedKeys, op);
+  const signerIndex = allowedKeys.indexOf(signerDid);
+  if (signerIndex < 0) {
+    throw new Error(`[${e.label}] signer ${signerDid} not in authorized set`);
+  }
+
+  const vmCount =
+    op.type === "create"
+      ? 1
+      : op.verificationMethods
+        ? Object.keys(op.verificationMethods).length
+        : 0;
 
   vectors.push({
     label: e.label,
@@ -61,8 +75,10 @@ for (const e of corpus) {
     op_type: op.type,
     is_genesis: isGenesis,
     prev: isGenesis ? "" : op.prev,
-    rotation_keys: rotationKeys,
+    rotation_keys: ownRotationKeys(op),
     vm_count: vmCount,
+    allowed_keys: allowedKeys,
+    signer_index: signerIndex,
   });
 }
 
@@ -122,6 +138,8 @@ const lines = vectors.map(
             prev: "${v.prev}",
             rotation_keys: array![${v.rotation_keys.map((k) => `"${k}"`).join(", ")}],
             vm_count: ${v.vm_count},
+            allowed_keys: array![${v.allowed_keys.map((k) => `"${k}"`).join(", ")}],
+            signer_index: ${v.signer_index},
         }, // ${v.label}`,
 );
 
@@ -144,6 +162,10 @@ pub struct OpVerifyVector {
     pub prev: ByteArray,
     pub rotation_keys: Array<ByteArray>,
     pub vm_count: usize,
+    /// Authorized signer set: own rotation keys (genesis) or the prev op's (non-genesis).
+    pub allowed_keys: Array<ByteArray>,
+    /// Index of the actual signer within allowed_keys (recovery-priority operand).
+    pub signer_index: usize,
 }
 
 pub fn op_verify_vectors() -> Array<OpVerifyVector> {
