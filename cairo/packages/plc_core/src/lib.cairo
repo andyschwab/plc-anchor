@@ -9,5 +9,6 @@
 //!   governance — multisig + timelock + one-way freeze flag (§6b).
 
 pub mod key_parse;
+pub mod op_decode;
 pub mod op_verify;
 pub mod sig_verify;
