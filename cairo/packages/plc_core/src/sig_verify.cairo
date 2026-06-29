@@ -1,7 +1,20 @@
 //! ECDSA signature verification for PLC ops (REFERENCE.md §5).
 //!
-//! Verifies a low-S secp256k1 or secp256r1 signature over a sha-256 message hash.
-//! The sig is base64url-nopad encoded (64 bytes = r‖s); decoding is also here.
+//! Verifies a secp256k1 or secp256r1 signature over a sha-256 message hash. The sig is
+//! base64url-nopad encoded (64 bytes = r‖s); decoding is also here.
+//!
+//! S-malleability — curve-asymmetric, to match the reference (`@atproto/crypto`, which
+//! `@did-plc/lib` uses, is the authoritative op-validity oracle — CLAUDE.md):
+//!   - **secp256k1: low-S required.** The reference signs low-S and its verifier rejects
+//!     high-S. The corelib `is_valid_signature` is low-S-only, so this matches directly.
+//!   - **secp256r1 / p256: malleable (either S accepted).** The reference verifier does
+//!     NOT canonicalize p256 S and accepts high-S ops (atproto's p256 signer doesn't even
+//!     normalize). A high-S op is therefore a *valid* PLC op we must be able to anchor, so
+//!     rejecting it would fork. The corelib verifier is low-S-only, so we fold a high-S
+//!     signature to its low-S equivalent `(r, N−s)` — which verifies iff `(r, s)` does
+//!     (negating s negates the recovered point, whose x-coordinate, = r, is unchanged) —
+//!     before checking. This makes p256 verification malleability-tolerant without a
+//!     hand-rolled verifier. (Differential vector: "p256 genesis (high-S)".)
 
 use starknet::SyscallResultTrait;
 use starknet::secp256_trait::{Secp256Trait, is_valid_signature};
@@ -31,12 +44,20 @@ pub fn verify_ecdsa(msg_hash: u256, sig_b64: @ByteArray, key: @ParsedKey) -> Res
             is_valid_signature::<Secp256k1Point>(msg_hash, r, s, point)
         },
         KeyType::Secp256r1 => {
+            // p256 is malleable in the reference: fold high-S to low-S before the
+            // low-S-only corelib check (see the module header).
+            let n = Secp256Trait::<Secp256r1Point>::get_curve_size();
+            let s_low = if s > n / 2 && s < n {
+                n - s
+            } else {
+                s
+            };
             let point = Secp256Trait::<
                 Secp256r1Point,
             >::secp256_ec_get_point_from_x_syscall(*key.x, *key.y_parity)
                 .unwrap_syscall()
                 .expect('invalid-pubkey-r256');
-            is_valid_signature::<Secp256r1Point>(msg_hash, r, s, point)
+            is_valid_signature::<Secp256r1Point>(msg_hash, r, s_low, point)
         },
     };
 

@@ -5,6 +5,8 @@
 //
 // Run via `make gen-op-verify-vectors`; CI asserts no drift.
 import { assureValidSig } from "@did-plc/lib";
+import { verifySignature } from "@atproto/crypto";
+import { encode } from "@ipld/dag-cbor";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,6 +66,51 @@ for (const e of corpus) {
   });
 }
 
+// ── Negative vectors: high-S signatures the reference REJECTS ────────────────────────
+// k256 is low-S-only in the reference (unlike p256). Take the first k256 genesis, flip its
+// signature to the high-S form (r, N-s), and confirm @atproto/crypto rejects it — so the
+// Cairo verifier must reject it too. This is the differential guard for the curve asymmetry.
+const K256_N = BigInt(
+  "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
+);
+const rejectVectors = [];
+{
+  const base = corpus.find(
+    (e) => e.operation.type === "plc_operation" && e.signer_did_key.startsWith("did:key:zQ3"),
+  );
+  const sig = Buffer.from(base.operation.sig, "base64url");
+  const r = sig.subarray(0, 32);
+  let s = BigInt("0x" + sig.subarray(32, 64).toString("hex"));
+  if (s <= K256_N / 2n) s = K256_N - s; // make high-S
+  const sBuf = Buffer.from(s.toString(16).padStart(64, "0"), "hex");
+  const highSig = Buffer.concat([r, sBuf]).toString("base64url");
+
+  // Differential assertion: the reference verifier must REJECT this high-S k256 signature.
+  const { sig: _drop, ...unsigned } = base.operation;
+  const accepted = await verifySignature(
+    base.signer_did_key,
+    new Uint8Array(encode(unsigned)),
+    new Uint8Array(Buffer.from(highSig, "base64url")),
+  );
+  if (accepted) {
+    throw new Error("reference unexpectedly ACCEPTED a high-S k256 sig — asymmetry assumption broken");
+  }
+  const signedHigh = Buffer.from(encode({ ...base.operation, sig: highSig })).toString("hex");
+  rejectVectors.push({
+    label: "k256 high-S (must reject)",
+    signed_drisl_hex: signedHigh,
+    signer_did_key: base.signer_did_key,
+  });
+}
+
+const rejectLines = rejectVectors.map(
+  (v) =>
+    `        OpVerifyRejectVector {
+            signed_drisl_hex: "${v.signed_drisl_hex}",
+            signer_did_key: "${v.signer_did_key}",
+        }, // ${v.label}`,
+);
+
 const lines = vectors.map(
   (v) =>
     `        OpVerifyVector {
@@ -102,6 +149,21 @@ pub struct OpVerifyVector {
 pub fn op_verify_vectors() -> Array<OpVerifyVector> {
     array![
 ${lines.join("\n")}
+    ]
+}
+
+/// Signatures the reference REJECTS (so the Cairo verifier must too). Currently: high-S
+/// k256 (low-S is required for k256, unlike p256). Confirmed rejected by @atproto/crypto
+/// at generation time.
+#[derive(Drop)]
+pub struct OpVerifyRejectVector {
+    pub signed_drisl_hex: ByteArray,
+    pub signer_did_key: ByteArray,
+}
+
+pub fn op_verify_reject_vectors() -> Array<OpVerifyRejectVector> {
+    array![
+${rejectLines.join("\n")}
     ]
 }
 `;
