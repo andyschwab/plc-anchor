@@ -7,11 +7,19 @@ relitigate anything in `CLAUDE.md` "Do NOT relitigate".
 
 ---
 
-## 0. Status correction
+## 0. Status
 
-Phase 2 is **partially complete**, not done. The landing commit (`abeb051`) delivered PLC op
-*signature* verification — a subset of `REFERENCE.md` §3 item 2. The repo tracker already
-reflects this: `CLAUDE.md` build order item 2 is ⏳, not ✅.
+**Phase 2 is complete** (P2.1–P2.5 landed and differential-green; see §5 exit criteria).
+This section is kept for the record of where it started.
+
+The original gap: the landing commit (`abeb051`) delivered PLC op *signature* verification
+only — a subset of `REFERENCE.md` §3 item 2. Everything below P2.1 was then built out.
+
+> **Consensus correction made during P2.2:** S-malleability is curve-asymmetric in the
+> reference (`@atproto/crypto`) — k256 requires low-S, **p256 is malleable** (high-S
+> accepted). The earlier "low-S required" for both (old `REFERENCE.md` §5) was wrong for
+> p256 and would have forked. Fixed in `sig_verify` + §5, guarded by a forced-high-S p256
+> vector and a high-S k256 reject vector.
 
 **Done and differential-green** (6-op corpus vs `@did-plc/lib`, three-way conformance):
 - secp256k1 + secp256r1 ECDSA over the DRISL-encoded *unsigned* op — `plc_core/sig_verify.cairo`
@@ -29,11 +37,18 @@ reflects this: `CLAUDE.md` build order item 2 is ⏳, not ✅.
 
 ---
 
-## 1. Remaining Phase 2 work
+## 1. Remaining Phase 2 work — ✅ done
 
-Each item lands behind a differential gate against `@did-plc/lib` (extend
-`conformance/src/check.mjs` + the generated Cairo vector tables; never hand-edit a vector —
-`CLAUDE.md` guardrails).
+All of P2.1–P2.5 landed, each behind a differential gate against `@did-plc/lib`, plus the
+integrated `verify::verify_next_op` seam. Implementation notes vs the original plan below:
+- **P2.1** `op_decode.cairo` reuses the keystone `drisl::decode` (one canonical CBOR layer)
+  rather than a second hand-rolled reader.
+- **P2.2** legacy `create` decoded + normalized; surfaced the p256 malleability fix (§0).
+- **P2.3** `verify_op_authorized` returns the signer index; the create vector pins index 1.
+- **P2.4** `drisl::cid::derive_cid_string` (base32) + `link::check_prev_link`.
+- **P2.5** `recovery::classify_next_op`; vectors ground-truthed by `assureValidNextOp`.
+
+Original per-item specs retained below for reference.
 
 ### P2.1 — Op-structure decode + constraint validation
 New `plc_core/op_decode.cairo`. Decode a signed op's DRISL into typed fields without a full
@@ -146,10 +161,14 @@ P2.5 are a chain. Phase 3 starts only when §1 is differential-green end-to-end.
 - Each P2.x item is "done" only when Cairo ⇄ `@did-plc/lib` agree on accept **and** reject
   cases.
 
-## 5. Exit criteria
+## 5. Exit criteria — ✅ met
 
-- **Phase 2 complete:** P2.1–P2.5 differential-green; `CLAUDE.md` build order item 2 → ✅ with
-  the acceptance note (mirroring the Phase 1 close-out).
-- **Phase 3 ready:** decode + signer-index + prev + recovery callable as a single
-  `verify_and_classify(chain, op) → {accepted, signer_index, confirmed|tentative}` surface for
-  the contract to consume.
+- **Phase 2 complete:** P2.1–P2.5 differential-green vs `@did-plc/lib` (21/21 plc_core +
+  9/9 drisl, accept **and** reject cases); `CLAUDE.md` build order item 2 → ✅ with the
+  acceptance note. Drift gates added for the op-verify and recovery tables.
+- **Phase 3 ready:** `plc_core::verify::verify_next_op(proposed, fork_point, nullified_count,
+  first_nullified, created_at, now) → {signer_index, OpClass::{Append|Recovery}}` composes
+  decode + linkage + signer-index + recovery for the non-genesis (`submit_op`) path. Phase 3
+  supplies the chain context (head, nullified set from stored history) and maps `OpClass` +
+  the 72h window onto the confirmed/tentative tiers (P3.3); genesis `import` verifies against
+  the op's own rotation keys + DID derivation (a separate entry point to build in P3.4).
