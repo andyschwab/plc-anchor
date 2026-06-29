@@ -3,7 +3,10 @@
 //! blessed-set narrowing (sha2-256 only, BLAKE3 excluded) is checked against the structural
 //! validator.
 
-use drisl::cid::{CODEC_RAW, derive_cid, is_blessed_cid_bytes, is_valid_cid_bytes};
+use drisl::cid::{
+    CODEC_DAGCBOR, CODEC_RAW, derive_cid, derive_cid_string, is_blessed_cid_bytes,
+    is_valid_cid_bytes,
+};
 use super::common::from_hex;
 
 #[test]
@@ -26,6 +29,24 @@ fn derive_cid_abc() {
         @"01551220ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
     );
     assert!(cid == expected, "derive_cid(raw, \"abc\") mismatch");
+}
+
+#[test]
+fn derive_cid_string_base32() {
+    // Multibase base32 CID strings (the PLC `prev` text form), pinned against multiformats.
+    let abc: ByteArray = "abc";
+    assert!(
+        derive_cid_string(
+            CODEC_DAGCBOR, @abc,
+        ) == "bafyreif2pall7dybz7vecqka3zo24irdwabwdi4wc55jznaq75q7eaavvu",
+        "dag-cbor base32 CID string mismatch",
+    );
+    assert!(
+        derive_cid_string(
+            CODEC_RAW, @abc,
+        ) == "bafkreif2pall7dybz7vecqka3zo24irdwabwdi4wc55jznaq75q7eaavvu",
+        "raw base32 CID string mismatch",
+    );
 }
 
 #[test]

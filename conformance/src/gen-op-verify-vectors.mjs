@@ -42,6 +42,7 @@ for (const e of corpus) {
   // non-genesis op by the PREVIOUS op's rotation keys (found by matching prev → cid in the
   // corpus chain). This is the set the embedded signature is checked against.
   let allowedKeys;
+  let prevSignedHex = "";
   if (isGenesis) {
     allowedKeys = ownRotationKeys(op);
   } else {
@@ -50,6 +51,7 @@ for (const e of corpus) {
       throw new Error(`[${e.label}] prev CID ${op.prev} not found in corpus chain`);
     }
     allowedKeys = ownRotationKeys(prevEntry.operation);
+    prevSignedHex = prevEntry.drisl_hex; // predecessor's signed bytes, for the link gate
   }
 
   // Differential: @did-plc/lib must accept the sig against the authorized set, and the
@@ -79,6 +81,7 @@ for (const e of corpus) {
     vm_count: vmCount,
     allowed_keys: allowedKeys,
     signer_index: signerIndex,
+    prev_signed_hex: prevSignedHex,
   });
 }
 
@@ -140,6 +143,7 @@ const lines = vectors.map(
             vm_count: ${v.vm_count},
             allowed_keys: array![${v.allowed_keys.map((k) => `"${k}"`).join(", ")}],
             signer_index: ${v.signer_index},
+            prev_signed_hex: "${v.prev_signed_hex}",
         }, // ${v.label}`,
 );
 
@@ -166,6 +170,9 @@ pub struct OpVerifyVector {
     pub allowed_keys: Array<ByteArray>,
     /// Index of the actual signer within allowed_keys (recovery-priority operand).
     pub signer_index: usize,
+    /// The predecessor op's signed DRISL bytes (hex), for the prev-linkage gate. Empty
+    /// for a genesis op.
+    pub prev_signed_hex: ByteArray,
 }
 
 pub fn op_verify_vectors() -> Array<OpVerifyVector> {
