@@ -161,6 +161,23 @@ pub fn genesis_record(
     Result::Ok((did, record))
 }
 
+/// Rebuild an `OpRecord` from a stored op's signed bytes plus the metadata the chain keeps
+/// alongside it (anchored timestamp + signer index). Used by the contract to load its chain.
+pub fn record_from_signed(
+    signed: @ByteArray, created_at: u64, signer_index: usize,
+) -> Result<OpRecord, felt252> {
+    let h = head_from_signed(signed)?;
+    Result::Ok(
+        OpRecord {
+            cid: h.head_cid,
+            rotation_keys: h.authority,
+            created_at,
+            signer_index,
+            tombstone: h.tombstoned,
+        },
+    )
+}
+
 /// Apply a proposed (non-genesis) op to `chain`, handling both the append and the
 /// recovery/fork paths (`assureValidNextOp`). Finds the fork point by `prev`, verifies the
 /// signature against that op's rotation keys, and — if the fork nullifies later ops —

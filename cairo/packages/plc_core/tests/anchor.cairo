@@ -5,10 +5,13 @@
 //! permissionless invariants (re-import rejected, unknown DID rejected). Corpus indices:
 //! 0 = alice genesis, 4 = alice update, 5 = alice tombstone (same DID).
 
+use drisl::cid::{CODEC_DAGCBOR, derive_cid_string};
 use plc_core::anchor::IAnchor;
 use plc_core::anchor::anchor::{AnchorImpl, contract_state_for_testing};
+use starknet::testing::set_block_timestamp;
 use super::common::from_hex;
 use super::op_verify_vectors_generated::op_verify_vectors;
+use super::recovery_vectors_generated::recovery_scenario;
 
 const ALICE_GENESIS: usize = 0;
 const ALICE_UPDATE: usize = 4;
@@ -44,6 +47,42 @@ fn import_then_append_chain() {
     // Append tombstone → head advances; the update's prev was the genesis cid.
     AnchorImpl::submit_op(ref state, did.clone(), tombstone.clone());
     assert!(AnchorImpl::is_anchored(@state, did.clone()), "still anchored after tombstone");
+}
+
+#[test]
+fn recovery_through_contract() {
+    // Import genesis, append opA (index-1 key), then recover with the index-0 key within the
+    // window. The head must become the recovery op and the chain re-link to genesis.
+    let s = recovery_scenario();
+    let genesis = from_hex(@s.genesis_hex);
+    let op_a = from_hex(@s.op_a_hex);
+    let recovery_k0 = from_hex(@s.recovery_k0_hex);
+
+    let mut state = contract_state_for_testing();
+
+    set_block_timestamp(1000);
+    let did = AnchorImpl::import_genesis(ref state, genesis);
+    assert!(did == s.did.clone(), "did mismatch");
+
+    set_block_timestamp(1001); // opA anchored ~1s after genesis
+    AnchorImpl::submit_op(ref state, did.clone(), op_a.clone());
+
+    // Recover well within the 72h window (a few seconds later).
+    set_block_timestamp(1100);
+    AnchorImpl::submit_op(ref state, did.clone(), recovery_k0.clone());
+    assert!(
+        AnchorImpl::head_cid(@state, did.clone()) == derive_cid_string(CODEC_DAGCBOR, @recovery_k0),
+        "head should be the recovery op after recovery",
+    );
+
+    // Far in the future, every op's window has closed → confirmed head == the tip.
+    set_block_timestamp(1000000);
+    assert!(
+        AnchorImpl::confirmed_head(
+            @state, did.clone(),
+        ) == derive_cid_string(CODEC_DAGCBOR, @recovery_k0),
+        "confirmed head should be the recovery op once its window closes",
+    );
 }
 
 #[test]
