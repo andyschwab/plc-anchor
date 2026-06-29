@@ -6,7 +6,13 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check cairo-build cairo-test rust-build rust-test conformance fmt ci clean
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check cairo-build cairo-test rust-build rust-test conformance fmt ci clean test-backend test-snforge test-offline
+
+# Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
+# (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
+# `snforge`. CAIRO_TEST auto-detects the runner from the active manifest so the
+# `cairo-test`/`conformance` targets work under either backend, unchanged.
+CAIRO_TEST := $(shell grep -q '^snforge_std' cairo/Scarb.toml && echo 'snforge test' || echo 'scarb cairo-test')
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -29,12 +35,31 @@ gen-vectors: ## Regenerate + format the Cairo conformance table from conformance
 gen-vectors-check: gen-vectors ## Fail if the generated table drifted from the JSON (CI gate)
 	git diff --exit-code -- cairo/packages/drisl/tests/vectors_generated.cairo
 
+gen-plc-corpus: ## (Re)generate PLC-op corpus from @did-plc/lib; commit the result
+	cd conformance && node src/gen-plc-corpus.mjs
+
+gen-plc-vectors: ## Re-validate corpus and regenerate the Cairo PLC-op vector table
+	cd conformance && node src/gen-plc-vectors.mjs
+	cd cairo && scarb fmt
+
+gen-plc-vectors-check: gen-plc-vectors ## Fail if the Cairo PLC-op vector table drifted (CI gate)
+	git diff --exit-code -- cairo/packages/drisl/tests/plc_vectors_generated.cairo
+
 # ---- Cairo (Scarb workspace) -------------------------------------------------
 cairo-build: ## Build the Cairo workspace (drisl, plc_core)
 	cd cairo && scarb build
 
-cairo-test: ## Run snforge tests (incl. DASL conformance fixtures; reports gas)
-	cd cairo && snforge test
+cairo-test: ## Run Cairo tests (drisl conformance + plc_core op_verify gate; reports gas estimates)
+	cd cairo && $(CAIRO_TEST)
+
+test-offline: ## Switch the Cairo test backend to `cairo-test` (offline; no registry)
+	cairo/scripts/test-backend.sh offline
+
+test-snforge: ## Switch the Cairo test backend to real `snforge` (needs network)
+	cairo/scripts/test-backend.sh snforge
+
+test-backend: ## Show which Cairo test backend is active
+	@cairo/scripts/test-backend.sh status
 
 # ---- Rust (Cargo workspace) --------------------------------------------------
 rust-build: ## Build the Rust workspace (ingest, oracle)
@@ -47,7 +72,7 @@ rust-test: ## Test + lint the Rust workspace
 
 # ---- Conformance / differential harness --------------------------------------
 conformance: ## Three-way DRISL/CID agreement (Cairo vs Rust oracle vs TS sidecar)
-	cd cairo && snforge test --package drisl
+	cd cairo && $(CAIRO_TEST) --package drisl
 	cargo run -q -p oracle
 	node conformance/src/check.mjs
 
@@ -56,7 +81,7 @@ fmt: ## Format Rust + Cairo
 	cargo fmt
 	cd cairo && scarb fmt
 
-ci: gen-vectors-check cairo-build cairo-test rust-test conformance ## Everything CI runs
+ci: gen-vectors-check gen-plc-vectors-check cairo-build cairo-test rust-test conformance ## Everything CI runs
 
 clean: ## Remove build artifacts
 	cargo clean

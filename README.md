@@ -25,6 +25,10 @@ make ci           # build + test everything
 Toolchain: Cairo/Scarb 2.18 · Starknet Foundry 0.61 · Rust 1.96
 (pinned in [.tool-versions](.tool-versions) / [rust-toolchain.toml](rust-toolchain.toml)).
 
+The Cairo tests ship with an **offline** test backend by default (Scarb's builtin
+`cairo-test`, no registry access required); a networked dev box can switch to real
+`snforge` with `make test-snforge`. See [cairo/TESTING.md](cairo/TESTING.md).
+
 ## Layout
 
 ```
