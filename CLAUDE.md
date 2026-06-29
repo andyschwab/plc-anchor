@@ -88,11 +88,16 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    6 real-structure PLC ops (secp256k1/p256 genesis, update, tombstone) round-tripped
    against `@did-plc/lib` / `@ipld/dag-cbor` — 6/6 vectors pass in both TS oracle and
    Cairo. (REFERENCE.md §3, §5)
-2. ⏳ **PLC op verification + 72h recovery state machine** (differential vs `@did-plc/lib`). *Next.*
+2. ⏳ **PLC op verification + 72h recovery state machine** (differential vs `@did-plc/lib`).
+   *In progress.* Done: signature verification (k256/r1), `did:key` parse, unsigned-op
+   extraction — 6-op corpus differential-green. Remaining (P2.1–P2.5): op-structure decode +
+   constraints, legacy `create`, authorized-signer-index derivation, `prev` linkage, the 72h
+   recovery state machine. Sequencing + acceptance gates: [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md).
 3. State commitment + confirmed/tentative roots + the permissionless `import`/`submit_op`
    endpoint (embedded-sig authorization; `prev == head` enforcement).
 4. Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.
 5. Resolver verification library (the adoption surface).
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
-**Current phase: 1 (keystone) done → 2 (op verification + recovery).**
+**Current phase: 2 in progress — signature verification landed; op-structure/recovery
+remaining (see `docs/PHASE-2-3-PLAN.md`) before Phase 3.**
