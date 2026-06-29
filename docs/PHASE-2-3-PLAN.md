@@ -115,23 +115,29 @@ output (which ops are confirmed vs nullifiable) to build the two-tier roots.
 
 ---
 
-## 2. Phase 3 scope (next)
+## 2. Phase 3 scope
 
-Lands in `plc_core` as contract code; measured with `snforge` gas on real entrypoints
-(`CLAUDE.md` guardrails). Depends on all of §1.
+Lands in `plc_core` as contract code. Status: the permissionless endpoint with
+append + recovery + confirmed/tentative tiers is live and offline-tested; the commitment
+root and multi-op genesis import remain.
 
-- **P3.1 Per-DID head + state** — storage map `did → head_cid` (+ tentative tip); the
-  `prev == head` rule enforced on append using P2.3/P2.4.
-- **P3.2 DID→document commitment** — a root over the map so resolution = root + inclusion
-  proof (Phase 5's read surface). Pick the accumulator (Merkle vs Starknet-native Poseidon
-  trie) here; cheap inclusion proofs are the constraint (adoption surface).
-- **P3.3 Confirmed / tentative tiers (§4)** — confirmed root commits ops past the 72h window
-  (immutable); tentative tip carries within-window ops, flagged, using P2.5's nullification
-  verdicts.
-- **P3.4 Permissionless `import` / `submit_op` (§2)** — `import(did, chain)` verifies a full
-  log from genesis and commits the head; `submit_op(op)` appends. **Authorization = the op's
-  embedded sig (P2.3), never the Starknet tx signer** (`CLAUDE.md`). Native AA / paymasters
-  are gas/UX only.
+- ✅ **P3.1 Per-DID head + state** — `state::{import_genesis, apply_append, DidHead}`; the
+  `prev == head` rule on append via P2.3/P2.4. Differential on the corpus chain.
+- ✅ **P3.1b Anchor contract** — `anchor` `#[starknet::contract]`: `import_genesis` /
+  `submit_op` / views; embedded-sig authorization (tx signer irrelevant); offline-tested via
+  `contract_state_for_testing`.
+- ✅ **P3.3 Confirmed / tentative tiers (§4) + recovery** — `state::{OpRecord, apply_op,
+  rebuild_chain, confirmed_head, tentative_head}`; the contract stores a per-DID chain
+  (`Map<felt, Vec<StoredOp>>`) and `submit_op` handles forks (truncate-to-fork + push),
+  applying the 72h rule via `classify_next_op`. Ground-truthed end-to-end against
+  `assureValidNextOp` (deterministic fixed-key scenario) + the contract recovery test.
+- ⬜ **P3.2 DID→document commitment** — a **sha256 Merkle** root over the map so resolution =
+  root + inclusion proof (decided: portable for resolvers in any language; the adoption
+  surface). Confirmed vs tentative roots. *Remaining.*
+- ⬜ **P3.4 Genesis import is single-op today** — `import_genesis` verifies one genesis op;
+  importing a DID with existing history (`import(did, chain)`: replay genesis + each op) is
+  the remaining piece. `submit_op` (append/recover) is done. Authorization is the embedded
+  sig (P2.3), never the Starknet tx signer (`CLAUDE.md`). *Remaining.*
 
 **Open question to resolve before §3 settlement wiring (do not treat as settled):** appchain
 timing — whether public Starknet's L1→L2 forced-inclusion guarantee is strong enough for CR
