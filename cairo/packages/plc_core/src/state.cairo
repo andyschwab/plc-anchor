@@ -13,6 +13,7 @@
 use drisl::cid::{CODEC_DAGCBOR, derive_cid_string, derive_did_fragment};
 use super::op_decode::{OpType, PlcOp, decode_op};
 use super::op_verify::verify_op_authorized;
+use super::recovery::{OpClass, RECOVERY_WINDOW_MS, classify_next_op};
 
 /// The minimal per-DID head needed to validate the next append: the head op's CID (the
 /// `prev` a successor must name), the rotation keys that authorize the successor, and
@@ -101,4 +102,162 @@ pub fn apply_append(
         tombstoned,
     };
     Result::Ok((new_head, signer_index))
+}
+
+// ── Recovery-aware chain model + confirmed/tentative tiers (REFERENCE.md §4) ──
+//
+// The append-only `DidHead` above is a fast path; recovery needs the recent chain so a
+// proposed op can fork at an earlier op and nullify what followed. We keep an ordered list
+// of op records; each op's `signer_index` is its signer's index within its predecessor's
+// rotation keys — exactly the disputed-signer index a recovery decision needs (so the first
+// nullified op never has to be re-verified). `created_at` is the externally-supplied
+// timestamp (§1) recorded when the op was anchored; it drives the 72h window.
+
+/// One op in a per-DID chain (the window the contract must keep to allow recovery).
+#[derive(Drop, Clone)]
+pub struct OpRecord {
+    /// This op's base32 CID string (what a successor names as `prev`).
+    pub cid: ByteArray,
+    /// This op's rotation keys — the authority for any op that builds on (or forks at) it.
+    pub rotation_keys: Array<ByteArray>,
+    /// Anchored timestamp (ms); drives the 72h window.
+    pub created_at: u64,
+    /// Signer index within the *predecessor's* rotation keys (own keys for genesis).
+    pub signer_index: usize,
+    /// Whether this op is a tombstone (a dead end — nothing may build on it).
+    pub tombstone: bool,
+}
+
+/// The result of applying a proposed op to a chain: how it relates to the history and the
+/// record to splice in. The caller truncates the chain to `fork_index` and appends
+/// `new_record` (see `rebuild_chain`).
+#[derive(Drop)]
+pub struct ApplyOutcome {
+    pub class: OpClass,
+    pub fork_index: usize,
+    pub nullified_count: usize,
+    pub new_record: OpRecord,
+}
+
+/// Verify a genesis op and produce the DID + its initial chain record (`created_at = now`).
+pub fn genesis_record(
+    genesis_signed: @ByteArray, now: u64,
+) -> Result<(ByteArray, OpRecord), felt252> {
+    let op = decode_op(genesis_signed)?;
+    let PlcOp { op_type: _, prev, rotation_keys, vm_count: _, sig: _ } = op;
+    if prev.is_some() {
+        return Result::Err('not-genesis');
+    }
+    let signer_index = verify_op_authorized(genesis_signed, @rotation_keys)?;
+    let mut did: ByteArray = "did:plc:";
+    did.append(@derive_did_fragment(genesis_signed));
+    let record = OpRecord {
+        cid: derive_cid_string(CODEC_DAGCBOR, genesis_signed),
+        rotation_keys,
+        created_at: now,
+        signer_index,
+        tombstone: false,
+    };
+    Result::Ok((did, record))
+}
+
+/// Apply a proposed (non-genesis) op to `chain`, handling both the append and the
+/// recovery/fork paths (`assureValidNextOp`). Finds the fork point by `prev`, verifies the
+/// signature against that op's rotation keys, and — if the fork nullifies later ops —
+/// applies the 72h higher-priority-key rule via `classify_next_op`.
+pub fn apply_op(
+    chain: @Array<OpRecord>, proposed_signed: @ByteArray, now: u64,
+) -> Result<ApplyOutcome, felt252> {
+    let op = decode_op(proposed_signed)?;
+    let PlcOp { op_type, prev, rotation_keys, vm_count: _, sig: _ } = op;
+    let prev_cid = match prev {
+        Option::Some(p) => p,
+        Option::None => { return Result::Err('append-of-genesis'); },
+    };
+
+    // Locate the fork point (the op named by `prev`).
+    let n = chain.len();
+    let mut fork_index: usize = 0;
+    let mut found = false;
+    let mut i = 0;
+    while i < n {
+        if chain.at(i).cid == @prev_cid {
+            fork_index = i;
+            found = true;
+            break;
+        }
+        i += 1;
+    }
+    if !found {
+        return Result::Err('prev-not-in-chain');
+    }
+
+    let fork_point = chain.at(fork_index);
+    if *fork_point.tombstone {
+        return Result::Err('build-on-tombstone');
+    }
+
+    let proposed_index = verify_op_authorized(proposed_signed, fork_point.rotation_keys)?;
+    let nullified_count = n - 1 - fork_index;
+
+    let class = if nullified_count == 0 {
+        OpClass::Append
+    } else {
+        let first_nullified = chain.at(fork_index + 1);
+        classify_next_op(
+            proposed_index,
+            nullified_count,
+            *first_nullified.signer_index,
+            *first_nullified.created_at,
+            now,
+        )?
+    };
+
+    let new_record = OpRecord {
+        cid: derive_cid_string(CODEC_DAGCBOR, proposed_signed),
+        rotation_keys,
+        created_at: now,
+        signer_index: proposed_index,
+        tombstone: op_type == OpType::Tombstone,
+    };
+    Result::Ok(ApplyOutcome { class, fork_index, nullified_count, new_record })
+}
+
+/// Materialize the chain after an `apply_op`: keep ops up to and including the fork point,
+/// then append the new record (dropping any nullified suffix).
+pub fn rebuild_chain(chain: @Array<OpRecord>, outcome: ApplyOutcome) -> Array<OpRecord> {
+    let mut new_chain: Array<OpRecord> = array![];
+    let mut i = 0;
+    while i <= outcome.fork_index {
+        new_chain.append(chain.at(i).clone());
+        i += 1;
+    }
+    new_chain.append(outcome.new_record);
+    new_chain
+}
+
+/// The confirmed head: the CID of the latest op whose 72h window has fully closed (it can no
+/// longer be the first-nullified of any valid recovery, so it is immutable — §4). "" if every
+/// op is still tentative. Resolvers treat this as final.
+pub fn confirmed_head(chain: @Array<OpRecord>, now: u64) -> ByteArray {
+    let mut result: ByteArray = "";
+    let mut i = 0;
+    while i < chain.len() {
+        let op = chain.at(i);
+        if now > *op.created_at + RECOVERY_WINDOW_MS {
+            result = op.cid.clone();
+        }
+        i += 1;
+    }
+    result
+}
+
+/// The tentative tip: the current head CID (still nullifiable if within the window). "" for
+/// an empty chain.
+pub fn tentative_head(chain: @Array<OpRecord>) -> ByteArray {
+    let n = chain.len();
+    if n == 0 {
+        return "";
+    }
+    chain.at(n - 1).cid.clone()
 }
