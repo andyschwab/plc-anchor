@@ -53,6 +53,20 @@ pub fn import_genesis(genesis_signed: @ByteArray) -> Result<(ByteArray, DidHead)
     Result::Ok((did, head))
 }
 
+/// Reconstruct a `DidHead` from a stored head op's signed DRISL bytes: its CID (for
+/// linkage), its rotation keys (authority for the next op), and whether it is a tombstone.
+pub fn head_from_signed(head_signed: @ByteArray) -> Result<DidHead, felt252> {
+    let op = decode_op(head_signed)?;
+    let PlcOp { op_type, prev: _, rotation_keys, vm_count: _, sig: _ } = op;
+    Result::Ok(
+        DidHead {
+            head_cid: derive_cid_string(CODEC_DAGCBOR, head_signed),
+            authority: rotation_keys,
+            tombstoned: op_type == OpType::Tombstone,
+        },
+    )
+}
+
 /// Apply a proposed op to the current head along the append path (prev == head).
 ///
 /// Enforces: the head is not a tombstone; the proposed op names the head as `prev`; and the

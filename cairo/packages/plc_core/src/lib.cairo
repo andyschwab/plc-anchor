@@ -16,6 +16,7 @@
 //!   anchor     — the permissionless endpoint: `import`/`submit_op` (§2).
 //!   governance — multisig + timelock + one-way freeze flag (§6b).
 
+pub mod anchor;
 pub mod key_parse;
 pub mod link;
 pub mod op_decode;

@@ -2,6 +2,7 @@
 //! tests/ directory a single crate, so the generated vector table and test
 //! files are ordinary modules.
 
+mod anchor;
 mod common;
 mod link;
 mod op_decode;
