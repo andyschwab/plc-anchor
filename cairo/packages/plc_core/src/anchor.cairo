@@ -34,6 +34,14 @@ pub trait IAnchor<TContractState> {
     fn confirmed_head(self: @TContractState, did: ByteArray) -> ByteArray;
     /// Whether `did` is anchored.
     fn is_anchored(self: @TContractState, did: ByteArray) -> bool;
+    /// The 32-byte sha256-Merkle commitment over the **tentative** DID→head map (every
+    /// anchored DID's current tip). `sha256("")` when nothing is anchored. The format is
+    /// `merkle` (resolvers verify a DID against this with an inclusion proof).
+    fn tentative_root(self: @TContractState) -> ByteArray;
+    /// The commitment over the **confirmed** DID→head map: only DIDs with at least one op
+    /// past the 72h window, mapped to their confirmed head (§4). Immutable history; the root
+    /// a cautious resolver pins.
+    fn confirmed_root(self: @TContractState) -> ByteArray;
 }
 
 #[starknet::contract]
@@ -44,6 +52,7 @@ pub mod anchor {
         Vec, VecTrait,
     };
     use super::IAnchor;
+    use super::super::merkle::{merkle_root, sorted_leaves};
     use super::super::state::{
         OpRecord, apply_op, confirmed_head as confirmed_head_of, genesis_record, record_from_signed,
         tentative_head,
@@ -53,6 +62,12 @@ pub mod anchor {
     struct Storage {
         /// did_key → the per-DID op chain (genesis … head). Empty == not anchored.
         chains: Map<felt252, Vec<StoredOp>>,
+        /// Append-only roster of anchored did_keys, so the commitment root can enumerate the
+        /// map (a `Map` is not iterable). Each DID is pushed once, at genesis import.
+        did_keys: Vec<felt252>,
+        /// did_key → its did:plc string — the leaf preimage needs the DID itself, not just
+        /// its storage hash.
+        did_strs: Map<felt252, ByteArray>,
     }
 
     /// A chain entry: the op's signed bytes plus the metadata kept alongside it.
@@ -103,6 +118,9 @@ pub mod anchor {
                 .chains
                 .entry(key)
                 .push(StoredOp { signed: genesis_signed, created_at: now, signer_index: 0 });
+            // Roster + did-string, so the commitment root can enumerate this DID.
+            self.did_keys.push(key);
+            self.did_strs.entry(key).write(did.clone());
             self.emit(Imported { did_key: key, head_cid });
             did
         }
@@ -144,10 +162,43 @@ pub mod anchor {
         fn is_anchored(self: @ContractState, did: ByteArray) -> bool {
             self.chains.entry(did_key(@did)).len() != 0
         }
+
+        fn tentative_root(self: @ContractState) -> ByteArray {
+            self.commitment_root(false, 0)
+        }
+
+        fn confirmed_root(self: @ContractState) -> ByteArray {
+            self.commitment_root(true, now_ms())
+        }
     }
 
     #[generate_trait]
     impl Internal of InternalTrait {
+        /// Build the DID→head commitment root over the whole roster. `confirmed` selects the
+        /// confirmed head (past the 72h window at `now`) vs the tentative tip; DIDs with no
+        /// qualifying head (no confirmed op yet) are omitted from the map. O(total ops) in
+        /// hashing — a read-time view, so the recovery-window writes stay cheap (the write
+        /// vs proof cost tradeoff, REFERENCE.md §4).
+        fn commitment_root(self: @ContractState, confirmed: bool, now: u64) -> ByteArray {
+            let n = self.did_keys.len();
+            let mut entries: Array<(ByteArray, ByteArray)> = array![];
+            let mut i: u64 = 0;
+            while i < n {
+                let key = self.did_keys.at(i).read();
+                let chain = self.load_chain(key);
+                let head = if confirmed {
+                    confirmed_head_of(@chain, now)
+                } else {
+                    tentative_head(@chain)
+                };
+                if head.len() != 0 {
+                    entries.append((self.did_strs.entry(key).read(), head));
+                }
+                i += 1;
+            }
+            merkle_root(@sorted_leaves(entries))
+        }
+
         /// Materialize the stored chain as `OpRecord`s (CID + rotation keys decoded from each
         /// op's bytes).
         fn load_chain(self: @ContractState, key: felt252) -> Array<OpRecord> {

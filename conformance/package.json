@@ -8,7 +8,8 @@
     "check": "node src/check.mjs",
     "test": "node src/check.mjs",
     "gen-plc-corpus": "node src/gen-plc-corpus.mjs",
-    "gen-plc-vectors": "node src/gen-plc-vectors.mjs"
+    "gen-plc-vectors": "node src/gen-plc-vectors.mjs",
+    "gen-merkle-vectors": "node src/gen-merkle-vectors.mjs"
   },
   "dependencies": {
     "@atproto/crypto": "^0.1.0",

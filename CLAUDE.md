@@ -101,13 +101,16 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    (`plc_core::state`), the `anchor` `#[starknet::contract]` (`import_genesis`/`submit_op`/
    views), and confirmed/tentative tiers + the recovery/fork path (per-DID chain storage;
    72h rule via `classify_next_op`) — offline-tested via `contract_state_for_testing`,
-   recovery ground-truthed vs `@did-plc/lib`. Remaining: the sha256-Merkle DID→document
-   commitment root (P3.2) and multi-op genesis `import` (P3.4). See
-   [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md) §2.
+   recovery ground-truthed vs `@did-plc/lib`. ✅ **P3.2:** the sha256-Merkle DID→document
+   commitment root (`plc_core::merkle` + `anchor::{tentative_root, confirmed_root}`) — RFC
+   6962 leaf/node domain separation, did-sorted, format-pinned by a TS cross-check
+   (`gen-merkle-vectors`) with a CI drift gate. Remaining: multi-op genesis `import` (P3.4).
+   See [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md) §2.
 4. Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.
-5. Resolver verification library (the adoption surface).
+5. Resolver verification library (the adoption surface) — inclusion-proof verifier lives in
+   `plc_core::merkle::verify_proof`, format pinned.
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
-**Current phase: 3 in progress — the permissionless endpoint (append + recovery + tiers) is
-live and offline-tested; remaining: the sha256-Merkle commitment root (P3.2) and multi-op
+**Current phase: 3 in progress — the permissionless endpoint (append + recovery + tiers) and
+the sha256-Merkle commitment root (P3.2) are live and offline-tested; remaining: multi-op
 genesis import (P3.4). See `docs/PHASE-2-3-PLAN.md` §2.**
