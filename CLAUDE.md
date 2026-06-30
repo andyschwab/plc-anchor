@@ -133,9 +133,12 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    cargo feature) submits deltas to a deployed `anchor` via starknet-rs — `import_genesis`/`submit_op`
    with manually-encoded Cairo `ByteArray` calldata, waiting for tx acceptance. `DryRunSink` stays
    the offline default; the live path is feature-gated so the consensus tests pull no async/Starknet
-   deps. Wired into the CLI as `--submit`. **Proven on-chain (Sepolia):** the live E2E
+   deps. Wired into the CLI two ways — `--roster` (firehose) and `--did <did:plc:...>` (single-DID
+   onboarding via `/<did>/log/audit`, no firehose scan); both honor `--submit`. **Proven on-chain (Sepolia):** the live E2E
    (`ingest/tests/live_e2e.rs`, `--ignored`) drives a corpus genesis through the sink and reads back
-   `head_cid` byte-identical to the corpus CID + a non-empty `tentative_root`. Deployed address +
+   `head_cid` byte-identical to the corpus CID + a non-empty `tentative_root`; separately, a real
+   4-op DID was anchored via `--did --submit` and its on-chain head matched the directory's
+   published head (the resolver cross-check, live). Deployed address +
    RPC notes in [`snfoundry.toml`](snfoundry.toml); the gated manual E2E job is
    [`.github/workflows/e2e-sepolia.yml`](.github/workflows/e2e-sepolia.yml).
 5. Witness / resolver verification library — **the V1 product** ("atproto identity DMARC"):
