@@ -7,9 +7,13 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "witness": "./src/cli.ts"
+  },
   "scripts": {
     "test": "node --test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "node src/cli.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

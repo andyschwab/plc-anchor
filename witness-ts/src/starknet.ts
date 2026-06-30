@@ -114,7 +114,14 @@ export function httpCall(rpcUrl: string, contractAddress: string): StarknetCall 
         },
       }),
     });
-    const json = (await res.json()) as { result?: string[]; error?: { message: string } };
+    const body = await res.text();
+    if (!res.ok) throw new Error(`starknet_call ${selector}: HTTP ${res.status} — ${body.slice(0, 200)}`);
+    let json: { result?: string[]; error?: { message: string } };
+    try {
+      json = JSON.parse(body);
+    } catch {
+      throw new Error(`starknet_call ${selector}: non-JSON response from ${rpcUrl} — ${body.slice(0, 200)}`);
+    }
     if (json.error) throw new Error(`starknet_call ${selector}: ${json.error.message}`);
     if (!json.result) throw new Error(`starknet_call ${selector}: empty result`);
     return json.result;

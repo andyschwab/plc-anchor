@@ -29,7 +29,27 @@ email receiver enables DMARC.
   anchor's confirmed head is absent from the directory's live chain AND the directory head is
   older than a conservative skew horizon (default 14d) — every recent/edge case is
   `skew-pending` (`tentative-consistent`), honoring the never-false-`diverged` invariant.
-- **P5.5 (next):** the CLI demonstrator + a live read against the Sepolia deployment.
+- **P5.5 (done):** `src/cli.ts` — the `witness` CLI; `test/live.test.ts` — a gated live read
+  against the Sepolia deployment (runs only with `WITNESS_LIVE_RPC` set).
+
+## Usage
+
+```sh
+# Library:
+import { check, AnchorReader, DirectoryClient } from "@plc-anchor/witness";
+const anchor = AnchorReader.http(process.env.STARKNET_RPC, CONTRACT_ADDR);
+const result = await check("did:plc:…", anchor, new DirectoryClient());
+// → { status: "confirmed" | "tentative-consistent" | "diverged" | "absent", reason, evidence }
+
+# CLI (exit 2 on `diverged`, else 0):
+STARKNET_RPC=https://<sepolia-rpc> node src/cli.ts did:plc:… [--contract 0x…] [--directory URL]
+
+# Live read against the deployment:
+WITNESS_LIVE_RPC=https://<sepolia-rpc> node --test test/live.test.ts
+```
+
+Adoption is the DMARC ramp: start by logging the status, then quarantine on `diverged`, then
+refuse to relay — each resolver decides unilaterally.
 
 ## Toolchain
 
