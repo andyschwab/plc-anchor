@@ -8,6 +8,24 @@
 use crate::export::{parse_jsonl, ExportEntry};
 use anyhow::{Context, Result};
 
+/// Fetch one DID's complete operation log from the directory's `/<did>/log/audit` endpoint — a
+/// JSON array (not JSONL), ordered genesis-first, each element sharing the [`ExportEntry`] shape
+/// (`did`/`operation`/`cid`/`nullified`/`createdAt`). This is the per-DID onboarding path: it
+/// pulls exactly one DID's history in a single request instead of scanning the whole `/export`
+/// firehose. Feed the result straight to [`crate::pipeline::process_batch`].
+pub fn fetch_audit_log(base_url: &str, did: &str) -> Result<Vec<ExportEntry>> {
+    let base = base_url.trim_end_matches('/');
+    let url = format!("{base}/{did}/log/audit");
+    let body = ureq::Agent::new_with_defaults()
+        .get(&url)
+        .call()
+        .with_context(|| format!("GET {url}"))?
+        .body_mut()
+        .read_to_string()
+        .with_context(|| format!("read body of {url}"))?;
+    serde_json::from_str(&body).with_context(|| format!("parse audit log for {did}"))
+}
+
 /// A paginated source of export entries, ordered by `createdAt` ascending.
 pub trait OpSource {
     /// Fetch up to `count` entries with `createdAt` strictly after `after` (or from the start

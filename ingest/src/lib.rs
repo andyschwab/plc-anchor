@@ -32,6 +32,6 @@ pub use cursor::Cursor;
 pub use export::ExportEntry;
 pub use pipeline::{process_batch, Indexer, Stats};
 pub use sink::{AnchorSink, Delta, DryRunSink};
-pub use source::{FixtureSource, HttpExportSource, OpSource};
+pub use source::{fetch_audit_log, FixtureSource, HttpExportSource, OpSource};
 #[cfg(feature = "live")]
 pub use starknet_sink::{StarknetConfig, StarknetSink};
