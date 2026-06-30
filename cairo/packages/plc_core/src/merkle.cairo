@@ -111,35 +111,13 @@ fn byte_lt(a: @ByteArray, b: @ByteArray) -> bool {
 }
 
 /// Sort `entries` (`(did, head_cid)`) by `did` ascending and return their leaf digests in
-/// that canonical order. Insertion sort — the anchored set per query is small and this runs
-/// in a view; correctness over micro-optimization. This ordering is part of the pinned
-/// format.
+/// that canonical order. **Merge sort, O(N log N)** — this runs in a read-time view over the
+/// *whole* roster (every proof/root call rebuilds the tree), so the sort cost scales with the
+/// anchored set; the asymptotics matter for adoption at scale. DIDs are distinct, so the
+/// total order is strict and the result is insertion-order-independent — part of the pinned
+/// format (a different order would fork the root).
 pub fn sorted_leaves(entries: Array<(ByteArray, ByteArray)>) -> Array<ByteArray> {
-    // Insertion sort into `ordered`, comparing by did.
-    let mut ordered: Array<(ByteArray, ByteArray)> = array![];
-    let mut i = 0;
-    while i < entries.len() {
-        let (did, head) = entries.at(i).clone();
-        // Find insertion position, rebuilding `ordered` with the new entry spliced in.
-        let mut rebuilt: Array<(ByteArray, ByteArray)> = array![];
-        let mut placed = false;
-        let mut j = 0;
-        while j < ordered.len() {
-            let (od, oh) = ordered.at(j).clone();
-            if !placed && byte_lt(@did, @od) {
-                rebuilt.append((did.clone(), head.clone()));
-                placed = true;
-            }
-            rebuilt.append((od, oh));
-            j += 1;
-        }
-        if !placed {
-            rebuilt.append((did.clone(), head.clone()));
-        }
-        ordered = rebuilt;
-        i += 1;
-    }
-
+    let ordered = merge_sort(entries);
     let mut leaves: Array<ByteArray> = array![];
     let mut k = 0;
     while k < ordered.len() {
@@ -148,6 +126,61 @@ pub fn sorted_leaves(entries: Array<(ByteArray, ByteArray)>) -> Array<ByteArray>
         k += 1;
     }
     leaves
+}
+
+/// Top-down merge sort of `entries` by `did` ascending. Stable (left wins ties), though DIDs
+/// are distinct so ties never occur; the canonical order is what the pinned root commits to.
+fn merge_sort(entries: Array<(ByteArray, ByteArray)>) -> Array<(ByteArray, ByteArray)> {
+    let n = entries.len();
+    if n <= 1 {
+        return entries;
+    }
+    let mid = n / 2;
+    let mut left: Array<(ByteArray, ByteArray)> = array![];
+    let mut right: Array<(ByteArray, ByteArray)> = array![];
+    let mut i = 0;
+    while i < n {
+        let item = entries.at(i).clone();
+        if i < mid {
+            left.append(item);
+        } else {
+            right.append(item);
+        }
+        i += 1;
+    }
+    merge(merge_sort(left), merge_sort(right))
+}
+
+/// Merge two did-sorted runs into one, preserving the ascending order.
+fn merge(
+    left: Array<(ByteArray, ByteArray)>, right: Array<(ByteArray, ByteArray)>,
+) -> Array<(ByteArray, ByteArray)> {
+    let mut out: Array<(ByteArray, ByteArray)> = array![];
+    let ln = left.len();
+    let rn = right.len();
+    let mut i = 0;
+    let mut j = 0;
+    while i < ln && j < rn {
+        let (ld, lh) = left.at(i).clone();
+        let (rd, rh) = right.at(j).clone();
+        // Take the left entry unless the right did is strictly smaller (stable on ties).
+        if !byte_lt(@rd, @ld) {
+            out.append((ld, lh));
+            i += 1;
+        } else {
+            out.append((rd, rh));
+            j += 1;
+        }
+    }
+    while i < ln {
+        out.append(left.at(i).clone());
+        i += 1;
+    }
+    while j < rn {
+        out.append(right.at(j).clone());
+        j += 1;
+    }
+    out
 }
 
 /// Merkle root over `leaves` (already in canonical order). Pairs left-to-right, promoting a
