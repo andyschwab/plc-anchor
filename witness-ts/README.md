@@ -24,7 +24,12 @@ email receiver enables DMARC.
   mirroring `ingest`'s ByteArray ABI codec (no SDK); selectors precomputed from the `starknet`
   crate (`src/selectors.ts`, Node has no Keccak). `src/directory.ts` — the PLC audit-log client
   + head selection (the directory's `createdAt` clock, for P5.4's skew check).
-- **P5.4 (next):** the graduated-status `check(did)` with the conservative clock rule.
+- **P5.4 (done):** `src/status.ts` — the graduated-status `check(did)` ladder
+  (`confirmed`/`tentative-consistent`/`diverged`/`absent`). `diverged` fires only when the
+  anchor's confirmed head is absent from the directory's live chain AND the directory head is
+  older than a conservative skew horizon (default 14d) — every recent/edge case is
+  `skew-pending` (`tentative-consistent`), honoring the never-false-`diverged` invariant.
+- **P5.5 (next):** the CLI demonstrator + a live read against the Sepolia deployment.
 
 ## Toolchain
 

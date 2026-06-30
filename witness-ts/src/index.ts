@@ -21,3 +21,11 @@ export {
   httpCall,
   type StarknetCall,
 } from "./starknet.ts";
+export {
+  type AnchorView,
+  check,
+  type CheckOptions,
+  type CheckResult,
+  type DirectorySource,
+  type Status,
+} from "./status.ts";
