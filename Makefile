@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check cairo-build cairo-test rust-build rust-test conformance fmt ci clean test-backend test-snforge test-offline
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-selectors gen-selectors-check cairo-build cairo-test deploy-sepolia rust-build rust-test witness-test conformance fmt ci clean test-backend test-snforge test-offline
 
 # Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
 # (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
@@ -67,6 +67,12 @@ gen-merkle-vectors-check: gen-merkle-vectors ## Fail if either Merkle vector con
 	git diff --exit-code -- cairo/packages/plc_core/tests/merkle_vectors_generated.cairo \
 		witness-ts/test/vectors/merkle-vectors.json
 
+gen-selectors: ## Regenerate witness-ts Starknet selectors from the `starknet` crate (needs the `live` deps)
+	cargo run -p ingest --example gen_selectors --features live
+
+gen-selectors-check: gen-selectors ## Fail if the pinned selectors drifted (gated CI: e2e-sepolia has the live deps)
+	git diff --exit-code -- witness-ts/src/selectors.ts
+
 # ---- Cairo (Scarb workspace) -------------------------------------------------
 cairo-build: ## Build the Cairo workspace (drisl, plc_core)
 	cd cairo && scarb build
@@ -95,6 +101,10 @@ rust-test: ## Test + lint the Rust workspace
 	cargo clippy --workspace -- -D warnings
 	cargo test --workspace
 
+# ---- Witness library (TypeScript) --------------------------------------------
+witness-test: ## Run the witness-ts library tests (Node-native TS; no install needed)
+	cd witness-ts && node --test
+
 # ---- Conformance / differential harness --------------------------------------
 conformance: ## Three-way DRISL/CID agreement (Cairo vs Rust oracle vs TS sidecar)
 	cd cairo && $(CAIRO_TEST) --package drisl
@@ -106,7 +116,7 @@ fmt: ## Format Rust + Cairo
 	cargo fmt
 	cd cairo && scarb fmt
 
-ci: gen-vectors-check gen-plc-vectors-check gen-op-verify-vectors-check gen-recovery-vectors-check gen-merkle-vectors-check cairo-build cairo-test rust-test conformance ## Everything CI runs
+ci: gen-vectors-check gen-plc-vectors-check gen-op-verify-vectors-check gen-recovery-vectors-check gen-merkle-vectors-check cairo-build cairo-test rust-test witness-test conformance ## Everything CI runs
 
 clean: ## Remove build artifacts
 	cargo clean

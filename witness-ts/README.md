@@ -19,9 +19,12 @@ email receiver enables DMARC.
   byte-identical to the contract's tree (`cairo/packages/plc_core/src/merkle.cairo`) via the
   shared `gen-merkle-vectors` fixture. This is the trust primitive: recompute the root from a
   proof and compare it to a root fetched independently, so the proof server stays untrusted.
-- **P5.3 (next):** the data path — directory document + `/log/audit`, and Starknet RPC reads
-  (`tentative_root` / `confirmed_root` / `head_cid` / `tentative_proof` / `confirmed_proof`).
-- **P5.4:** the graduated-status `check(did)` with the conservative clock-reconciliation rule.
+- **P5.3 (done):** the data path. `src/starknet.ts` — hand-encoded `starknet_call` reads of
+  the anchor views (`tentative_root` / `confirmed_root` / `head_cid` / `tentative_proof` / …),
+  mirroring `ingest`'s ByteArray ABI codec (no SDK); selectors precomputed from the `starknet`
+  crate (`src/selectors.ts`, Node has no Keccak). `src/directory.ts` — the PLC audit-log client
+  + head selection (the directory's `createdAt` clock, for P5.4's skew check).
+- **P5.4 (next):** the graduated-status `check(did)` with the conservative clock rule.
 
 ## Toolchain
 
