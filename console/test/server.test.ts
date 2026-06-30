@@ -86,3 +86,22 @@ test("unknown route → 404, bad body → 400", async () => {
   assert.equal((await req("GET", "/nope")).status, 404);
   assert.equal((await req("POST", "/roster/dids", { nope: 1 })).status, 400);
 });
+
+test("worker trigger → 503 when the action is not configured", async () => {
+  // This server was built without `actions`, so all worker triggers are unconfigured.
+  const { status, json } = await req("POST", "/worker/onboard");
+  assert.equal(status, 503);
+  assert.match(json.error, /not configured/);
+});
+
+test("worker trigger runs a configured action", async () => {
+  const wired = createConsoleServer(RosterStore.open(), {
+    contractAddress: "0x0",
+    actions: { refresh: async () => ({ diverged: 3 }) },
+  });
+  await new Promise<void>((r) => wired.listen(0, "127.0.0.1", r));
+  const { port } = wired.address() as AddressInfo;
+  const res = await fetch(`http://127.0.0.1:${port}/worker/refresh`, { method: "POST" });
+  assert.equal((await res.json()).diverged, 3);
+  wired.close();
+});

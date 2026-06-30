@@ -13,4 +13,17 @@ export {
   pdsHostFromOp,
 } from "./pdshost.ts";
 export { type CheckOutcome, RefreshService, type StatusChecker } from "./refresh.ts";
-export { createConsoleServer, type ServerConfig } from "./server.ts";
+export {
+  type CommandRunner,
+  Onboarder,
+  type OnboardConfig,
+  type RunResult,
+  SpawnRunner,
+} from "./onboard.ts";
+export {
+  DiscoverService,
+  type ExportEntry,
+  ExportClient,
+  type ScanResult,
+} from "./discover.ts";
+export { createConsoleServer, type ServerConfig, type WorkerActions } from "./server.ts";

@@ -32,9 +32,13 @@ a human must approve before the onboarder writes on-chain. Transitions are valid
   and resolved DID-doc shapes).
 - `src/refresh.ts` — status refresher over an injectable `StatusChecker` (testable without a
   live anchor).
+- `src/onboard.ts` — drives `ingest --did --submit` over an injectable `CommandRunner`
+  (`approved → onboarding → anchored`, or back to `approved` on failure).
+- `src/discover.ts` — the filter discover-scan: polls a mirror's `/export`, matches `pds_host`,
+  upserts candidates (behind the approve gate).
 - `src/witness.ts` — the one binding to `@plc-anchor/witness` (isolated; loaded only at runtime).
 - `src/server.ts` — framework-free `node:http` API.
-- `src/main.ts` — entry point: API + the periodic refresh loop.
+- `src/main.ts` — entry point: API + the worker loops.
 
 ## API
 
@@ -49,6 +53,13 @@ a human must approve before the onboarder writes on-chain. Transitions are valid
 | DELETE | `/roster/dids/:did` | → `removed` |
 | GET/POST | `/roster/filters` | list / add a `pds_host` filter (`{value}`) |
 | DELETE | `/roster/filters/:id` | remove a filter |
+| POST | `/worker/discover` | run one discover-scan now |
+| POST | `/worker/onboard` | onboard all approved DIDs now (writes on-chain) |
+| POST | `/worker/refresh` | refresh all anchored DIDs' status now |
+
+The read-only loops (discover, refresh) run on timers; **onboarding never does** — it spends
+on-chain, so it is operator-triggered only (`POST /worker/onboard`), reinforcing the approve
+gate.
 
 ## Running
 
@@ -66,7 +77,5 @@ Env: `PORT` (8787), `ROSTER_DB` (`./roster.db`), `STARKNET_RPC`, `ANCHOR_CONTRAC
 
 ## Not yet here (next build phases)
 
-Onboarder (drive `ingest --submit` as a subprocess) · the filter **discover scan** (poll a
-mirror's `/export`, match `pds_host`, upsert candidates) · the UI · the `didmarc.dev` landing
-page · the Fly deploy + mainnet repoint. See the plan; the durable record lands in
-`docs/HISTORY.md` when item 6 completes.
+The UI · the `didmarc.dev` landing page · the Fly deploy + mainnet repoint. See the plan; the
+durable record lands in `docs/HISTORY.md` when item 6 completes.

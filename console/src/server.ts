@@ -9,10 +9,19 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { RosterStore } from "./roster.ts";
 
+/** Optional worker actions, wired by `main.ts`, exposed as manual `POST /worker/*` triggers so
+ * an operator can kick a cycle without waiting for the interval. Absent actions return 503. */
+export interface WorkerActions {
+  discover?: () => Promise<unknown>;
+  onboard?: () => Promise<unknown>;
+  refresh?: () => Promise<unknown>;
+}
+
 export interface ServerConfig {
   contractAddress: string;
   /** Reported by `/healthz`; set by the worker after each successful refresh. */
   lastRefreshAt?: () => number | null;
+  actions?: WorkerActions;
 }
 
 interface Route {
@@ -135,7 +144,16 @@ function routes(): Route[] {
         return { ok: true };
       },
     },
+    { method: "POST", parts: ["worker", "discover"], handle: ({ config }) => runAction(config, "discover") },
+    { method: "POST", parts: ["worker", "onboard"], handle: ({ config }) => runAction(config, "onboard") },
+    { method: "POST", parts: ["worker", "refresh"], handle: ({ config }) => runAction(config, "refresh") },
   ];
+}
+
+function runAction(config: ServerConfig, name: keyof NonNullable<ServerConfig["actions"]>): Promise<unknown> {
+  const action = config.actions?.[name];
+  if (action === undefined) throw new HttpError(503, `worker action '${name}' not configured`);
+  return Promise.resolve(action());
 }
 
 async function readBody(req: IncomingMessage): Promise<unknown> {

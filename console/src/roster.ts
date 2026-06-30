@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS filters (
   created_at INTEGER NOT NULL,
   UNIQUE(type, value)
 );
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 interface RosterRow {
@@ -244,5 +248,22 @@ export class RosterStore {
 
   removeFilter(id: number): void {
     this.#db.prepare("DELETE FROM filters WHERE id = ?").run(id);
+  }
+
+  // ---- meta (small KV, e.g. the discover cursor) --------------------------
+
+  getMeta(key: string): string | null {
+    const row = this.#db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row ? row.value : null;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.#db
+      .prepare(
+        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+      )
+      .run(key, value, value);
   }
 }
