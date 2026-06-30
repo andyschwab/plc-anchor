@@ -46,9 +46,12 @@ From these:
 - **One permissionless endpoint (a Starknet contract).** `import(did, chain)` verifies a
   DID's full op log from genesis and commits its head; `submit_op(op)` appends a new
   signed op. Anyone may import any DID's (public, self-certifying) history; **new** ops are
-  authorized by the owner's rotation key directly, via Starknet **native account
-  abstraction** — the PLC key *is* the signer. This single primitive is both the normal
-  write path and the censorship-resistance escape hatch.
+  authorized by the op's **embedded rotation-key signature, verified in-contract** — never
+  by the Starknet transaction signer or fee payer, who may be anyone (that is the
+  permissionless property). Native account abstraction and paymasters are gas/UX only (who
+  *pays*), never authorization (who may *write*); do not require the PLC key to be the
+  Starknet account signer. This single primitive is both the normal write path and the
+  censorship-resistance escape hatch.
 - **Verification runs as a contract.** The network proves the blocks and settles to
   Ethereum. We run no bespoke prover and — initially — no sequencer (deploy on public
   Starknet first; an appchain is a later option, §6).
@@ -195,8 +198,9 @@ Repos: `github.com/eurosky-social` (`u-at-proto`, `eu-haul`).
 
 - **Cairo 2.x** · **Scarb** (build) · **Starknet Foundry / `snforge`** (tests, gas
   reporting).
-- **Starknet** (public network first) · **native account abstraction** (PLC key as signer)
-  · **paymasters** (commitment-cost allocation).
+- **Starknet** (public network first) · **native account abstraction** + **paymasters**
+  (gas/UX and commitment-cost allocation only — never authorization; the op's embedded
+  signature, verified in-contract, is the sole authority).
 - **Crypto:** Cairo corelib `sha256` + `secp256k1` + `secp256r1` (syscalls, in-contract);
   Garaga only if an exotic curve is ever needed.
 - **Off-chain (Rust):** sync indexer + differential oracle (`atproto-dasl`).
