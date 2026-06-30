@@ -19,28 +19,55 @@ import { MaliciousDirectory } from "./mirror.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(HERE, "scenarios.generated.json");
 
-/** A scenario as emitted by the generator — data + prose + expectation, fully self-describing. */
+/** Anchor reads for a read-class scenario (real roots + inclusion proofs). */
+export interface ScenarioAnchor {
+  did: string;
+  anchored: boolean;
+  confirmedHead: string;
+  tentativeHead: string;
+  confirmedRoot: string;
+  confirmedProof: { sibling: string; siblingIsLeft: boolean }[];
+  tentativeRoot: string;
+  tentativeProof: { sibling: string; siblingIsLeft: boolean }[];
+}
+
+/** The defender's verdict on a write-class adversarial submission. */
+export interface WriteVerdict {
+  rejected: boolean;
+  /** The contract / gate's rejection reason string (e.g. `recovery-weaker-key`). */
+  reason: string;
+  /** Which module enforces it (in-contract verify/recovery, or the off-chain ingest gate). */
+  defender: string;
+  /** How this rejection was ground-truthed at fixture-generation time. */
+  provenance: string;
+}
+
+/**
+ * A scenario as emitted by the generator — data + prose + expectation, fully self-describing.
+ *
+ * `read` scenarios drive the witness `check()` (anchor + directory present, `expect` a status).
+ * `write` scenarios are malicious submissions the contract/ingest gate rejects (`proposed` +
+ * `verdict`), ground-truthed at generation time against @did-plc/lib.
+ */
 export interface Scenario {
   id: string;
   title: string;
   threat: string;
   class: "read" | "write";
-  /** True for the non-attack cases the alarm must stay silent on (the §0 restraint wall). */
-  benign: boolean;
   setup: string[];
-  anchor: {
-    did: string;
-    anchored: boolean;
-    confirmedHead: string;
-    tentativeHead: string;
-    confirmedRoot: string;
-    confirmedProof: { sibling: string; siblingIsLeft: boolean }[];
-    tentativeRoot: string;
-    tentativeProof: { sibling: string; siblingIsLeft: boolean }[];
-  };
-  directory: { auditLog: AuditEntry[] };
-  expect: { status: string; reason: string };
   lesson: string;
+  /** read-class only. True for the non-attack cases the alarm must stay silent on (the §0 wall). */
+  benign?: boolean;
+  /** read-class only. */
+  anchor?: ScenarioAnchor;
+  /** read-class only. */
+  directory?: { auditLog: AuditEntry[] };
+  /** read-class only. */
+  expect?: { status: string; reason: string };
+  /** write-class only: what the attacker submits. */
+  proposed?: string[];
+  /** write-class only: the rejection. */
+  verdict?: WriteVerdict;
 }
 
 export interface Fixture {
@@ -61,9 +88,8 @@ const hexToBytes = (h: string): Uint8Array =>
 const decodeProof = (steps: { sibling: string; siblingIsLeft: boolean }[]): ProofStep[] =>
   steps.map((s) => ({ sibling: hexToBytes(s.sibling), siblingIsLeft: s.siblingIsLeft }));
 
-/** Reconstruct an `AnchorView` from a scenario's fixture bytes (proofs stay real). */
-export function anchorViewFor(s: Scenario): AnchorView {
-  const a = s.anchor;
+/** Reconstruct an `AnchorView` from a read-class scenario's fixture bytes (proofs stay real). */
+export function anchorViewFor(a: ScenarioAnchor): AnchorView {
   return {
     isAnchored: async () => a.anchored,
     confirmedProof: async () => ({ head: a.confirmedHead, proof: decodeProof(a.confirmedProof) }),
@@ -77,9 +103,12 @@ export function loadFixture(): Fixture {
   return JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as Fixture;
 }
 
-/** Run one scenario through the real `check()` and compare to its expectation. */
+/** Run one read-class scenario through the real `check()` and compare to its expectation. */
 export async function runScenario(s: Scenario, fixture: Fixture): Promise<ScenarioOutcome> {
-  const actual = await check(s.anchor.did, anchorViewFor(s), new MaliciousDirectory(s.directory.auditLog), {
+  if (!s.anchor || !s.directory || !s.expect) {
+    throw new Error(`runScenario: ${s.id} is not a read-class scenario`);
+  }
+  const actual = await check(s.anchor.did, anchorViewFor(s.anchor), new MaliciousDirectory(s.directory.auditLog), {
     now: () => fixture.now,
     skewHorizonMs: fixture.skewHorizonMs,
   });

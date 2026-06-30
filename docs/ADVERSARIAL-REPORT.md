@@ -2,24 +2,118 @@
 
 # DIDMARC — adversarial validation report
 
-DIDMARC ("atproto identity DMARC") gives every did:plc an independent, on-chain proof of its complete, current, non-equivocated history, exposed as a graduated status a resolver enforces **unilaterally**. This report puts that claim under adversarial pressure: each scenario builds a **real signed did:plc chain**, has a **malicious PLC mirror** serve a forged/lagging history, and runs the **real witness** against the **real anchor commitment**. Nothing here is mocked but the transport — the decision logic is the shipping `check()`.
+DIDMARC ("atproto identity DMARC") gives every did:plc an independent, on-chain proof of its complete, current, non-equivocated history, exposed as a graduated status a resolver enforces **unilaterally**. This report puts that claim under adversarial pressure. Every scenario builds a **real signed did:plc chain** and runs a real defense:
 
-The governing invariant (Phase 5 plan §0): **never a false `diverged`.** A false alarm makes an operator disable the check, removing the very protection it offers — so every ambiguous edge must resolve to a non-alarming status. The scenarios below are chosen to show both halves: the alarm firing when it should, and — just as important — staying silent when the disagreement is benign.
+- **read-side** scenarios have a **malicious or faulty PLC mirror** serve a forged/lagging history; the defender is the shipping witness `check()`, run here against the real anchor commitment. Nothing is mocked but the transport — the decision logic is the code a resolver runs.
+- **write-side** scenarios are **malicious submissions to the permissionless endpoint**; the defender is the contract (`plc_core::verify` / `recovery`) or the off-chain ingest integrity gate. Each is ground-truthed against `@did-plc/lib` — the same oracle the contract is differential-green against.
+
+The governing invariant (Phase 5 plan §0): **never a false `diverged`.** A false alarm makes an operator disable the check, removing the very protection it offers — so every ambiguous read-side edge resolves to a non-alarming status. The scenarios below show both halves: the alarm firing when it should, and — just as important — staying silent when the disagreement is benign.
 
 ## Summary
 
-| # | scenario | verdict | expected | result |
-|---|---|---|---|---|
-| 1 | Equivocation — a mirror omits a confirmed op | `diverged` 🚨 | `diverged` | ✅ pass |
-| 2 | Honest lag — the directory is legitimately ahead | `tentative-consistent` ✅ | `tentative-consistent` | ✅ pass |
+| # | class | scenario | verdict | expected / reason | result |
+|---|---|---|---|---|---|
+| 1 | read | Confirmed — the directory serves exactly what the anchor proved | `confirmed` ✅ | `confirmed` | ✅ pass |
+| 2 | read | Young DID — anchored, but nothing is immutable yet | `tentative-consistent` ✅ | `tentative-consistent` | ✅ pass |
+| 3 | read | Honest lag — the directory is legitimately ahead | `tentative-consistent` ✅ | `tentative-consistent` | ✅ pass |
+| 4 | read | Equivocation — a mirror omits a confirmed op | `diverged` 🚨 | `diverged` | ✅ pass |
+| 5 | read | Vanishing DID — a mirror erases an anchored identity | `diverged` 🚨 | `diverged` | ✅ pass |
+| 6 | read | Window-edge skew — a contradiction that benign skew could explain (the §0 wall) | `tentative-consistent` ✅ | `tentative-consistent` | ✅ pass |
+| 7 | read | Anchor self-fault — the witness distrusts its own unproven head | `tentative-consistent` ✅ | `tentative-consistent` | ✅ pass |
+| 8 | read | Coverage gap — the DID isn't anchored at all | `absent` ➖ | `absent` | ✅ pass |
+| 9 | write | Forged signature — an unsigned op submitted as authentic | `rejected` ⛔ | `invalid-sig` | ✅ enforced |
+| 10 | write | Weaker-key recovery — a low-priority key tries to override a higher one | `rejected` ⛔ | `recovery-weaker-key` | ✅ enforced |
+| 11 | write | Late recovery — a valid key, but after the 72h window | `rejected` ⛔ | `late-recovery` | ✅ enforced |
+| 12 | write | Integrity mismatch — bytes that don't hash to their claimed CID | `rejected` ⛔ | `cid-mismatch (delta dropped)` | ✅ enforced |
 
 _Clock pinned to 2026-06-30T00:00:00.000Z; skew horizon 14 days._
 
-**All scenarios behaved as specified.**
+**All read-side scenarios behaved as specified; all write-side submissions were rejected.**
 
 ---
 
-## 1. Equivocation — a mirror omits a confirmed op
+## 1. Confirmed — the directory serves exactly what the anchor proved
+
+> **Verdict: `confirmed`** ✅ — reason `confirmed-head-match`
+
+**Threat.** The baseline: no attack, full agreement. What a healthy did:plc looks like through the witness — the strongest possible assertion.
+
+**Setup.**
+- DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored; its CONFIRMED head is opB (bafyreigxuanmkaq…), proven on Starknet and immutable past the 72h window.
+- The directory serves the same history, with opB as its current live head.
+
+**What the directory serves.**
+
+| op CID | directory createdAt | state |
+|---|---|---|
+| `bafyreihqzyvgiepjrse…` | 2026-01-01T00:00:00.000Z | live |
+| `bafyreigxuanmkaq2522…` **(head)** | 2026-02-01T00:00:00.000Z | live |
+
+**Witness evidence.**
+
+- anchor confirmed head: `bafyreigxuanmkaq2522…`
+- anchor tentative head: `bafyreigxuanmkaq2522…`
+- directory head: `bafyreigxuanmkaq2522…`
+- confirmed-head inclusion proof verified against an independently-fetched root: ✓
+
+**What this means.** The witness re-derives the anchor's confirmed root from an independently-fetched inclusion proof and finds the directory's live head is byte-identical. This is `confirmed` — the DMARC `pass`. A resolver can treat the directory's answer as cryptographically backed.
+
+## 2. Young DID — anchored, but nothing is immutable yet
+
+> **Verdict: `tentative-consistent`** ✅ — reason `within-window-uncommitted`
+
+**Threat.** Not an attack — the two-tier model in action. A freshly-anchored DID whose ops are all still inside the 72h window, so the anchor has made nothing immutable. There is no confirmed history to contradict.
+
+**Setup.**
+- DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored, but its only op is recent — still nullifiable inside the 72h recovery window.
+- The anchor's CONFIRMED tier is empty; it holds only a TENTATIVE tip.
+- The directory serves that same recent op.
+
+**What the directory serves.**
+
+| op CID | directory createdAt | state |
+|---|---|---|
+| `bafyreihqzyvgiepjrse…` | 2026-06-29T00:00:00.000Z | live |
+| `bafyreienfqk6fwpkku5…` **(head)** | 2026-06-29T12:00:00.000Z | live |
+
+**Witness evidence.**
+
+- anchor confirmed head: `—`
+- anchor tentative head: `bafyreienfqk6fwpkku5…`
+- directory head: `bafyreienfqk6fwpkku5…`
+- confirmed-head inclusion proof verified against an independently-fetched root: ✗
+
+**What this means.** With nothing confirmed, the strongest honest answer is `tentative-consistent`, never an alarm. The anchor refuses to assert immutability it hasn't earned yet — there is no hard `reject-unless-confirmed` gate (REFERENCE.md §4).
+
+## 3. Honest lag — the directory is legitimately ahead
+
+> **Verdict: `tentative-consistent`** ✅ — reason `confirmed-head-in-live-chain`
+
+**Threat.** Not an attack — the benign case the alarm must never fire on. The directory has accepted a new, valid op the anchor hasn't ingested/confirmed yet. A trigger-happy check would cry wolf here, and the operator would disable it (Phase 5 plan §0).
+
+**Setup.**
+- DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored, with opA (bafyreienfqk6fwp…) as its CONFIRMED head.
+- The directory honestly serves genesis → opA → opB: it has moved on to a newer op (opB) the anchor hasn't confirmed yet.
+- opA — everything the anchor has proven — is still right there on the directory's live chain.
+
+**What the directory serves.**
+
+| op CID | directory createdAt | state |
+|---|---|---|
+| `bafyreihqzyvgiepjrse…` | 2026-02-01T00:00:00.000Z | live |
+| `bafyreienfqk6fwpkku5…` | 2026-03-01T00:00:00.000Z | live |
+| `bafyreigxuanmkaq2522…` **(head)** | 2026-06-29T00:00:00.000Z | live |
+
+**Witness evidence.**
+
+- anchor confirmed head: `bafyreienfqk6fwpkku5…`
+- anchor tentative head: `bafyreienfqk6fwpkku5…`
+- directory head: `bafyreigxuanmkaq2522…`
+- confirmed-head inclusion proof verified against an independently-fetched root: ✓
+
+**What this means.** The histories AGREE on everything the anchor has proven — the only difference is newer ops the anchor hasn't caught up to. `tentative-consistent`, not an alarm. This restraint is what earns the alarm its credibility: `diverged` means something precisely because lag does not trigger it.
+
+## 4. Equivocation — a mirror omits a confirmed op
 
 > **Verdict: `diverged`** 🚨 — reason `confirmed-head-absent`
 
@@ -44,32 +138,160 @@ _Clock pinned to 2026-06-30T00:00:00.000Z; skew horizon 14 days._
 - directory head: `bafyreia4eeiy5olozti…`
 - confirmed-head inclusion proof verified against an independently-fetched root: ✓
 
-**What this means.** The witness re-derives the anchor's confirmed root from an independently-fetched inclusion proof, then finds the confirmed head is NOWHERE in the mirror's live chain and the mirror's head is far too old to be lag. This is the sole actionable alarm — `diverged`, the DMARC `reject`. A resolver acts on it unilaterally: no PLC-side coordination, no trust in the mirror.
+**What this means.** The witness verifies the confirmed head against an independently-fetched root, then finds it NOWHERE in the mirror's live chain — and the mirror's head is far too old to be lag. This is the sole actionable alarm — `diverged`, the DMARC `reject`. A resolver acts on it unilaterally: no PLC-side coordination, no trust in the mirror.
 
-## 2. Honest lag — the directory is legitimately ahead
+## 5. Vanishing DID — a mirror erases an anchored identity
 
-> **Verdict: `tentative-consistent`** ✅ — reason `confirmed-head-in-live-chain`
+> **Verdict: `diverged`** 🚨 — reason `confirmed-head-absent`
 
-**Threat.** Not an attack — the benign case the alarm must never fire on. The directory has accepted a new, valid op the anchor has not ingested/confirmed yet. A trigger-happy check would cry wolf here, and the operator would disable it (Phase 5 plan §0).
+**Threat.** A censoring mirror returns an empty (or 404) audit log for a DID the anchor knows is anchored — trying to make an identity simply disappear from a resolver's view.
 
 **Setup.**
-- DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored, with opA (bafyreienfqk6fwp…) as its CONFIRMED head.
-- The directory honestly serves genesis → opA → opB: it has moved on to a newer op (opB) that the anchor simply hasn't confirmed yet.
-- opA — everything the anchor has proven — is still right there on the directory's live chain.
+- DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored with opB (bafyreigxuanmkaq…) as its CONFIRMED head.
+- The malicious mirror serves an EMPTY audit log — as if the DID never existed.
+
+**What the malicious mirror serves.**
+
+_(empty audit log — the mirror serves nothing for this DID)_
+
+**Witness evidence.**
+
+- anchor confirmed head: `bafyreigxuanmkaq2522…`
+- anchor tentative head: `bafyreigxuanmkaq2522…`
+- directory head: `—`
+- confirmed-head inclusion proof verified against an independently-fetched root: ✓
+
+**What this means.** An anchored DID cannot be silently erased. The anchor still proves a confirmed head the (empty) directory serves nothing for, and an absent directory head is not within any skew horizon → `diverged`. Censorship by omission is exactly what the anchor makes detectable.
+
+## 6. Window-edge skew — a contradiction that benign skew could explain (the §0 wall)
+
+> **Verdict: `tentative-consistent`** ✅ — reason `skew-pending`
+
+**Threat.** The hardest case, and the one a naive check gets fatally wrong. Near the 72h edge, the anchor (later clock) can accept a recovery the directory rejected — committing to a head the directory never served. That looks IDENTICAL to omission, but it is benign. Alarming here would be a false positive, and false positives get the check turned off.
+
+**Setup.**
+- DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored; the anchor's CONFIRMED head is opB (bafyreigxuanmkaq…).
+- The directory's live chain does NOT contain opB — but its head is RECENT (a few days old), well inside the conservative skew horizon.
+- Without the anchor's exact per-op observation time, this is indistinguishable from a window-edge recovery the two sides timed differently.
 
 **What the directory serves.**
 
 | op CID | directory createdAt | state |
 |---|---|---|
-| `bafyreihqzyvgiepjrse…` | 2026-02-01T00:00:00.000Z | live |
-| `bafyreienfqk6fwpkku5…` | 2026-03-01T00:00:00.000Z | live |
-| `bafyreigxuanmkaq2522…` **(head)** | 2026-06-29T00:00:00.000Z | live |
+| `bafyreihqzyvgiepjrse…` | 2026-06-20T00:00:00.000Z | live |
+| `bafyreia4eeiy5olozti…` **(head)** | 2026-06-25T00:00:00.000Z | live |
+
+**Witness evidence.**
+
+- anchor confirmed head: `bafyreigxuanmkaq2522…`
+- anchor tentative head: `bafyreigxuanmkaq2522…`
+- directory head: `bafyreia4eeiy5olozti…`
+- confirmed-head inclusion proof verified against an independently-fetched root: ✓
+
+**What this means.** Same contradiction as `equivocation`, but the directory's head is recent enough that clock skew could explain it — so the witness defers with `skew-pending`, NOT `diverged`. This is the governing invariant made executable: when skew can plausibly explain a disagreement, never alarm. Re-evaluate once the window closes.
+
+## 7. Anchor self-fault — the witness distrusts its own unproven head
+
+> **Verdict: `tentative-consistent`** ✅ — reason `anchor-proof-unverified`
+
+**Threat.** Not a directory attack — a humility check. If the anchor returns a confirmed head whose inclusion proof does NOT reconstruct the independently-fetched root (a node bug, a stale read, a malicious RPC), the witness must not blame the directory for it.
+
+**Setup.**
+- DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored and the anchor claims a confirmed head — but its own inclusion proof fails to verify against the confirmed root the resolver fetched.
+- The directory, meanwhile, serves a totally different and old history.
+
+**What the directory serves.**
+
+| op CID | directory createdAt | state |
+|---|---|---|
+| `bafyreiunrelatedoldh…` **(head)** | 2020-01-01T00:00:00.000Z | live |
 
 **Witness evidence.**
 
 - anchor confirmed head: `bafyreienfqk6fwpkku5…`
 - anchor tentative head: `bafyreienfqk6fwpkku5…`
-- directory head: `bafyreigxuanmkaq2522…`
-- confirmed-head inclusion proof verified against an independently-fetched root: ✓
+- directory head: `bafyreiunrelatedoldh…`
+- confirmed-head inclusion proof verified against an independently-fetched root: ✗
 
-**What this means.** The histories AGREE on everything the anchor has proven — the only difference is newer ops the anchor hasn't caught up to. The witness reports `tentative-consistent`, not an alarm. This restraint is what earns the alarm its credibility: `diverged` means something precisely because lag does not trigger it.
+**What this means.** Even with a directory that looks divergent, an UNPROVEN anchor head yields `tentative-consistent`, not `diverged`. The witness alarms only on what it can cryptographically stand behind — an anchor-side fault is the anchor's problem, never grounds to accuse the directory.
+
+## 8. Coverage gap — the DID isn't anchored at all
+
+> **Verdict: `absent`** ➖ — reason `not-anchored`
+
+**Threat.** Not an attack — honesty about scope. DIDMARC is opt-in per DID (membership is off-chain policy). For a DID nobody anchored, the witness has no opinion to offer — and must say so rather than imply safety.
+
+**Setup.**
+- DID did:plc:6dhcuzar5ggiqcptlt5qly5u has never been anchored.
+- The directory serves whatever it serves; the witness has no on-chain proof to compare against.
+
+**What the directory serves.**
+
+| op CID | directory createdAt | state |
+|---|---|---|
+| `bafyreihqzyvgiepjrse…` | 2026-01-01T00:00:00.000Z | live |
+
+**Witness evidence.**
+
+- anchor confirmed head: `—`
+- anchor tentative head: `—`
+- directory head: `—`
+- confirmed-head inclusion proof verified against an independently-fetched root: ✗
+
+**What this means.** `absent` is the DMARC `p=none`: no coverage, no claim. The witness never fabricates confidence for a DID outside its roster — a resolver knows precisely where the protection applies and where it doesn't.
+
+## 9. Forged signature — an unsigned op submitted as authentic
+
+> **Verdict: `rejected`** ⛔ — reason `invalid-sig` · defender: plc_core::op_verify / sig_verify (in-contract)
+
+**Threat.** Anyone can call the permissionless endpoint and pay the gas (that's the design). So an attacker submits a well-formed op for a victim DID with a signature they don't hold the key for.
+
+**What the attacker tries to submit.**
+- forks at opA on did:plc:pcnytiamasqdcm6cwddqmzy3, presented as a normal append
+- signature: tampered (does not verify under any of the DID's rotation keys)
+
+**Verdict.** Rejected by **plc_core::op_verify / sig_verify (in-contract)** with `invalid-sig`. Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted.
+
+**What this means.** Authorization is the op's EMBEDDED signature, verified in-contract against the fork-point's rotation keys — never the Starknet fee-payer. The transaction can be paid by anyone; the op still has to be signed by a real PLC key. The forgery is rejected before any state changes (`invalid-sig`).
+
+## 10. Weaker-key recovery — a low-priority key tries to override a higher one
+
+> **Verdict: `rejected`** ⛔ — reason `recovery-weaker-key` · defender: plc_core::recovery (in-contract)
+
+**Threat.** An attacker who holds only a LOW-priority rotation key (e.g. a leaked device key) tries to fork the history and nullify an op signed by a HIGHER-priority key — a recovery they aren't entitled to make.
+
+**What the attacker tries to submit.**
+- forks at genesis on did:plc:pcnytiamasqdcm6cwddqmzy3, nullifying opA (which was signed by rotation key index 1)
+- signed by rotation key index 2 — strictly lower priority than the key it tries to override
+
+**Verdict.** Rejected by **plc_core::recovery (in-contract)** with `recovery-weaker-key`. Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted.
+
+**What this means.** PLC recovery only flows downward in priority: a fork is valid only if signed by a key of STRICTLY higher priority than the disputed op's signer. The weaker key cannot override the stronger one, so the contract rejects (`recovery-weaker-key`) — the key hierarchy is enforced on-chain, not assumed.
+
+## 11. Late recovery — a valid key, but after the 72h window
+
+> **Verdict: `rejected`** ⛔ — reason `late-recovery` · defender: plc_core::recovery (in-contract)
+
+**Threat.** An attacker holds a high-priority key and attempts a legitimate-looking recovery — but the op being disputed is already older than the 72h recovery window, so the recovery is no longer permitted.
+
+**What the attacker tries to submit.**
+- forks at genesis on did:plc:pcnytiamasqdcm6cwddqmzy3, signed by the highest-priority key (index 0)
+- the disputed op was created more than 72h ago — outside the recovery window
+
+**Verdict.** Rejected by **plc_core::recovery (in-contract)** with `late-recovery`. Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted.
+
+**What this means.** Even the strongest key can't rewrite history indefinitely. Once an op has survived the 72h window it is immutable, and a fork below it is rejected (`late-recovery`). This is the window that makes the confirmed tier meaningful — and it's enforced on the directory-assigned clock, the same input PLC uses.
+
+## 12. Integrity mismatch — bytes that don't hash to their claimed CID
+
+> **Verdict: `rejected`** ⛔ — reason `cid-mismatch (delta dropped)` · defender: ingest integrity gate (off-chain)
+
+**Threat.** A malicious mirror feeds the off-chain ingest pipeline op bytes under a CID they were never the hash of (tampered content presented as an existing, valid op) — hoping a forged delta lands on-chain.
+
+**What the attacker tries to submit.**
+- serves op bytes claiming CID bafyreias7ru5xzuvn6n…
+- but the bytes actually hash to bafyreial5preeswxbpb… (content was altered without re-signing)
+
+**Verdict.** Rejected by **ingest integrity gate (off-chain)** with `cid-mismatch (delta dropped)`. Verified at fixture-generation time by recomputing the operation's canonical DRISL CID and confirming it differs from the claimed CID — the exact integrity check `ingest::reencode` runs before submitting any delta.
+
+**What this means.** Before submitting any delta, ingest re-encodes the operation to canonical DRISL and checks the resulting CID equals the directory's published CID. Tampered bytes hash to a different CID, so the delta is dropped and never reaches the endpoint. The integrity gate means the feeder can't be tricked into anchoring forged content even by the source it reads from.

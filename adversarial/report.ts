@@ -1,9 +1,10 @@
 //! The narrative report — DIDMARC adversarial validation as an engineer-facing artifact.
 //!
-//! Runs every read-class scenario through the real witness and renders each as a story:
-//! THREAT → SETUP → what the malicious mirror SERVES → the WITNESS verdict → what it MEANS.
-//! Each line traces to a module already differential-green against @did-plc/lib and the Cairo
-//! contract; this composes them into named attacks and shows the graduated status doing its job.
+//! Runs every read-class scenario through the real witness, pairs them with the write-class
+//! scenarios (malicious submissions the contract/ingest gate rejects), and renders each as a
+//! story: THREAT → SETUP → what the attacker does → the verdict → what it MEANS. Each line
+//! traces to a module already differential-green against @did-plc/lib and the Cairo contract;
+//! this composes them into named attacks and shows the defenses doing their job.
 //!
 //! Usage:
 //!   node adversarial/report.ts            # print to stdout AND write docs/ADVERSARIAL-REPORT.md
@@ -12,7 +13,8 @@
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Fixture, loadFixture, runAll, type ScenarioOutcome } from "./harness.ts";
+import type { CheckResult } from "../witness-ts/src/status.ts";
+import { type Fixture, loadFixture, runScenario, type Scenario } from "./harness.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "..", "docs", "ADVERSARIAL-REPORT.md");
@@ -24,52 +26,84 @@ const STATUS_GLYPH: Record<string, string> = {
   absent: "➖",
 };
 
+/** A rendered scenario: read-class carries the live check() result; write-class is baked. */
+interface Rendered {
+  scenario: Scenario;
+  actual?: CheckResult; // read-class only
+  pass: boolean;
+}
+
 function short(cid: string | null): string {
   if (!cid) return "—";
   return cid.length > 24 ? `${cid.slice(0, 20)}…` : cid;
 }
 
-function servedTable(outcome: ScenarioOutcome): string {
-  const rows = outcome.scenario.directory.auditLog.map((e) => {
-    const head = e.cid === outcome.actual.evidence.directoryHead ? " **(head)**" : "";
+function summaryRow(r: Rendered, i: number): string {
+  const s = r.scenario;
+  if (s.class === "read" && r.actual) {
+    const glyph = STATUS_GLYPH[r.actual.status] ?? "•";
+    return `| ${i + 1} | read | ${s.title} | \`${r.actual.status}\` ${glyph} | \`${s.expect?.status}\` | ${r.pass ? "✅ pass" : "❌ FAIL"} |`;
+  }
+  return `| ${i + 1} | write | ${s.title} | \`rejected\` ⛔ | \`${s.verdict?.reason}\` | ✅ enforced |`;
+}
+
+function readMarkdown(r: Rendered, n: number): string {
+  const s = r.scenario;
+  const actual = r.actual!;
+  const glyph = STATUS_GLYPH[actual.status] ?? "•";
+  const served = (s.directory?.auditLog ?? []).map((e) => {
+    const head = e.cid === actual.evidence.directoryHead ? " **(head)**" : "";
     return `| \`${short(e.cid)}\`${head} | ${e.createdAt} | ${e.nullified ? "nullified" : "live"} |`;
   });
-  return ["| op CID | directory createdAt | state |", "|---|---|---|", ...rows].join("\n");
-}
-
-function scenarioMarkdown(outcome: ScenarioOutcome, n: number): string {
-  const { scenario: s, actual } = outcome;
-  const glyph = STATUS_GLYPH[actual.status] ?? "•";
-  const lines: string[] = [];
-  lines.push(`## ${n}. ${s.title}`);
-  lines.push("");
-  lines.push(`> **Verdict: \`${actual.status}\`** ${glyph} — reason \`${actual.reason}\``);
-  lines.push("");
-  lines.push(`**Threat.** ${s.threat}`);
-  lines.push("");
-  lines.push("**Setup.**");
-  for (const step of s.setup) lines.push(`- ${step}`);
-  lines.push("");
-  lines.push(s.benign ? "**What the directory serves.**" : "**What the malicious mirror serves.**");
-  lines.push("");
-  lines.push(servedTable(outcome));
-  lines.push("");
-  lines.push("**Witness evidence.**");
-  lines.push("");
-  lines.push(`- anchor confirmed head: \`${short(actual.evidence.anchorConfirmedHead || null)}\``);
-  lines.push(`- anchor tentative head: \`${short(actual.evidence.anchorTentativeHead || null)}\``);
-  lines.push(`- directory head: \`${short(actual.evidence.directoryHead)}\``);
-  lines.push(
+  const servedTable = served.length
+    ? ["| op CID | directory createdAt | state |", "|---|---|---|", ...served].join("\n")
+    : "_(empty audit log — the mirror serves nothing for this DID)_";
+  return [
+    `## ${n}. ${s.title}`,
+    "",
+    `> **Verdict: \`${actual.status}\`** ${glyph} — reason \`${actual.reason}\``,
+    "",
+    `**Threat.** ${s.threat}`,
+    "",
+    "**Setup.**",
+    ...s.setup.map((x) => `- ${x}`),
+    "",
+    s.benign ? "**What the directory serves.**" : "**What the malicious mirror serves.**",
+    "",
+    servedTable,
+    "",
+    "**Witness evidence.**",
+    "",
+    `- anchor confirmed head: \`${short(actual.evidence.anchorConfirmedHead || null)}\``,
+    `- anchor tentative head: \`${short(actual.evidence.anchorTentativeHead || null)}\``,
+    `- directory head: \`${short(actual.evidence.directoryHead)}\``,
     `- confirmed-head inclusion proof verified against an independently-fetched root: ${actual.evidence.confirmedProofVerified ? "✓" : "✗"}`,
-  );
-  lines.push("");
-  lines.push(`**What this means.** ${s.lesson}`);
-  lines.push("");
-  return lines.join("\n");
+    "",
+    `**What this means.** ${s.lesson}`,
+    "",
+  ].join("\n");
 }
 
-export function renderMarkdown(outcomes: ScenarioOutcome[], fixture: Fixture): string {
-  const allPass = outcomes.every((o) => o.pass);
+function writeMarkdown(s: Scenario, n: number): string {
+  return [
+    `## ${n}. ${s.title}`,
+    "",
+    `> **Verdict: \`rejected\`** ⛔ — reason \`${s.verdict?.reason}\` · defender: ${s.verdict?.defender}`,
+    "",
+    `**Threat.** ${s.threat}`,
+    "",
+    "**What the attacker tries to submit.**",
+    ...(s.proposed ?? []).map((x) => `- ${x}`),
+    "",
+    `**Verdict.** Rejected by **${s.verdict?.defender}** with \`${s.verdict?.reason}\`. ${s.verdict?.provenance}`,
+    "",
+    `**What this means.** ${s.lesson}`,
+    "",
+  ].join("\n");
+}
+
+function renderMarkdown(rendered: Rendered[], fixture: Fixture): string {
+  const allReadPass = rendered.filter((r) => r.scenario.class === "read").every((r) => r.pass);
   const lines: string[] = [];
   lines.push("<!-- @generated by `node adversarial/report.ts` (make adversarial). DO NOT EDIT. -->");
   lines.push("");
@@ -78,48 +112,57 @@ export function renderMarkdown(outcomes: ScenarioOutcome[], fixture: Fixture): s
   lines.push(
     "DIDMARC (\"atproto identity DMARC\") gives every did:plc an independent, on-chain proof of its " +
       "complete, current, non-equivocated history, exposed as a graduated status a resolver enforces " +
-      "**unilaterally**. This report puts that claim under adversarial pressure: each scenario builds a " +
-      "**real signed did:plc chain**, has a **malicious PLC mirror** serve a forged/lagging history, and " +
-      "runs the **real witness** against the **real anchor commitment**. Nothing here is mocked but the " +
-      "transport — the decision logic is the shipping `check()`.",
+      "**unilaterally**. This report puts that claim under adversarial pressure. Every scenario builds a " +
+      "**real signed did:plc chain** and runs a real defense:",
   );
   lines.push("");
   lines.push(
-    "The governing invariant (Phase 5 plan §0): **never a false `diverged`.** A false alarm makes an " +
-      "operator disable the check, removing the very protection it offers — so every ambiguous edge must " +
-      "resolve to a non-alarming status. The scenarios below are chosen to show both halves: the alarm " +
-      "firing when it should, and — just as important — staying silent when the disagreement is benign.",
+    "- **read-side** scenarios have a **malicious or faulty PLC mirror** serve a forged/lagging history; the " +
+      "defender is the shipping witness `check()`, run here against the real anchor commitment. Nothing is " +
+      "mocked but the transport — the decision logic is the code a resolver runs.",
+  );
+  lines.push(
+    "- **write-side** scenarios are **malicious submissions to the permissionless endpoint**; the defender is " +
+      "the contract (`plc_core::verify` / `recovery`) or the off-chain ingest integrity gate. Each is " +
+      "ground-truthed against `@did-plc/lib` — the same oracle the contract is differential-green against.",
+  );
+  lines.push("");
+  lines.push(
+    "The governing invariant (Phase 5 plan §0): **never a false `diverged`.** A false alarm makes an operator " +
+      "disable the check, removing the very protection it offers — so every ambiguous read-side edge resolves to " +
+      "a non-alarming status. The scenarios below show both halves: the alarm firing when it should, and — just " +
+      "as important — staying silent when the disagreement is benign.",
   );
   lines.push("");
   lines.push("## Summary");
   lines.push("");
-  lines.push("| # | scenario | verdict | expected | result |");
-  lines.push("|---|---|---|---|---|");
-  outcomes.forEach((o, i) => {
-    const glyph = STATUS_GLYPH[o.actual.status] ?? "•";
-    lines.push(
-      `| ${i + 1} | ${o.scenario.title} | \`${o.actual.status}\` ${glyph} | \`${o.scenario.expect.status}\` | ${o.pass ? "✅ pass" : "❌ FAIL"} |`,
-    );
-  });
+  lines.push("| # | class | scenario | verdict | expected / reason | result |");
+  lines.push("|---|---|---|---|---|---|");
+  rendered.forEach((r, i) => lines.push(summaryRow(r, i)));
   lines.push("");
   lines.push(`_Clock pinned to ${new Date(fixture.now).toISOString()}; skew horizon ${fixture.skewHorizonMs / 86_400_000} days._`);
   lines.push("");
-  lines.push(allPass ? "**All scenarios behaved as specified.**" : "**⚠️ One or more scenarios diverged from expectation — see below.**");
+  lines.push(allReadPass ? "**All read-side scenarios behaved as specified; all write-side submissions were rejected.**" : "**⚠️ One or more read-side scenarios diverged from expectation — see below.**");
   lines.push("");
   lines.push("---");
   lines.push("");
-  outcomes.forEach((o, i) => lines.push(scenarioMarkdown(o, i + 1)));
+  rendered.forEach((r, i) => lines.push(r.scenario.class === "read" ? readMarkdown(r, i + 1) : writeMarkdown(r.scenario, i + 1)));
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-function renderConsole(outcomes: ScenarioOutcome[]): string {
+function renderConsole(rendered: Rendered[]): string {
   const lines: string[] = [];
-  for (const o of outcomes) {
-    const glyph = STATUS_GLYPH[o.actual.status] ?? "•";
-    lines.push(`${glyph}  ${o.scenario.title}`);
-    lines.push(`    threat:  ${o.scenario.threat}`);
-    lines.push(`    verdict: ${o.actual.status} (${o.actual.reason})  ${o.pass ? "✓ as expected" : "✗ EXPECTED " + o.scenario.expect.status}`);
-    lines.push(`    meaning: ${o.scenario.lesson}`);
+  for (const r of rendered) {
+    const s = r.scenario;
+    if (s.class === "read" && r.actual) {
+      const glyph = STATUS_GLYPH[r.actual.status] ?? "•";
+      lines.push(`${glyph}  [read]  ${s.title}`);
+      lines.push(`    verdict: ${r.actual.status} (${r.actual.reason})  ${r.pass ? "✓ as expected" : "✗ EXPECTED " + s.expect?.status}`);
+    } else {
+      lines.push(`⛔  [write] ${s.title}`);
+      lines.push(`    verdict: rejected (${s.verdict?.reason}) by ${s.verdict?.defender}`);
+    }
+    lines.push(`    meaning: ${s.lesson}`);
     lines.push("");
   }
   return lines.join("\n");
@@ -127,17 +170,28 @@ function renderConsole(outcomes: ScenarioOutcome[]): string {
 
 async function main(): Promise<void> {
   const fixture = loadFixture();
-  const outcomes = await runAll(fixture);
-  process.stdout.write(`\nDIDMARC adversarial validation — ${outcomes.length} read-side scenarios\n\n`);
-  process.stdout.write(renderConsole(outcomes));
+  const rendered: Rendered[] = [];
+  for (const s of fixture.scenarios) {
+    if (s.class === "read") {
+      const { actual, pass } = await runScenario(s, fixture);
+      rendered.push({ scenario: s, actual, pass });
+    } else {
+      rendered.push({ scenario: s, pass: s.verdict?.rejected === true });
+    }
+  }
+
+  const reads = rendered.filter((r) => r.scenario.class === "read").length;
+  const writes = rendered.length - reads;
+  process.stdout.write(`\nDIDMARC adversarial validation — ${reads} read-side + ${writes} write-side scenarios\n\n`);
+  process.stdout.write(renderConsole(rendered));
 
   if (!process.argv.includes("--stdout")) {
-    writeFileSync(REPORT_PATH, renderMarkdown(outcomes, fixture));
+    writeFileSync(REPORT_PATH, renderMarkdown(rendered, fixture));
     process.stdout.write(`report written → ${REPORT_PATH}\n`);
   }
 
-  if (!outcomes.every((o) => o.pass)) {
-    process.stderr.write("\nFAIL: a scenario did not match its expected status.\n");
+  if (!rendered.every((r) => r.pass)) {
+    process.stderr.write("\nFAIL: a scenario did not match its expected outcome.\n");
     process.exit(1);
   }
 }

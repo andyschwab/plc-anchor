@@ -42,10 +42,34 @@ operator disable the check, removing the protection entirely. So benign scenario
 here, not an afterthought — `adversarial.test.ts` asserts every `benign` scenario resolves to a
 non-`diverged` status. That restraint is what makes the alarm worth acting on.
 
-## Status
+## Scenarios
 
-Vertical slice: the alarm (`equivocation` → `diverged`) and the restraint (`honest-lag` →
-`tentative-consistent`), offline. Next: the remaining read-side scenarios (vanishing DID,
-window-edge skew, coverage gap), the write-side rejections (driven through the contract), and the
-gated live testnet runner (a thin HTTP wrapper over `mirror.ts` + a real Sepolia read). See the
-build sequence in the design discussion / `docs/PHASE-5-PLAN.md`.
+**Read-side** (the witness `check()` is the defender — one per branch of the §4 status ladder):
+
+| id | verdict | teaches |
+|---|---|---|
+| `confirmed-match` | `confirmed` | the happy path — directory == proven head |
+| `young-did` | `tentative-consistent` | the two-tier model: nothing immutable yet |
+| `honest-lag` | `tentative-consistent` | directory legitimately ahead — no false alarm |
+| `equivocation` | `diverged` 🚨 | a mirror omits a confirmed op — the alarm |
+| `vanishing-did` | `diverged` 🚨 | an anchored DID can't be erased |
+| `window-edge-skew` | `tentative-consistent` | the §0 wall: skew-explained contradiction never alarms |
+| `anchor-self-fault` | `tentative-consistent` | the witness distrusts its own unproven head |
+| `coverage-gap` | `absent` | honest about scope (opt-in per DID) |
+
+**Write-side** (the contract / ingest gate is the defender — "permissionless ≠ unsafe"),
+ground-truthed against `@did-plc/lib` at generation time:
+
+| id | reason | defender |
+|---|---|---|
+| `forged-signature` | `invalid-sig` | `plc_core::op_verify` / `sig_verify` |
+| `weaker-key-recovery` | `recovery-weaker-key` | `plc_core::recovery` |
+| `late-recovery` | `late-recovery` | `plc_core::recovery` |
+| `integrity-mismatch` | `cid-mismatch` | ingest integrity gate (off-chain) |
+
+## Next
+
+The gated **live testnet runner**: a thin HTTP wrapper over `mirror.ts` so the real
+`DirectoryClient` fetch transport is exercised against a malicious mirror at a real URL, paired
+with a real Sepolia anchor read. Tentative-tier read scenarios run live immediately; the
+confirmed-`diverged` headline needs a DID anchored ≥72h ahead. See `docs/PHASE-5-PLAN.md`.
