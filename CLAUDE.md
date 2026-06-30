@@ -88,11 +88,26 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    6 real-structure PLC ops (secp256k1/p256 genesis, update, tombstone) round-tripped
    against `@did-plc/lib` / `@ipld/dag-cbor` — 6/6 vectors pass in both TS oracle and
    Cairo. (REFERENCE.md §3, §5)
-2. ⏳ **PLC op verification + 72h recovery state machine** (differential vs `@did-plc/lib`). *Next.*
-3. State commitment + confirmed/tentative roots + the permissionless `import`/`submit_op`
-   endpoint (embedded-sig authorization; `prev == head` enforcement).
+2. ✅ **PLC op verification + 72h recovery state machine** (differential vs `@did-plc/lib`).
+   **Acceptance gate closed:** `did:key` parse, k256/r1 ECDSA over the unsigned op
+   (k256 low-S; **p256 malleable**, matching the reference — §5 corrected), DRISL→typed-op
+   decode + §5 constraints, legacy `create` normalization, authorized-signer-index
+   derivation, `prev` linkage (base32 CID string), and the 72h recovery decision — all green
+   against a 7-op corpus + recovery scenarios ground-truthed by `@did-plc/lib`, tied together
+   by `plc_core::verify::verify_next_op`. 21/21 plc_core + 9/9 drisl tests pass.
+   (`cairo/packages/plc_core`; sequencing in [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md).)
+3. ⏳ **State commitment + confirmed/tentative roots + the permissionless `import`/`submit_op`
+   endpoint** (embedded-sig authorization). *In progress.* Done: per-DID head + state
+   (`plc_core::state`), the `anchor` `#[starknet::contract]` (`import_genesis`/`submit_op`/
+   views), and confirmed/tentative tiers + the recovery/fork path (per-DID chain storage;
+   72h rule via `classify_next_op`) — offline-tested via `contract_state_for_testing`,
+   recovery ground-truthed vs `@did-plc/lib`. Remaining: the sha256-Merkle DID→document
+   commitment root (P3.2) and multi-op genesis `import` (P3.4). See
+   [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md) §2.
 4. Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.
 5. Resolver verification library (the adoption surface).
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
-**Current phase: 1 (keystone) done → 2 (op verification + recovery).**
+**Current phase: 3 in progress — the permissionless endpoint (append + recovery + tiers) is
+live and offline-tested; remaining: the sha256-Merkle commitment root (P3.2) and multi-op
+genesis import (P3.4). See `docs/PHASE-2-3-PLAN.md` §2.**

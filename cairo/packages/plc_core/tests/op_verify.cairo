@@ -9,9 +9,9 @@
 //! This is the Cairo half of the Phase 2 differential gate; the TS oracle
 //! (conformance/src/check.mjs phase 3) is the reference.
 
-use plc_core::op_verify::{extract_sig_and_unsigned_bytes, verify_op_sig};
+use plc_core::op_verify::{extract_sig_and_unsigned_bytes, verify_op_authorized, verify_op_sig};
 use super::common::from_hex;
-use super::op_verify_vectors_generated::op_verify_vectors;
+use super::op_verify_vectors_generated::{op_verify_reject_vectors, op_verify_vectors};
 
 #[test]
 fn op_verify_sig_acceptance() {
@@ -22,6 +22,50 @@ fn op_verify_sig_acceptance() {
         let signed_bytes = from_hex(v.signed_drisl_hex);
         let result = verify_op_sig(@signed_bytes, v.signer_did_key);
         assert!(result.is_ok(), "vector {}: verify_op_sig failed: {:?}", i, result);
+        i += 1;
+    }
+}
+
+/// P2.3: verifying against the authorized rotation-key set returns the signer's index,
+/// matching @did-plc/lib. The legacy-create vector exercises a non-zero index (the
+/// signingKey is index 1 of [recoveryKey, signingKey]).
+#[test]
+fn op_verify_authorized_signer_index() {
+    let vectors = op_verify_vectors();
+    let mut i = 0;
+    while i < vectors.len() {
+        let v = vectors.at(i);
+        let signed_bytes = from_hex(v.signed_drisl_hex);
+        let result = verify_op_authorized(@signed_bytes, v.allowed_keys);
+        let idx = match result {
+            Result::Ok(idx) => idx,
+            Result::Err(e) => {
+                assert!(false, "vector {}: verify_op_authorized failed: {:?}", i, e);
+                panic!()
+            },
+        };
+        assert!(
+            idx == *v.signer_index,
+            "vector {}: signer index {} != expected {}",
+            i,
+            idx,
+            *v.signer_index,
+        );
+        i += 1;
+    }
+}
+
+/// Signatures the reference rejects must be rejected here too. Currently: high-S k256
+/// (low-S is required for k256, unlike p256 which is malleable — see sig_verify header).
+#[test]
+fn op_verify_rejects_reference_rejects() {
+    let vectors = op_verify_reject_vectors();
+    let mut i = 0;
+    while i < vectors.len() {
+        let v = vectors.at(i);
+        let signed_bytes = from_hex(v.signed_drisl_hex);
+        let result = verify_op_sig(@signed_bytes, v.signer_did_key);
+        assert!(result.is_err(), "reject vector {}: expected rejection but verify succeeded", i);
         i += 1;
     }
 }

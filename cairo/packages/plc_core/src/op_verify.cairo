@@ -34,6 +34,45 @@ pub fn verify_op_sig(signed_bytes: @ByteArray, signer_key_str: @ByteArray) -> Re
     verify_ecdsa(msg_hash, @sig_b64, @key)
 }
 
+/// Verify a signed op against an *authorized rotation-key set* and return the index of the
+/// key that signed it (REFERENCE.md §3 item 2, §5).
+///
+/// `allowed_keys` is the authorized signer set: a genesis op's own `rotationKeys`, or — for
+/// a non-genesis op — the *previous* op's `rotationKeys` (the caller resolves which, since
+/// only it holds the chain). Keys are tried in priority order (index 0 = highest); the
+/// returned index is the recovery-priority operand consumed by the 72h state machine (P2.5).
+/// An unparseable allowed key is skipped (it simply cannot be the signer), mirroring the
+/// reference's try-each semantics. Errors if no authorized key validates the signature.
+pub fn verify_op_authorized(
+    signed_bytes: @ByteArray, allowed_keys: @Array<ByteArray>,
+) -> Result<usize, felt252> {
+    // Extract + hash once, then try each authorized key.
+    let (sig_b64, unsigned_bytes) = extract_sig_and_unsigned_bytes(signed_bytes)?;
+    let digest = compute_sha256_byte_array(@unsigned_bytes);
+    let msg_hash = digest_words_to_u256(digest);
+
+    let n = allowed_keys.len();
+    let mut i = 0;
+    let mut found: Option<usize> = Option::None;
+    while i < n {
+        match parse_did_key(allowed_keys.at(i)) {
+            Result::Ok(key) => {
+                if verify_ecdsa(msg_hash, @sig_b64, @key).is_ok() {
+                    found = Option::Some(i);
+                    break;
+                }
+            },
+            // Malformed authorized key: cannot be the signer — skip and keep looking.
+            Result::Err(_) => {},
+        }
+        i += 1;
+    }
+    match found {
+        Option::Some(idx) => Result::Ok(idx),
+        Option::None => Result::Err('no-authorized-signer'),
+    }
+}
+
 /// Extract the base64url sig string and produce unsigned CBOR bytes (map without `sig`).
 ///
 /// In canonical PLC op CBOR, `sig` is ALWAYS the first map entry because its key

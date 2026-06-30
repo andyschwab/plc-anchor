@@ -11,6 +11,7 @@
     "gen-plc-vectors": "node src/gen-plc-vectors.mjs"
   },
   "dependencies": {
+    "@atproto/crypto": "^0.1.0",
     "@did-plc/lib": "^0.0.4",
     "@ipld/dag-cbor": "^10.0.1",
     "multiformats": "^14.0.2"

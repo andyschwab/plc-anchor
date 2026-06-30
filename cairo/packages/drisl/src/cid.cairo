@@ -105,6 +105,59 @@ pub fn derive_did_fragment(op_bytes: @ByteArray) -> ByteArray {
     out
 }
 
+/// Derive the canonical CID for `payload` under `codec` and render it as the base32
+/// multibase string PLC stores in `prev` and resolvers print: `'b'` (multibase base32-lower
+/// prefix) followed by RFC 4648 base32-lowercase-nopad of the 36-byte binary CID. This is
+/// the textual form of `derive_cid`; PLC's `prev` field is exactly this string.
+pub fn derive_cid_string(codec: u8, payload: @ByteArray) -> ByteArray {
+    cid_to_base32(@derive_cid(codec, payload))
+}
+
+/// Render a binary CID as its base32 multibase string (`'b'` + base32-lower-nopad).
+pub fn cid_to_base32(cid: @ByteArray) -> ByteArray {
+    let mut out: ByteArray = "";
+    out.append_byte('b');
+    base32_encode_nopad(cid, ref out);
+    out
+}
+
+/// RFC 4648 base32 lowercase, no padding, over arbitrary-length bytes. Streams the input
+/// through a small bit accumulator (never more than 12 pending bits), emitting one char per
+/// 5 bits and left-zero-padding the final partial group.
+fn base32_encode_nopad(data: @ByteArray, ref out: ByteArray) {
+    let len = data.len();
+    let mut acc: u32 = 0; // holds `nbits` low-order pending bits
+    let mut nbits: u32 = 0;
+    let mut i: usize = 0;
+    while i < len {
+        acc = acc * 256 + data.at(i).unwrap().into();
+        nbits += 8;
+        while nbits >= 5 {
+            nbits -= 5;
+            let chunk: u8 = ((acc / pow2(nbits)) % 32).try_into().unwrap();
+            out.append_byte(b32_char(chunk));
+        }
+        acc = acc % pow2(nbits); // keep only the < 5 pending bits
+        i += 1;
+    }
+    if nbits > 0 {
+        // Left-pad the trailing bits to a full 5-bit group.
+        let chunk: u8 = ((acc * pow2(5 - nbits)) % 32).try_into().unwrap();
+        out.append_byte(b32_char(chunk));
+    }
+}
+
+/// 2^exp for exp in 0..=12 (the only range base32_encode_nopad needs).
+fn pow2(exp: u32) -> u32 {
+    let mut acc: u32 = 1;
+    let mut i: u32 = 0;
+    while i < exp {
+        acc *= 2;
+        i += 1;
+    }
+    acc
+}
+
 /// Encode 5 bytes as 8 RFC 4648 base32 chars (lowercase, no padding) and append to `out`.
 fn encode_5bytes(b0: u32, b1: u32, b2: u32, b3: u32, b4: u32, ref out: ByteArray) {
     out.append_byte(b32_char((b0 / 8).try_into().unwrap()));

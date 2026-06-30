@@ -9,7 +9,12 @@
 // The generated file is the "ground truth" fixture; gen-plc-vectors.mjs and
 // gen-op-verify-vectors.mjs re-validate it on every conformance run.
 import { Secp256k1Keypair, EcdsaKeypair } from "@atproto/crypto";
-import { createOp, createUpdateOp, tombstoneOp } from "@did-plc/lib";
+import {
+  createOp,
+  createUpdateOp,
+  tombstoneOp,
+  deprecatedSignCreate,
+} from "@did-plc/lib";
 import { encode } from "@ipld/dag-cbor";
 import { CID } from "multiformats";
 import { sha256 } from "multiformats/hashes/sha2";
@@ -40,6 +45,25 @@ async function entry(op, did, signerKey) {
     // Internal: expose the CID object so tombstoneOp callers can use it.
     _cid: cid,
   };
+}
+
+// secp256r1 / P-256 group order. Used to force a deterministic high-S p256 vector
+// (the reference accepts malleable p256 signatures; this is the regression guard).
+const P256_N = BigInt(
+  "0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
+);
+
+/// Rewrite `op.sig` (base64url r‖s) so S is in the HIGH half of the order, i.e. the
+/// non-canonical form. `(r, N-s)` verifies iff `(r, s)` does, so the op stays valid; the
+/// reference (@atproto/crypto) accepts it for p256. Mutate before deriving CID/DID, since
+/// PLC's DID hashes the signed op (REFERENCE.md §5).
+function forceHighS(op, N) {
+  const sig = Buffer.from(op.sig, "base64url");
+  const r = sig.subarray(0, 32);
+  let s = BigInt("0x" + sig.subarray(32, 64).toString("hex"));
+  if (s <= N / 2n) s = N - s;
+  const sBuf = Buffer.from(s.toString(16).padStart(64, "0"), "hex");
+  op.sig = Buffer.concat([r, sBuf]).toString("base64url");
 }
 
 const corpus = [];
@@ -79,14 +103,18 @@ const atKey3 = await EcdsaKeypair.create({
   exportable: true,
   jwtAlg: "ES256",
 });
-const { op: genesis3, did: did3 } = await createOp({
+const { op: genesis3 } = await createOp({
   signingKey: atKey3.did(),
   rotationKeys: [rot3.did()],
   handle: "carol.test",
   pds: "https://pds.carol.test",
   signer: rot3,
 });
-corpus.push({ label: "p256 genesis", ...(await entry(genesis3, did3, rot3.did())) });
+// Force HIGH-S: the reference accepts malleable p256 signatures (unlike k256). This is the
+// permanent regression vector for that asymmetry. DID re-derives from the mutated bytes.
+forceHighS(genesis3, P256_N);
+const did3 = `did:plc:${base32.encode((await sha256.digest(encode(genesis3))).digest.slice(0, 15)).slice(1, 25)}`;
+corpus.push({ label: "p256 genesis (high-S)", ...(await entry(genesis3, did3, rot3.did())) });
 
 // ── Case 4: mixed keys genesis (secp256k1 rotation, p256 atproto key) ─────
 const rot4 = await Secp256k1Keypair.create({ exportable: true });
@@ -120,6 +148,30 @@ const tombstone = await tombstoneOp(updateEntry._cid, rot1);
 corpus.push({
   label: "secp256k1 tombstone",
   ...(await entry(tombstone, did1, rot1.did())),
+});
+
+// ── Case 7: legacy `create` op (deprecated genesis format) ────────────────
+// type:"create" with signingKey/recoveryKey/handle/service, signed by the
+// signingKey. Normalizes to rotationKeys = [recoveryKey, signingKey] (so the
+// signer is index 1) and verificationMethods = { atproto: signingKey }.
+const signing7 = await Secp256k1Keypair.create({ exportable: true });
+const recovery7 = await Secp256k1Keypair.create({ exportable: true });
+const unsignedCreate = {
+  type: "create",
+  signingKey: signing7.did(),
+  recoveryKey: recovery7.did(),
+  handle: "eve.test",
+  service: "https://pds.eve.test",
+  prev: null,
+};
+const create7 = await deprecatedSignCreate(unsignedCreate, signing7);
+// Genesis DID derives from the signed create-op bytes (its legacy shape), like
+// any genesis op (same rule as check.mjs phase 2). The signer is the signingKey.
+const create7Digest = await sha256.digest(encode(create7));
+const did7 = `did:plc:${base32.encode(create7Digest.digest.slice(0, 15)).slice(1, 25)}`;
+corpus.push({
+  label: "legacy create (deprecated)",
+  ...(await entry(create7, did7, signing7.did())),
 });
 
 // Strip internal _cid before serialising.

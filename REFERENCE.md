@@ -132,8 +132,12 @@ everything else.
   map-key ordering; 64-bit floats only (no NaN/Inf); no indefinite-length; Tag 42 for CID
   links (0x00-prefixed); simple values `true`/`false`/`null` only; string keys only.
 - **Signatures:** ECDSA secp256k1 ("k256") or secp256r1 / NIST P-256 ("p256"), over the
-  DRISL-encoded unsigned op; **low-S** form required; 64-byte r‖s, base64url no-pad.
-  Rotation/verification keys are did:key encoded.
+  DRISL-encoded unsigned op; 64-byte r‖s, base64url no-pad. Rotation/verification keys are
+  did:key encoded. **S-malleability is curve-asymmetric in the reference (verified against
+  `@atproto/crypto`):** k256 requires **low-S** (the verifier rejects high-S); p256 is
+  **malleable** — the reference accepts either S and atproto's p256 signer does not even
+  canonicalize it, so high-S p256 ops are valid PLC ops and an anchor MUST accept them or
+  it forks. (An earlier draft said "low-S required" for both; that was wrong for p256.)
 - **Recovery:** rotation keys are 1–5, priority-ordered (index 0 = highest). A lower-index
   key nullifies ops signed by higher-index keys within 72h, forking to the last
   universally-accepted state.
