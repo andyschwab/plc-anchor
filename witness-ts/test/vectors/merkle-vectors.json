@@ -1,0 +1,64 @@
+{
+  "_generated": "by conformance/src/gen-merkle-vectors.mjs — DO NOT EDIT",
+  "_format": "leaf=sha256(0x00‖did‖head_cid), node=sha256(0x01‖left‖right), did-sorted, RFC6962 odd-node promotion",
+  "entriesInput": [
+    [
+      "did:plc:ewvi7nxzyoun6zhxrhs64oiz",
+      "bafyreigenesisalicexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa"
+    ],
+    [
+      "did:plc:7iza6de2dwap2sbkpav7c6c6",
+      "bafyreigenesisbobxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb"
+    ],
+    [
+      "did:plc:44tn5dyjrgw57aqqwm4z2tzp",
+      "bafyreigenesiscarolxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxc"
+    ],
+    [
+      "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz",
+      "bafyreigenesisdavexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxd"
+    ]
+  ],
+  "entriesSorted": [
+    [
+      "did:plc:44tn5dyjrgw57aqqwm4z2tzp",
+      "bafyreigenesiscarolxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxc"
+    ],
+    [
+      "did:plc:7iza6de2dwap2sbkpav7c6c6",
+      "bafyreigenesisbobxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb"
+    ],
+    [
+      "did:plc:ewvi7nxzyoun6zhxrhs64oiz",
+      "bafyreigenesisalicexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa"
+    ],
+    [
+      "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz",
+      "bafyreigenesisdavexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxd"
+    ]
+  ],
+  "sortedLeaves": [
+    "49fe76072ad8eee0c4511d7743c12ed292f1ae5ad9c6524ce70fa2dbb22d75d6",
+    "cdd35fc4eea128732a4f39c2e346f0ae690430c956d75bbc895f27caada33daa",
+    "78497a355dde86e13b2093f25a47a2388bfd7a07771fcfc0a4be4955ce6b2f31",
+    "ddb3d94932ad4202e04d97e37c5d02119c34786104cdc59b245dd4b23f4db6ff"
+  ],
+  "expectedRoot": "5d4ae1d675478ab778f76809e18353b0cde3e29671105753b82d3cd608293659",
+  "singleEntry": [
+    "did:plc:ewvi7nxzyoun6zhxrhs64oiz",
+    "bafyreigenesisalicexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa"
+  ],
+  "singleRoot": "78497a355dde86e13b2093f25a47a2388bfd7a07771fcfc0a4be4955ce6b2f31",
+  "emptyRoot": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "proofIndex": 1,
+  "proofSteps": [
+    {
+      "sibling": "49fe76072ad8eee0c4511d7743c12ed292f1ae5ad9c6524ce70fa2dbb22d75d6",
+      "siblingIsLeft": true
+    },
+    {
+      "sibling": "29e7bdfb8f42c38600de6a157ec0c2336b31529e035162ea25f34641e07e5836",
+      "siblingIsLeft": false
+    }
+  ]
+}
