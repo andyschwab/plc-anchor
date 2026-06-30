@@ -5,15 +5,23 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-# Firehose sync indexer (REFERENCE.md §3, component 4). STUB.
-# Consumes wss://plc.directory/export/stream (or a Eurosky/microcosm mirror) using
-# sequence-number cursors and, for anchored DIDs, submits deltas to the anchor endpoint.
-# Where ongoing update cost lives and is allocated. When built, add: tokio,
-# tokio-tungstenite, reqwest, starknet (submission), serde.
+# Firehose sync indexer (REFERENCE.md §3, component 4 / build-order item 4).
+# Consumes a PLC directory mirror's `/export` JSONL by `after=<createdAt>` cursor and, for
+# anchored DIDs, re-encodes each op to its canonical DRISL signed bytes and submits the delta
+# to the anchor endpoint (`import_genesis` / `submit_op`). The normal anchoring path in
+# witness mode (§1a Mode 1); where ongoing update cost lives and is allocated.
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Re-encode directory-served operation JSON to the exact DRISL bytes the contract verifies.
+atproto-dasl.workspace = true
+# Minimal blocking HTTP client for the live `/export` source (no async runtime).
+ureq = "3"
+
+[lib]
+name = "ingest"
+path = "src/lib.rs"
 
 [[bin]]
 name = "ingest"

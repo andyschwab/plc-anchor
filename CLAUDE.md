@@ -118,7 +118,19 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    with a CI drift gate. **P3.4:** `anchor::import(chain)` replays a DID's resolved history in
    one call (imported ops use the import block time — `createdAt` is not in the signed op).
    See [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md) §2.
-4. Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.
+4. ✅ **Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.** The off-chain
+   feeder, built as a source-agnostic pipeline with trait seams (`OpSource`/`AnchorSink`) so the
+   consensus-relevant logic stays offline-testable. **Keystone:** `ingest::reencode` rebuilds a
+   directory-served operation's canonical DRISL signed bytes (PLC `prev` is a base32 **string**,
+   not a tag-42 link — verified, no IPLD links in PLC ops) via `atproto-dasl`, **differential-green
+   byte-for-byte against the 7-op conformance corpus** (genesis k256/p256/mixed/2-rotation,
+   update, tombstone, legacy create). The pipeline filters to the anchored-DID roster (membership
+   = off-chain policy, §2), skips directory-nullified ops, and enforces an **integrity gate** — a
+   delta is submitted only if its re-encoded CID equals the directory's published CID — then
+   routes genesis→`import_genesis` / append→`submit_op` and advances a resumable `after=<createdAt>`
+   cursor. `HttpExportSource` (ureq) is the live `/export` path; `FixtureSource` drives the tests
+   (ingest 14/14). **Remaining seam:** the live `AnchorSink` Starknet submitter (needs a deployed
+   contract address + fee-paying account; the current `DryRunSink` logs the deltas it would submit).
 5. Witness / resolver verification library — **the V1 product** ("atproto identity DMARC"):
    DID → document + inclusion proof against the published root, as the graduated status
    (§1a Mode 1). The inclusion-proof verifier already lives in `plc_core::merkle::verify_proof`
@@ -127,7 +139,9 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    [`docs/PHASE-5-WITNESS-NOTES.md`](docs/PHASE-5-WITNESS-NOTES.md).
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
-**Current phase: 3 complete — the permissionless endpoint (`import_genesis`/`import`/
-`submit_op` + recovery + confirmed/tentative tiers) and the sha256-Merkle commitment root are
-live and offline-tested (plc_core 53/53). Next: build order item 4 (sync indexer, `ingest/`).
-See `docs/PHASE-2-3-PLAN.md` §2.**
+**Current phase: build order item 4 done — the `ingest/` sync indexer pipeline is offline-tested
+(ingest 14/14) with the DRISL re-encoder differential-green against the conformance corpus; the
+on-chain `AnchorSink` submitter is the one remaining seam (needs a deployed contract). The
+permissionless endpoint + sha256-Merkle root from phase 3 stay live and offline-tested (plc_core
+53/53). Next: build order item 5 — the witness / resolver verification library (the V1 product),
+which packages root-fetch + `plc_core::merkle::verify_proof`. See `docs/PHASE-5-WITNESS-NOTES.md`.**
