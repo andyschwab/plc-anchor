@@ -3,13 +3,19 @@
 This is the **how**. `REFERENCE.md` is the **what & why** — the design baseline. Treat it
 as the constitution; link to it rather than re-deriving it.
 
-**What this is:** a censorship-resistant, cryptographically-verifiable anchor for the AT
-Protocol did:plc op log. PLC per-DID chains are self-certifying, so we verify them on-chain
-per-DID via one **permissionless Starknet endpoint** (`import` a DID's history from
-genesis; `submit_op` to append), commit a proven DID→document root, and let resolvers
-cross-check the directory against it. Verification runs as a Starknet contract — the
-network proves the blocks and settles to Ethereum; we run no bespoke prover and (initially)
-no sequencer. Not a PLC replacement. (REFERENCE.md §1–2.)
+**What this is:** **DIDMARC — "atproto identity DMARC."** A cryptographically-verifiable
+anchor for the did:plc op log on Starknet. PLC ops already self-certify per-op (the DKIM
+analog); we add the layer PLC lacks — independent on-chain proof that plc.directory serves a
+DID's **complete, current, non-equivocated** history, exposed as a graduated status
+(`confirmed`/`tentative-consistent`/`diverged`/`absent`) any resolver or PDS enforces
+**unilaterally**, no network coordination required. plc.directory stays canonical; we verify
+per-DID via one **permissionless Starknet endpoint** (`import` from genesis; `submit_op` to
+append — the latter a **backstop**, not the V1 headline), commit a proven DID→document root,
+and let checkers cross-check the directory against it. Verification runs as a Starknet
+contract — the network proves the blocks and settles to Ethereum; no bespoke prover,
+(initially) no sequencer. **V1 is the witness only**; availability and
+canonical-source-in-a-partition are later modes (REFERENCE.md §1a). Not a PLC replacement.
+(REFERENCE.md §1–2.)
 
 ## Commands (via the root `Makefile`)
 
@@ -47,6 +53,11 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 
 ## Do NOT relitigate (settled — see the cited REFERENCE.md sections)
 
+- **V1 is the witness ("atproto identity DMARC"), not the escape hatch.** plc.directory
+  stays canonical; the product is the read-side graduated status
+  (`confirmed`/`tentative-consistent`/`diverged`/`absent`) a resolver/PDS enforces
+  unilaterally. The permissionless write path is a backstop. Availability (Mode 2) and
+  canonical-source-in-a-partition (Mode 3) are explicitly later, not V1. (§1a)
 - **The approach:** per-DID, lazy, on-chain verification via a permissionless endpoint; no
   bulk genesis replay; no in-protocol membership; public Starknet first. (§2)
 - **Appchain timing is an open question** — depends on whether public Starknet's L1→L2
@@ -105,7 +116,9 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    commitment root (P3.2) and multi-op genesis `import` (P3.4). See
    [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md) §2.
 4. Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.
-5. Resolver verification library (the adoption surface).
+5. Witness / resolver verification library — **the V1 product** ("atproto identity DMARC"):
+   DID → document + inclusion proof against the published root, as the graduated status
+   (§1a Mode 1). Built last (stands on 1–4) but the headline deliverable.
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
 **Current phase: 3 in progress — the permissionless endpoint (append + recovery + tiers) is

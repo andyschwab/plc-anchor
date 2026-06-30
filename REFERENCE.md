@@ -1,9 +1,16 @@
 # PLC Anchor — Project Reference
 
-A censorship-resistant, cryptographically-verifiable **anchor** for the AT Protocol DID
-PLC operation log, built on Starknet. It lets resolvers cross-check `plc.directory`
-against a trust-minimized, independently-verifiable root. It is an anchor, **not** a
-replacement for the directory.
+**DIDMARC — "atproto identity DMARC."** A cryptographically-verifiable **anchor** for the
+did:plc operation log, built on Starknet. PLC ops already self-certify per-op (authenticity
+— the DKIM analog); DIDMARC adds the layer PLC lacks: independent on-chain proof that
+`plc.directory` is serving a DID's **complete, current, and non-equivocated** history, plus
+a graduated status a resolver or PDS can enforce as policy (the SPF/DMARC analog).
+`plc.directory` stays canonical; the anchor is a **unilaterally adoptable** witness that
+holds it accountable — any one checker turns it on alone, the way an email receiver enables
+DMARC. It is an anchor, **not** a replacement for the directory.
+
+> *Name provisional: "DIDMARC" = DID-mapping Authentication, Reporting & Conformance,
+> picked so the email-auth analogy reads at a glance. Rename freely.*
 
 ---
 
@@ -16,8 +23,14 @@ identity is a signed, hash-linked log of operations served from a single directo
 ordering, and timestamping**. That single-operator trust is the chokepoint.
 
 This project re-verifies PLC operations on-chain and publishes a proven commitment to the
-current DID→document mapping, with a permissionless write path so no operator can suppress
-a valid op. It does not run the directory; it anchors the DIDs that opt in.
+current DID→document mapping. The **V1 product is the witness**: a resolver or PDS fetches a
+DID document from the directory (or a mirror) and checks it against the on-chain proof,
+getting back a graduated status — `confirmed` / `tentative-consistent` / `diverged` /
+`absent` (§4) — that it can act on. This needs **no network coordination and no protocol
+change**: a single checker adopts it alone. A permissionless write path (`submit_op`, §2) is
+retained as a **backstop** — a censorship escape hatch, and the seed of the later modes
+(§1a) — not the V1 headline. The project does not run the directory; it anchors the DIDs
+that opt in (a PDS naturally anchors its own users).
 
 **Residual trust (narrow, deliberate):**
 - **Ordering** — per-DID linearization of operations (cross-DID order is irrelevant; DIDs
@@ -26,6 +39,34 @@ a valid op. It does not run the directory; it anchors the DIDs that opt in.
   pragmatically (§4).
 
 Per-op validity is **proven**, not assumed.
+
+---
+
+## 1a. Operating modes — V1 and the ladder beyond
+
+The same proven-root foundation supports three modes. Build them **in order; only Mode 1 is
+V1.** Modes 2–3 are stubbed here to record that the foundation makes them possible and to
+keep V1 from foreclosing them — they are explicitly *not* the focus.
+
+1. **Witness — "atproto identity DMARC" (V1, the product).** `plc.directory` stays the
+   canonical source of truth and the write path. The anchor is a read-side accountability
+   layer: it proves completeness, recency, and non-equivocation, and exposes a graduated
+   status (§4) that any resolver/PDS enforces **unilaterally**. This is what we ship and
+   what people adopt; everything in §3 serves it. Per-op authenticity is already PLC's
+   (DKIM); what the witness adds is the SPF/DMARC layer a single signature structurally
+   cannot — *was I shown the whole, current, non-equivocated history?*
+
+2. **Availability (later).** A proven root plus the op bytes (from a mirror) already let the
+   anchor answer a resolution with an inclusion proof. Promoting that to a real fallback —
+   serving identity when the directory is unreachable — is the natural Mode 2. The
+   foundation makes it possible; it is not V1. (Integrity, not availability, is the V1
+   guarantee.)
+
+3. **Canonical source in a partitioned PLC (final).** If PLC ever partitions — a regional or
+   political split, or the single operator becoming untrusted — the permissionless write
+   path and the proven root can serve as the neutral reconciliation point: a canonical head
+   when there is no longer one agreed directory. This is the escape hatch grown into a
+   source of truth. Strictly a last mode; designing for it now would over-build V1.
 
 ---
 
@@ -50,8 +91,10 @@ From these:
   by the Starknet transaction signer or fee payer, who may be anyone (that is the
   permissionless property). Native account abstraction and paymasters are gas/UX only (who
   *pays*), never authorization (who may *write*); do not require the PLC key to be the
-  Starknet account signer. This single primitive is both the normal write path and the
-  censorship-resistance escape hatch.
+  Starknet account signer. In witness mode the indexer (§3.4) supplies ops mirrored from the
+  directory; `submit_op`'s permissionless authorization is the **backstop** (escape hatch,
+  and the seed of Modes 2–3, §1a) — one primitive serving both the normal and the
+  adversarial path.
 - **Verification runs as a contract.** The network proves the blocks and settles to
   Ethereum. We run no bespoke prover and — initially — no sequencer (deploy on public
   Starknet first; an appchain is a later option, §6).
@@ -78,6 +121,8 @@ From these:
 
 The keystone is the long pole; everything composes around it. Consensus-critical modules
 are differential-tested against the reference implementations before merge (§5).
+**Build order is dependency order, not priority order:** the V1 *product* is the witness
+library (5), but it stands on 1–4.
 
 1. **DRISL / DASL CID in Cairo (keystone).** Canonical dCBOR42 encoding + DASL CID
    derivation (sha-256 over DRISL bytes). Green against the DASL conformance suite. The
@@ -88,15 +133,18 @@ are differential-tested against the reference implementations before merge (§5)
    higher-priority-key nullification. Differential-tested vs `@did-plc/lib`.
    → `cairo/packages/plc_core`
 3. **State commitment + anchor endpoint.** Per-DID head; a commitment over the DID→document
-   map (resolution = root + inclusion proof); confirmed/tentative tiers (§4); the
-   permissionless `import` / `submit_op` entrypoint with native-AA authorization.
-   → `cairo/packages/plc_core`
+   map (resolution = root + inclusion proof — the witness substrate); confirmed/tentative
+   tiers (§4); the `import` / `submit_op` entrypoint with embedded-signature authorization
+   (`submit_op` = the backstop write path, §2). → `cairo/packages/plc_core`
 4. **Sync indexer (off-chain, Rust).** Consume a PLC mirror's `/export/stream` (Eurosky /
-   microcosm) by sequence cursor; for anchored DIDs, submit deltas. Where ongoing
-   update cost lives and is allocated. → `ingest/`
-5. **Resolver verification library.** Given a DID, return the document + an inclusion proof
-   against the published root, with a confirmed/tentative flag. Must be cheap — this is the
-   adoption surface; an anchor nobody checks is theater.
+   microcosm) by sequence cursor; for anchored DIDs, submit deltas. **The normal anchoring
+   path in witness mode**, and where ongoing update cost lives and is allocated. → `ingest/`
+5. **Witness / resolver verification library — the V1 product.** Given a DID, return the
+   document + an inclusion proof against the published root, as the graduated status
+   (`confirmed` / `tentative-consistent` / `diverged` / `absent`, §4). This is "atproto
+   identity DMARC" (§1a Mode 1) — the adoption surface and the headline deliverable, even
+   though it is built last because it stands on 1–4. Must be cheap; an anchor nobody checks
+   is theater.
 6. **Later, deliberately deferred:** the **Layer-2 admin/user tool** (anchoring policy +
    cost allocation); **governance** (§7); an **appchain** — only if credible neutrality
    demands owning the sequencer (public Starknet's L1 force-inclusion provides the CR
@@ -116,6 +164,21 @@ fork/recovery mechanism. We surface this rather than hide it:
 - **Confirmed root** — commits ops *past* the window. Immutable; what resolvers treat as
   final.
 - **Tentative tip** — within-window ops, still nullifiable. Carried separately and flagged.
+
+These tiers **are** the witness's output (§1a Mode 1). The graduated status a checker gets:
+
+- **`confirmed`** — head committed past the 72h window; immutable. Strongest assertion.
+- **`tentative-consistent`** — within-window op; the on-chain view agrees with the directory
+  so far, but it is still nullifiable.
+- **`diverged`** — the directory's served head contradicts the proven head. The actionable
+  alarm: warn / quarantine / refuse to relay. Distinguish *committed-history* divergence
+  (alarming) from benign *within-window timing* divergence — an artifact of the timestamp
+  residual (§1, §5) that must not cry wolf.
+- **`absent`** — DID not anchored; no opinion (the coverage gap, like DMARC `p=none`).
+
+A hard "reject unless `confirmed`" gate would reject every legitimate update from the last
+72h; the product is the *graduated* status, enforced like DMARC's `none` / `quarantine` /
+`reject`, not a binary stamp.
 
 Resolvers get an explicit confirmed/tentative status, never a silently-revisable root.
 
@@ -209,6 +272,9 @@ Repos: `github.com/eurosky-social` (`u-at-proto`, `eu-haul`).
 
 ---
 
-*Scope discipline: this is an anchor — a permissionless, proven, verifiable write path and
-state root for the DIDs that opt in — not a PLC replacement. Keep the verification core
-exact, keep the endpoint permissionless, keep resolver verification cheap.*
+*Scope discipline: V1 is the **witness** — "atproto identity DMARC": independent proof that
+`plc.directory` serves a complete, current, non-equivocated history, exposed as a graduated
+status any resolver/PDS enforces unilaterally. `plc.directory` stays canonical; availability
+(Mode 2) and canonical-source-in-a-partition (Mode 3) are later, not V1 (§1a). The
+permissionless write path is the backstop, not the headline. Keep the verification core
+exact, keep the endpoint permissionless, keep the witness check cheap.*
