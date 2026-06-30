@@ -1,0 +1,22 @@
+# Landing/education page → didmarc.dev
+# Deploy from this directory:  fly launch --no-deploy   (first time, to create the app)
+#                              fly deploy
+# Then point the apex + www at it:  fly certs add didmarc.dev && fly certs add www.didmarc.dev
+app = "didmarc"
+primary_region = "fra"  # EU infra — on-brand for the sovereignty constituency
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 80
+  force_https = true        # .dev is HSTS-preloaded anyway; Fly issues the LE cert
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0  # a static page can cold-start
+
+[[http_service.checks]]
+  method = "GET"
+  path = "/"
+  interval = "30s"
+  timeout = "5s"
