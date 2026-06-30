@@ -91,6 +91,7 @@ ground-truthed against `@did-plc/lib` at generation time:
 
 ## Status
 
-Offline suite (18 tests) + the gated live runner (4 tests) are green. Open follow-up: a richer
-live corpus once a DID has been anchored ≥72h (to exercise the confirmed-`diverged` headline
-against the real contract end-to-end). See `docs/PHASE-5-PLAN.md`.
+The offline suite and the gated live runner are green (`make adversarial-check`). Open
+follow-up: a richer live corpus once a DID has been anchored ≥72h, to exercise the
+confirmed-`diverged` headline against the real contract end-to-end. See the open follow-ups in
+[`docs/HISTORY.md`](../docs/HISTORY.md).

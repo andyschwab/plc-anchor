@@ -11,26 +11,28 @@ email receiver enables DMARC.
 > *immediate operational failure* on one resolver, whose rational response is to disable the
 > check — removing the mitigation entirely. So every ambiguous edge (clock lag, window-edge
 > recovery skew) resolves to a non-alarming status; `diverged` fires only on an unexplained
-> contradiction of already-confirmed history. See `docs/PHASE-5-PLAN.md` §0.
+> contradiction of already-confirmed history. See `REFERENCE.md` §4 and `docs/HISTORY.md`
+> (item 5).
 
-## Status (build order item 5, in progress)
+## What's here
 
-- **P5.2 (done):** `src/merkle.ts` — sha256-Merkle inclusion-proof **verification**, pinned
-  byte-identical to the contract's tree (`cairo/packages/plc_core/src/merkle.cairo`) via the
-  shared `gen-merkle-vectors` fixture. This is the trust primitive: recompute the root from a
-  proof and compare it to a root fetched independently, so the proof server stays untrusted.
-- **P5.3 (done):** the data path. `src/starknet.ts` — hand-encoded `starknet_call` reads of
-  the anchor views (`tentative_root` / `confirmed_root` / `head_cid` / `tentative_proof` / …),
-  mirroring `ingest`'s ByteArray ABI codec (no SDK); selectors precomputed from the `starknet`
-  crate (`src/selectors.ts`, Node has no Keccak). `src/directory.ts` — the PLC audit-log client
-  + head selection (the directory's `createdAt` clock, for P5.4's skew check).
-- **P5.4 (done):** `src/status.ts` — the graduated-status `check(did)` ladder
+- **`src/merkle.ts`** — sha256-Merkle inclusion-proof **verification**, pinned byte-identical
+  to the contract's tree (`cairo/packages/plc_core/src/merkle.cairo`) via the shared
+  `gen-merkle-vectors` fixture. This is the trust primitive: recompute the root from a proof
+  and compare it to a root fetched independently, so the proof server stays untrusted.
+- **`src/starknet.ts`** — hand-encoded `starknet_call` reads of the anchor views
+  (`tentative_root` / `confirmed_root` / `head_cid` / `tentative_proof` / …), mirroring
+  `ingest`'s ByteArray ABI codec (no SDK); selectors precomputed from the `starknet` crate
+  (`src/selectors.ts`, Node has no Keccak).
+- **`src/directory.ts`** — the PLC audit-log client + head selection (the directory's
+  `createdAt` clock, for the skew check).
+- **`src/status.ts`** — the graduated-status `check(did)` ladder
   (`confirmed`/`tentative-consistent`/`diverged`/`absent`). `diverged` fires only when the
   anchor's confirmed head is absent from the directory's live chain AND the directory head is
   older than a conservative skew horizon (default 14d) — every recent/edge case is
   `skew-pending` (`tentative-consistent`), honoring the never-false-`diverged` invariant.
-- **P5.5 (done):** `src/cli.ts` — the `witness` CLI; `test/live.test.ts` — a gated live read
-  against the Sepolia deployment (runs only with `WITNESS_LIVE_RPC` set).
+- **`src/cli.ts`** — the `witness` CLI; `test/live.test.ts` — a gated live read against the
+  Sepolia deployment (runs only with `WITNESS_LIVE_RPC` set).
 
 ## Usage
 

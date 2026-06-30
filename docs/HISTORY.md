@@ -1,0 +1,152 @@
+# Build history & decision record
+
+A compressed log of what landed per build-order item, and the load-bearing decisions made
+along the way. The **what & why** lives in [`REFERENCE.md`](../REFERENCE.md) (the constitution)
+and the settled rules in [`CLAUDE.md`](../CLAUDE.md) "Do NOT relitigate"; this file is the
+**when & how it got built**, so finished planning docs don't accumulate in `docs/`.
+
+Build order is dependency order, not priority order — the V1 *product* is the witness (item 5),
+but it stands on 1–4 (`REFERENCE.md` §3).
+
+---
+
+## Item 1 — DRISL + DASL CID in Cairo (the keystone)
+
+`cairo/packages/drisl` (`drisl.cairo` codec, `cid.cairo` derivation). Canonical dCBOR42
+encoding + DASL CID derivation (sha-256 over DRISL bytes), green against the vendored DASL
+conformance suite. Acceptance gate: byte-identical CIDs/DIDs on 6 real-structure PLC ops
+(secp256k1/p256 genesis, update, tombstone) round-tripped against `@did-plc/lib` /
+`@ipld/dag-cbor`, in both the TS oracle and Cairo. (`REFERENCE.md` §3, §5.)
+
+## Item 2 — PLC op verification + 72h recovery state machine
+
+`cairo/packages/plc_core`: `key_parse`, `sig_verify`, `op_decode`, `op_verify`, `link`,
+`recovery`, tied together by `verify::verify_next_op`. `did:key` parse, k256/p256 ECDSA over
+the *unsigned* op, DRISL→typed-op decode + §5 constraints, legacy `create` normalization,
+authorized-signer-index derivation, `prev` linkage (base32 CID string), and the 72h recovery
+decision — all differential-green against `@did-plc/lib`.
+
+**Key decisions**
+- **S-malleability is curve-asymmetric** (verified vs `@atproto/crypto`): k256 requires
+  **low-S**; p256 is **malleable** (high-S accepted). An earlier "low-S for both" draft was
+  wrong for p256 and would have forked. `sig_verify` folds high-S→low-S for p256 only; guarded
+  by a forced-high-S p256 vector + a high-S-k256 reject vector. (`REFERENCE.md` §5.)
+- **Recovery stays in item 2** — pure verification logic, differential-testable in isolation,
+  independent of on-chain commitment. Item 3 consumes its output (confirmed vs nullifiable).
+- **`op_decode` reuses the keystone `drisl::decode`** (one canonical CBOR layer) rather than a
+  second hand-rolled reader.
+
+## Item 3 — State commitment + the permissionless anchor endpoint
+
+`plc_core`: `state` (per-DID head/chain + `apply_op` + confirmed/tentative tiers), `merkle`
+(the DID→head commitment), `anchor` (the `#[starknet::contract]`: `import_genesis` / `import` /
+`submit_op` + the head/root/proof views). Recovery/fork path ground-truthed end-to-end vs
+`@did-plc/lib`; offline-tested via `contract_state_for_testing`.
+
+**Key decisions**
+- **Authorization = the op's embedded signature, verified in-contract** — never the Starknet
+  tx signer / fee payer (the permissionless property). `import` replays a resolved linear
+  history in one call; forking successors rejected (`import-fork`). (`REFERENCE.md` §2.)
+- **Commitment accumulator = sha256 Merkle** (not a Poseidon trie / storage proofs), chosen
+  for resolver portability — any language, no new crypto, matches the CID hash stack. RFC 6962
+  domain separation (`leaf = sha256(0x00 ‖ did ‖ head_cid)`, `node = sha256(0x01 ‖ left ‖
+  right)`), did-sorted, odd-node promotion. Format pinned by the `gen-merkle-vectors` TS
+  cross-check with a CI drift gate. (`REFERENCE.md` §3, §5a.)
+- **Roots are read-time views** (`now`-parameterized), recomputed over the roster — writes stay
+  cheap; an incremental on-chain tree is a later optimization if root reads get hot.
+- **Storage = per-DID `Vec<StoredOp>`** (signed bytes + `created_at` + signer index); CID /
+  rotation keys / tombstone all rederive from the bytes.
+- **`createdAt` is not in the signed op** (directory-assigned metadata, absent from the op bytes
+  and CID — confirmed against the corpus). The contract uses **Starknet block time** as the
+  pragmatic `createdAt` the 72h window measures against; imported ops use the import block time.
+  A freshly imported chain is therefore tentative until observed for 72h — sound (it only
+  re-exposes the recovery window, never lets a non-key-holder mutate a DID). (`REFERENCE.md`
+  §1, §4, §5.)
+
+## Item 4 — Sync indexer (`ingest/`)
+
+The off-chain feeder (`ingest/README.md`): consumes a PLC mirror's `/export`, filters to the
+anchored-DID roster (membership = off-chain policy), and submits deltas to the anchor. Built
+source-agnostic via trait seams (`OpSource` / `AnchorSink`) so the consensus-relevant logic
+stays offline-testable.
+
+**Key decisions**
+- **Keystone = `ingest::reencode`** rebuilds a directory-served op's canonical DRISL signed
+  bytes via `atproto-dasl`, differential-green byte-for-byte against the 7-op corpus. Confirmed
+  PLC `prev` is a base32 **string**, not a tag-42 link — no IPLD links in PLC ops.
+- **Integrity gate:** a delta is submitted only if its re-encoded CID equals the directory's
+  published CID. The feeder can't be tricked into anchoring forged content by the source it reads.
+- **Live submission is feature-gated** (`live` cargo feature → `StarknetSink`): the default
+  build and the offline consensus tests pull no async / Starknet deps. `DryRunSink` is the
+  offline default. Two CLI modes: `--roster` (firehose) and `--did` (single-DID onboarding).
+- **Proven on-chain (Sepolia):** the live E2E read back a corpus genesis head byte-identical to
+  the corpus CID; a real 4-op DID anchored via `--did --submit` matched the directory's
+  published head (the resolver cross-check, live).
+
+## Item 5 — Witness / resolver library (`witness-ts/`) — the V1 product
+
+"atproto identity DMARC" (`REFERENCE.md` §1a Mode 1, `witness-ts/README.md`): given a DID,
+return the graduated status (`confirmed` / `tentative-consistent` / `diverged` / `absent`) a
+resolver enforces unilaterally. TypeScript, Node ≥22 (type-stripping, no build step); the
+pinned core needs only `node:crypto`.
+
+- `anchor`'s `tentative_proof` / `confirmed_proof` views (reuse `merkle_proof`); the contract
+  isn't upgradeable, so this shipped as a fresh Sepolia deploy
+  (`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180`).
+- `src/merkle.ts` — the resolver-side `verifyProof`, **byte-identical to `merkle.cairo`**,
+  pinned via the shared `gen-merkle-vectors` fixture (one source, two consumers; CI drift-gated).
+- `src/starknet.ts` (hand-encoded `starknet_call` reads; selectors precomputed via
+  `gen_selectors`, since Node has no Keccak) + `src/directory.ts` (audit-log head + the
+  directory's `createdAt` clock) + `src/status.ts` (the §4 ladder) + `src/cli.ts`.
+
+**Key decisions**
+- **Governing invariant: never a false `diverged`.** The anchor mitigates a *systemic* risk
+  (single-operator trust in `plc.directory`); a false alarm converts that into an *immediate
+  operational failure* on one resolver, whose rational response is to disable the check —
+  self-defeating. So every ambiguous edge (clock lag, window-edge recovery skew) resolves to a
+  non-alarming status. The asymmetry is total: a false negative degrades to the status quo
+  (tolerable); a false positive removes the mitigation (intolerable). (`REFERENCE.md` §4.)
+- **Clock reconciliation belongs in the read-side library, not the contract.** The contract
+  sees only block time and stays conservative; the library reads *both* clocks (the directory
+  audit log exposes `createdAt`; the chain exposes the anchor's observation time) to decide
+  whether an edge disagreement is explained by skew. `diverged` fires only when a confirmed
+  head is absent from the directory's live chain **and** older than a conservative skew horizon
+  (default 14d); everything recent is `skew-pending`.
+- **Conservative skew now, precise bound later.** The window-edge skew rule is the hardest part;
+  front-loading the exact bound buys an adopter nothing while risking the one fatal failure mode.
+  V1 uses the plausible-skew collapse; the precise bound is a documented follow-up.
+
+## Validation — the adversarial suite (`adversarial/`)
+
+Before item 6, the [`adversarial/`](../adversarial/README.md) suite validates the design against
+attack/fork cases, rendered as the engineer-facing
+[`docs/ADVERSARIAL-REPORT.md`](ADVERSARIAL-REPORT.md). 12 scenarios (8 read-side, one per
+status-ladder branch; 4 write-side rejections ground-truthed vs `@did-plc/lib`) on real signed
+did:plc chains, plus an HTTP malicious-mirror exercising the real `DirectoryClient` fetch path
+offline and a gated live read vs Sepolia (`make adversarial-live`). **No new consensus logic** —
+it composes the already-differential-green modules into named attacks. This is the keep-it-high-
+priority artifact: it is the concrete demonstration that the witness alarms when it should and
+stays silent when disagreement is benign.
+
+---
+
+## Open follow-ups (deliberately deferred)
+
+- **Off-chain prover service** (roster-scale memoization of the inclusion proofs the contract
+  serves at read time; identical format). Mode-2-adjacent infra.
+- **Precise skew bound** + its re-evaluation trigger — V1 ships the conservative collapse; this
+  is the documented successor (resolvers depend on the exact rule, so it's pinned when settled).
+- **Appchain timing** (`REFERENCE.md` §6a) — whether public Starknet's L1→L2 forced-inclusion
+  guarantee is strong enough for CR. Resolve before any settlement wiring; **not settled**.
+- **Item 6** — the Layer-2 admin/user tool (anchoring policy + cost allocation), governance, and
+  (only if credible neutrality demands owning the sequencer) an appchain. (`REFERENCE.md` §6.)
+- **Generalization seam** (`REFERENCE.md` §5a) — the `merkle` leaf is separator-less, sound only
+  because did:plc is fixed-width; add a length prefix *before* admitting variable-width subjects.
+
+## Live-bring-up checklist (V1)
+
+To call V1 "live" on the fresh Sepolia deployment: re-import DID(s) onto the roster
+(`ingest --did … --submit`), point the `ANCHOR_CONTRACT_ADDRESS` secret at the deployed
+address, and run the gated live reads (`WITNESS_LIVE_RPC=… make adversarial-live` and
+`witness-ts/test/live.test.ts`). The confirmed-`diverged` headline needs a DID anchored ≥72h
+ahead so it has an immutable confirmed head.

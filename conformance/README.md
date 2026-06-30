@@ -26,10 +26,13 @@ Each case: `{ type: "roundtrip" | "invalid_in" | "invalid_out", data: <hex CBOR>
 Do **not** hand-edit vectors to make a test pass — regenerate from source and bump the commit
 pin above. Weakening a vector to go green is a guardrail violation (see `CLAUDE.md`).
 
-### `vectors/plc-ops/` — PLC operation fixtures
-To be captured from `wss://plc.directory/export/stream` + `/export` (a sample plus a
-hand-picked recovery/nullification scenario), frozen as regression fixtures for
-`op_verify`/`recovery` and validated against `@did-plc/lib`. Currently empty.
+### `vectors/plc-ops/` — PLC operation corpus
+`corpus.json` — the PLC-op corpus generated from `@did-plc/lib` (`make gen-plc-corpus`):
+real-structure genesis (k256 / p256 / mixed / 2-rotation), update, tombstone, legacy `create`,
+plus recovery/nullification scenarios. It is the regression fixture for `op_verify` / `recovery`
+and the source the Cairo vector tables are generated from (`make gen-plc-vectors`,
+`gen-op-verify-vectors`, `gen-recovery-vectors`), each behind a CI drift gate. Ground-truthed
+against `@did-plc/lib` at generation time. Regenerate from source — never hand-edit.
 
 ## Refreshing vectors
 

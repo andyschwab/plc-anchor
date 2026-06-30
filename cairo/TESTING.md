@@ -48,8 +48,8 @@ environment two things break that:
 So `snforge test` simply cannot run there, regardless of registry mirroring.
 Scarb's builtin `cairo_test` provides the `#[test]` attribute with **no proc
 macro and no registry fetch**, so it works in the sandbox. Since our tests don't
-use any snforge-specific feature yet, the two backends are equivalent for the
-current gate (10 tests: 8 `drisl` + 2 `plc_core` op_verify).
+use any snforge-specific feature yet (only `#[test]` and `assert!`), the two
+backends are equivalent for the full `drisl` + `plc_core` gate.
 
 Revisit this when a test first needs a real snforge feature (a cheatcode, fork
 state, or the fuzzer). At that point the offline backend can no longer run that

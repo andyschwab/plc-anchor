@@ -106,88 +106,21 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 
 ## Build order & status (REFERENCE.md §3)
 
-1. ✅ **DRISL + DASL CID in Cairo**, green against the DASL conformance suite
-   (`cairo/packages/drisl`). ✅ **Acceptance gate closed:** byte-identical CIDs/DIDs on
-   6 real-structure PLC ops (secp256k1/p256 genesis, update, tombstone) round-tripped
-   against `@did-plc/lib` / `@ipld/dag-cbor` — 6/6 vectors pass in both TS oracle and
-   Cairo. (REFERENCE.md §3, §5)
-2. ✅ **PLC op verification + 72h recovery state machine** (differential vs `@did-plc/lib`).
-   **Acceptance gate closed:** `did:key` parse, k256/r1 ECDSA over the unsigned op
-   (k256 low-S; **p256 malleable**, matching the reference — §5 corrected), DRISL→typed-op
-   decode + §5 constraints, legacy `create` normalization, authorized-signer-index
-   derivation, `prev` linkage (base32 CID string), and the 72h recovery decision — all green
-   against a 7-op corpus + recovery scenarios ground-truthed by `@did-plc/lib`, tied together
-   by `plc_core::verify::verify_next_op`. 21/21 plc_core + 9/9 drisl tests pass.
-   (`cairo/packages/plc_core`; sequencing in [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md).)
-3. ✅ **State commitment + confirmed/tentative roots + the permissionless `import`/`submit_op`
-   endpoint** (embedded-sig authorization). Per-DID head + state (`plc_core::state`), the
-   `anchor` `#[starknet::contract]` (`import_genesis`/`import`/`submit_op`/views), and
-   confirmed/tentative tiers + the recovery/fork path (per-DID chain storage; 72h rule via
-   `classify_next_op`) — offline-tested via `contract_state_for_testing`, recovery
-   ground-truthed vs `@did-plc/lib`. **P3.2:** the sha256-Merkle DID→document commitment root
-   (`plc_core::merkle` + `anchor::{tentative_root, confirmed_root}`) — RFC 6962 leaf/node
-   domain separation, did-sorted, format-pinned by a TS cross-check (`gen-merkle-vectors`)
-   with a CI drift gate. **P3.4:** `anchor::import(chain)` replays a DID's resolved history in
-   one call (imported ops use the import block time — `createdAt` is not in the signed op).
-   See [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md) §2.
-4. ✅ **Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.** The off-chain
-   feeder, built as a source-agnostic pipeline with trait seams (`OpSource`/`AnchorSink`) so the
-   consensus-relevant logic stays offline-testable. **Keystone:** `ingest::reencode` rebuilds a
-   directory-served operation's canonical DRISL signed bytes (PLC `prev` is a base32 **string**,
-   not a tag-42 link — verified, no IPLD links in PLC ops) via `atproto-dasl`, **differential-green
-   byte-for-byte against the 7-op conformance corpus** (genesis k256/p256/mixed/2-rotation,
-   update, tombstone, legacy create). The pipeline filters to the anchored-DID roster (membership
-   = off-chain policy, §2), skips directory-nullified ops, and enforces an **integrity gate** — a
-   delta is submitted only if its re-encoded CID equals the directory's published CID — then
-   routes genesis→`import_genesis` / append→`submit_op` and advances a resumable `after=<createdAt>`
-   cursor. `HttpExportSource` (ureq) is the live `/export` path; `FixtureSource` drives the tests
-   (ingest 14/14). **Live seam closed:** `StarknetSink` (`ingest/src/starknet_sink.rs`, `live`
-   cargo feature) submits deltas to a deployed `anchor` via starknet-rs — `import_genesis`/`submit_op`
-   with manually-encoded Cairo `ByteArray` calldata, waiting for tx acceptance. `DryRunSink` stays
-   the offline default; the live path is feature-gated so the consensus tests pull no async/Starknet
-   deps. Wired into the CLI two ways — `--roster` (firehose) and `--did <did:plc:...>` (single-DID
-   onboarding via `/<did>/log/audit`, no firehose scan); both honor `--submit`. **Proven on-chain (Sepolia):** the live E2E
-   (`ingest/tests/live_e2e.rs`, `--ignored`) drives a corpus genesis through the sink and reads back
-   `head_cid` byte-identical to the corpus CID + a non-empty `tentative_root`; separately, a real
-   4-op DID was anchored via `--did --submit` and its on-chain head matched the directory's
-   published head (the resolver cross-check, live). Deployed address +
-   RPC notes in [`snfoundry.toml`](snfoundry.toml); the gated manual E2E job is
-   [`.github/workflows/e2e-sepolia.yml`](.github/workflows/e2e-sepolia.yml).
-5. ✅ **Witness / resolver verification library (`witness-ts/`) — the V1 product**
-   ("atproto identity DMARC"): given a DID, return the graduated status
-   (`confirmed`/`tentative-consistent`/`diverged`/`absent`, §1a Mode 1) a resolver enforces
-   unilaterally. A TypeScript package (Node ≥22, type-stripping — no build step; pinned core
-   needs only `node:crypto`). **P5.1:** the `anchor` `tentative_proof`/`confirmed_proof` views
-   (reuse `merkle_proof`); the contract isn't upgradeable so this is a fresh Sepolia deploy
-   (`scripts/deploy-sepolia.sh`, `make deploy-sepolia`). **P5.2:** `src/merkle.ts` — the
-   resolver-side `verifyProof`, **byte-identical to `merkle.cairo`**, pinned via the shared
-   `gen-merkle-vectors` JSON fixture (one source, two consumers; CI drift-gated).
-   **P5.3:** the data path — `src/starknet.ts` (hand-encoded `starknet_call` reads mirroring
-   `ingest`'s ByteArray ABI; selectors precomputed from the `starknet` crate via
-   `gen_selectors`, since Node has no Keccak) + `src/directory.ts` (audit-log head + the
-   directory's `createdAt` clock). **P5.4:** `src/status.ts` — the §4 ladder under the
-   **governing invariant: never a false `diverged`** (the window-edge skew case is
-   indistinguishable from omission without the anchor's per-op time, so `diverged` fires only
-   when a confirmed head is absent from the directory's live chain AND older than a
-   conservative skew horizon; everything recent is `skew-pending`). **P5.5:** the `witness` CLI
-   + a gated live read. Offline-tested (witness-ts 25/25 + 3 gated-live; tsc clean).
-   Plan: [`docs/PHASE-5-PLAN.md`](docs/PHASE-5-PLAN.md); context: [`docs/PHASE-5-WITNESS-NOTES.md`](docs/PHASE-5-WITNESS-NOTES.md).
-6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
+Build order is dependency order, not priority order: the V1 *product* is the witness (item 5),
+built last because it stands on 1–4. **Items 1–5 have landed**, each differential-green against
+the references; the `anchor` contract is deployed to Sepolia
+(`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180`).
 
-**Current phase: build order item 5 (the V1 witness, `witness-ts/`) feature-complete and
-offline-green (witness-ts 25/25; plc_core 55/55 with the new proof views; tsc clean). The
-`anchor` contract carrying `tentative_proof`/`confirmed_proof` is deployed to Sepolia
-(`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180`). The witness packages
-root-fetch + `verifyProof` into the graduated status under the never-false-`diverged`
-invariant. Before item 6 (UI / production), the [`adversarial/`](adversarial/) suite validates
-the design against attack/fork cases: 12 scenarios (8 read-side, one per status-ladder branch;
-4 write-side rejections ground-truthed vs `@did-plc/lib`) rendered as
-[`docs/ADVERSARIAL-REPORT.md`](docs/ADVERSARIAL-REPORT.md), plus an HTTP malicious-mirror
-exercising the real `DirectoryClient` fetch path offline and a gated live read vs Sepolia
-(`make adversarial-live`) — adversarial 18 offline + 4 gated-live. Remaining to call V1 "live":
-re-import DID(s) onto the fresh roster (`ingest --did … --submit`), point the
-`ANCHOR_CONTRACT_ADDRESS` secret at the new address, and run the gated live reads
-(`WITNESS_LIVE_RPC=… make adversarial-live` and `witness-ts/test/live.test.ts`); the
-confirmed-`diverged` headline needs a DID anchored ≥72h ahead. Open follow-ups (deliberately
-deferred, `docs/PHASE-5-PLAN.md` §1): the off-chain prover service (roster-scale) and the
-precise skew bound (the horizon is V1's conservative stand-in). See `docs/PHASE-5-PLAN.md`.**
+| # | Item | Where | Status |
+|---|---|---|---|
+| 1 | DRISL + DASL CID (keystone) | `cairo/packages/drisl` | ✅ |
+| 2 | PLC op verification + 72h recovery | `cairo/packages/plc_core` | ✅ |
+| 3 | State commitment + the `import`/`submit_op` endpoint | `cairo/packages/plc_core` (`anchor`) | ✅ |
+| 4 | Sync indexer (firehose → deltas) | `ingest/` | ✅ |
+| 5 | **Witness / resolver library — the V1 product** | `witness-ts/` | ✅ feature-complete, offline-green |
+| 6 | Layer-2 admin/user tool; governance; appchain | — | deferred |
+
+What landed per item, the load-bearing decisions, the open follow-ups, and the V1 live-bring-up
+checklist all live in **[`docs/HISTORY.md`](docs/HISTORY.md)**. The design baseline is
+`REFERENCE.md`; the adversarial validation is [`docs/ADVERSARIAL-REPORT.md`](docs/ADVERSARIAL-REPORT.md)
+(generated). Test counts are not tracked in prose — `make ci` is the source of truth.
