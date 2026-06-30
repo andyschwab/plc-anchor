@@ -44,6 +44,10 @@ run there — the offline builtin gives `#[test]` with no proc macro. Tests are 
   differential authority.
 - `conformance/` — vendored DASL vectors + the TS oracle sidecar (`@did-plc/lib`) +
   provenance.
+- `witness-ts/` — the V1 witness/resolver library (TypeScript; build order item 5). Runs on
+  Node ≥22 (type-stripping, no build step); `make witness-test`. The resolver-side
+  `verifyProof` is pinned byte-identical to `merkle.cairo` via the shared `gen-merkle-vectors`
+  JSON fixture.
 
 ## Toolchain (pinned in `.tool-versions` / `rust-toolchain.toml`)
 
@@ -141,20 +145,35 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    published head (the resolver cross-check, live). Deployed address +
    RPC notes in [`snfoundry.toml`](snfoundry.toml); the gated manual E2E job is
    [`.github/workflows/e2e-sepolia.yml`](.github/workflows/e2e-sepolia.yml).
-5. Witness / resolver verification library — **the V1 product** ("atproto identity DMARC"):
-   DID → document + inclusion proof against the published root, as the graduated status
-   (§1a Mode 1). The inclusion-proof verifier already lives in `plc_core::merkle::verify_proof`
-   (format pinned); item 5 packages root-fetch + proof-check for resolvers. Built last
-   (stands on 1–4) but the headline deliverable. Notes for when we get there:
-   [`docs/PHASE-5-WITNESS-NOTES.md`](docs/PHASE-5-WITNESS-NOTES.md).
+5. ✅ **Witness / resolver verification library (`witness-ts/`) — the V1 product**
+   ("atproto identity DMARC"): given a DID, return the graduated status
+   (`confirmed`/`tentative-consistent`/`diverged`/`absent`, §1a Mode 1) a resolver enforces
+   unilaterally. A TypeScript package (Node ≥22, type-stripping — no build step; pinned core
+   needs only `node:crypto`). **P5.1:** the `anchor` `tentative_proof`/`confirmed_proof` views
+   (reuse `merkle_proof`); the contract isn't upgradeable so this is a fresh Sepolia deploy
+   (`scripts/deploy-sepolia.sh`, `make deploy-sepolia`). **P5.2:** `src/merkle.ts` — the
+   resolver-side `verifyProof`, **byte-identical to `merkle.cairo`**, pinned via the shared
+   `gen-merkle-vectors` JSON fixture (one source, two consumers; CI drift-gated).
+   **P5.3:** the data path — `src/starknet.ts` (hand-encoded `starknet_call` reads mirroring
+   `ingest`'s ByteArray ABI; selectors precomputed from the `starknet` crate via
+   `gen_selectors`, since Node has no Keccak) + `src/directory.ts` (audit-log head + the
+   directory's `createdAt` clock). **P5.4:** `src/status.ts` — the §4 ladder under the
+   **governing invariant: never a false `diverged`** (the window-edge skew case is
+   indistinguishable from omission without the anchor's per-op time, so `diverged` fires only
+   when a confirmed head is absent from the directory's live chain AND older than a
+   conservative skew horizon; everything recent is `skew-pending`). **P5.5:** the `witness` CLI
+   + a gated live read. Offline-tested (witness-ts 25/25 + 3 gated-live; tsc clean).
+   Plan: [`docs/PHASE-5-PLAN.md`](docs/PHASE-5-PLAN.md); context: [`docs/PHASE-5-WITNESS-NOTES.md`](docs/PHASE-5-WITNESS-NOTES.md).
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
-**Current phase: build order item 4 fully done — the `ingest/` pipeline is offline-tested
-(ingest 14/14), and its live `AnchorSink` seam is now closed and proven on-chain: the `anchor`
-contract is deployed to Starknet Sepolia and the live E2E (`StarknetSink` → `import_genesis` →
-read-back) is green against it. The default build/consensus tests stay offline + lean (the live
-path is behind the `live` cargo feature); the on-chain test is the gated, manual
-`e2e-sepolia.yml`. The permissionless endpoint + sha256-Merkle root from phase 3 stay
-offline-tested (plc_core 53/53). Next: build order item 5 — the witness / resolver verification
-library (the V1 product), which packages root-fetch + `plc_core::merkle::verify_proof`. See
-`docs/PHASE-5-WITNESS-NOTES.md`.**
+**Current phase: build order item 5 (the V1 witness, `witness-ts/`) feature-complete and
+offline-green (witness-ts 25/25; plc_core 55/55 with the new proof views; tsc clean). The
+`anchor` contract carrying `tentative_proof`/`confirmed_proof` is deployed to Sepolia
+(`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180`). The witness packages
+root-fetch + `verifyProof` into the graduated status under the never-false-`diverged`
+invariant. Remaining to call V1 "live": re-import DID(s) onto the fresh roster
+(`ingest --did … --submit`), point the `ANCHOR_CONTRACT_ADDRESS` secret at the new address, and
+run the gated live read (`WITNESS_LIVE_RPC=… node --test witness-ts/test/live.test.ts`). Open
+follow-ups (deliberately deferred, `docs/PHASE-5-PLAN.md` §1): the off-chain prover service
+(roster-scale) and the precise skew bound (the horizon is V1's conservative stand-in). See
+`docs/PHASE-5-PLAN.md`.**

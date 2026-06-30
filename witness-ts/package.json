@@ -1,0 +1,22 @@
+{
+  "name": "@plc-anchor/witness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "atproto identity DMARC — read-side witness: verify a did:plc document against the on-chain anchor root, as a graduated status.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "witness": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit",
+    "check": "node src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.0"
+  }
+}

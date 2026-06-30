@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check cairo-build cairo-test rust-build rust-test conformance fmt ci clean test-backend test-snforge test-offline
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-selectors gen-selectors-check cairo-build cairo-test deploy-sepolia rust-build rust-test witness-test conformance fmt ci clean test-backend test-snforge test-offline
 
 # Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
 # (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
@@ -59,16 +59,26 @@ gen-recovery-vectors: ## Regenerate the 72h-recovery decision vector table (grou
 gen-recovery-vectors-check: gen-recovery-vectors ## Fail if the recovery vector table drifted (CI gate)
 	git diff --exit-code -- cairo/packages/plc_core/tests/recovery_vectors_generated.cairo
 
-gen-merkle-vectors: ## Regenerate the DID→head Merkle commitment vector table (raw node:crypto sha256)
+gen-merkle-vectors: ## Regenerate the DID→head Merkle commitment vectors (Cairo + TS JSON; raw node:crypto sha256)
 	cd conformance && node src/gen-merkle-vectors.mjs
 	cd cairo && scarb fmt
 
-gen-merkle-vectors-check: gen-merkle-vectors ## Fail if the Merkle vector table drifted (CI gate)
-	git diff --exit-code -- cairo/packages/plc_core/tests/merkle_vectors_generated.cairo
+gen-merkle-vectors-check: gen-merkle-vectors ## Fail if either Merkle vector consumer drifted (CI gate)
+	git diff --exit-code -- cairo/packages/plc_core/tests/merkle_vectors_generated.cairo \
+		witness-ts/test/vectors/merkle-vectors.json
+
+gen-selectors: ## Regenerate witness-ts Starknet selectors from the `starknet` crate (needs the `live` deps)
+	cargo run -p ingest --example gen_selectors --features live
+
+gen-selectors-check: gen-selectors ## Fail if the pinned selectors drifted (gated CI: e2e-sepolia has the live deps)
+	git diff --exit-code -- witness-ts/src/selectors.ts
 
 # ---- Cairo (Scarb workspace) -------------------------------------------------
 cairo-build: ## Build the Cairo workspace (drisl, plc_core)
 	cd cairo && scarb build
+
+deploy-sepolia: ## Declare + deploy the anchor contract to Sepolia (local; needs sncast + STARKNET_RPC). NOT upgradeable → new address
+	scripts/deploy-sepolia.sh
 
 cairo-test: ## Run Cairo tests (drisl conformance + plc_core op_verify gate; reports gas estimates)
 	cd cairo && $(CAIRO_TEST)
@@ -91,6 +101,10 @@ rust-test: ## Test + lint the Rust workspace
 	cargo clippy --workspace -- -D warnings
 	cargo test --workspace
 
+# ---- Witness library (TypeScript) --------------------------------------------
+witness-test: ## Run the witness-ts library tests (Node-native TS; no install needed)
+	cd witness-ts && node --test
+
 # ---- Conformance / differential harness --------------------------------------
 conformance: ## Three-way DRISL/CID agreement (Cairo vs Rust oracle vs TS sidecar)
 	cd cairo && $(CAIRO_TEST) --package drisl
@@ -102,7 +116,7 @@ fmt: ## Format Rust + Cairo
 	cargo fmt
 	cd cairo && scarb fmt
 
-ci: gen-vectors-check gen-plc-vectors-check gen-op-verify-vectors-check gen-recovery-vectors-check gen-merkle-vectors-check cairo-build cairo-test rust-test conformance ## Everything CI runs
+ci: gen-vectors-check gen-plc-vectors-check gen-op-verify-vectors-check gen-recovery-vectors-check gen-merkle-vectors-check cairo-build cairo-test rust-test witness-test conformance ## Everything CI runs
 
 clean: ## Remove build artifacts
 	cargo clean

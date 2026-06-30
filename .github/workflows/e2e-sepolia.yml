@@ -28,6 +28,9 @@ jobs:
           components: clippy
       # Lint the live path here (it pulls the async/Starknet deps the lean default CI skips).
       - run: cargo clippy -p ingest --all-targets --features live -- -D warnings
+      # Same `live` deps power the selector generator — gate the pinned witness-ts selectors
+      # here (keccak isn't available to Node, so they're precomputed from the starknet crate).
+      - run: make gen-selectors-check
       # The on-chain E2E: drive a corpus genesis through StarknetSink → import_genesis, then
       # read head_cid / tentative_root back and assert. Idempotent across runs.
       - name: live E2E

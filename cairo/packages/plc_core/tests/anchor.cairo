@@ -198,6 +198,72 @@ fn commitment_root_spans_multiple_dids() {
     assert!(AnchorImpl::tentative_root(@state) == expected, "two-DID root mismatch");
 }
 
+/// The contract's `tentative_proof` view returns an inclusion path that reconstructs the
+/// contract's own `tentative_root` — the exact check a resolver runs (the proof server stays
+/// untrusted; the root is fetched independently). Two DIDs so the path has a real step, not a
+/// degenerate single-leaf tree.
+#[test]
+fn tentative_proof_view_verifies_against_root() {
+    let vectors = op_verify_vectors();
+    let alice_genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
+    let mut bob_idx = 0;
+    let mut j = 0;
+    while j < vectors.len() {
+        let v = vectors.at(j);
+        if *v.is_genesis && v.did != vectors.at(ALICE_GENESIS).did {
+            bob_idx = j;
+            break;
+        }
+        j += 1;
+    }
+    let bob_genesis = from_hex(vectors.at(bob_idx).signed_drisl_hex);
+
+    let mut state = contract_state_for_testing();
+    let alice = AnchorImpl::import_genesis(ref state, alice_genesis.clone());
+    let _bob = AnchorImpl::import_genesis(ref state, bob_genesis.clone());
+
+    // The view returns alice's head + her inclusion path; the head is her genesis CID.
+    let (head, proof) = AnchorImpl::tentative_proof(@state, alice.clone());
+    assert!(head == derive_cid_string(CODEC_DAGCBOR, @alice_genesis), "proof head != alice head");
+    assert!(proof.len() == 1, "two-leaf tree should yield a one-step path");
+
+    // Rebuild the leaf and walk the path to the contract's own root — what a resolver does.
+    let leaf = leaf_hash(@alice, @head);
+    let root = AnchorImpl::tentative_root(@state);
+    assert!(verify_proof(@leaf, @proof, @root), "contract proof did not verify against root");
+}
+
+/// The proof views return the empty `("", [])` sentinel rather than a bogus path when there
+/// is nothing to prove: an unanchored DID (tentative), and an anchored DID still inside the
+/// 72h window (confirmed). Once the window closes, the confirmed proof verifies.
+#[test]
+fn proof_views_empty_when_absent_or_unconfirmed() {
+    let vectors = op_verify_vectors();
+    let genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
+    let mut state = contract_state_for_testing();
+    set_block_timestamp(1000); // genesis createdAt = 1_000_000 ms
+    let did = AnchorImpl::import_genesis(ref state, genesis.clone());
+
+    // Unanchored DID → empty.
+    let (h0, p0) = AnchorImpl::tentative_proof(@state, "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz");
+    assert!(h0.len() == 0 && p0.len() == 0, "absent DID must yield empty proof");
+
+    // Anchored but still in-window → no confirmed head yet.
+    set_block_timestamp(1001);
+    let (h1, p1) = AnchorImpl::confirmed_proof(@state, did.clone());
+    assert!(h1.len() == 0 && p1.len() == 0, "in-window DID must yield empty confirmed proof");
+
+    // Past the window → the confirmed head exists and its proof verifies against the
+    // confirmed root (single-leaf tree → empty path, root == leaf).
+    set_block_timestamp(1000000);
+    let (h2, p2) = AnchorImpl::confirmed_proof(@state, did.clone());
+    assert!(h2.len() != 0, "confirmed head should exist past the window");
+    let leaf = leaf_hash(@did, @h2);
+    assert!(
+        verify_proof(@leaf, @p2, @AnchorImpl::confirmed_root(@state)), "confirmed proof failed",
+    );
+}
+
 #[test]
 #[should_panic(expected: 'did-not-anchored')]
 fn submit_to_unknown_did_is_rejected() {

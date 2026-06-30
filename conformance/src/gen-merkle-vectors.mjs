@@ -14,7 +14,7 @@
 //
 // Run via `make gen-merkle-vectors`; CI asserts no drift.
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -172,7 +172,32 @@ ${proofLines}
 `;
 
 writeFileSync(outPath, out);
+
+// Second consumer of the same source of truth: a JSON fixture the TypeScript witness library
+// pins its verify_proof against (witness-ts/test). Identical bytes, two consumers — the Cairo
+// contract and any resolver computing the check off-chain must agree, or it's a fork.
+const jsonOut = {
+  _generated: "by conformance/src/gen-merkle-vectors.mjs — DO NOT EDIT",
+  _format: "leaf=sha256(0x00‖did‖head_cid), node=sha256(0x01‖left‖right), did-sorted, RFC6962 odd-node promotion",
+  entriesInput: entriesRaw,
+  entriesSorted: entries,
+  sortedLeaves: leaves.map(hex),
+  expectedRoot: hex(root),
+  singleEntry: single[0],
+  singleRoot: hex(singleRoot),
+  emptyRoot: hex(emptyRoot()),
+  proofIndex,
+  proofSteps: proof.map((s) => ({
+    sibling: hex(s.sibling),
+    siblingIsLeft: s.sibling_is_left,
+  })),
+};
+const jsonPath = join(here, "..", "..", "witness-ts", "test", "vectors", "merkle-vectors.json");
+mkdirSync(dirname(jsonPath), { recursive: true });
+writeFileSync(jsonPath, `${JSON.stringify(jsonOut, null, 2)}\n`);
+
 console.log(`gen-merkle-vectors: wrote ${entriesRaw.length}-entry tree + proof to ${outPath}`);
+console.log(`  and JSON fixture to ${jsonPath}`);
 console.log(`  root        = ${hex(root)}`);
 console.log(`  single root = ${hex(singleRoot)}`);
 console.log(`  empty root  = ${hex(emptyRoot())}`);

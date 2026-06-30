@@ -32,6 +32,12 @@ path = "src/lib.rs"
 name = "ingest"
 path = "src/main.rs"
 
+# Selector generator for witness-ts: uses the `starknet` crate (live deps), so it must be gated
+# or `cargo test --workspace` (no features) would try to compile it and fail.
+[[example]]
+name = "gen_selectors"
+required-features = ["live"]
+
 [features]
 # Wire the live Starknet `AnchorSink` (`StarknetSink`) + the `--submit` CLI mode + the on-chain
 # E2E test. Off by default: `cargo build`/`cargo test` exercise only the offline pipeline.
