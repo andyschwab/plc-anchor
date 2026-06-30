@@ -128,6 +128,39 @@ it composes the already-differential-green modules into named attacks. This is t
 priority artifact: it is the concrete demonstration that the witness alarms when it should and
 stays silent when disagreement is benign.
 
+## Item 6 — Layer-2 admin console (`console/`, `site/`) — MVP
+
+The off-chain admin tool (`REFERENCE.md` §6, `console/README.md`): define **which** did:plc's we
+anchor (membership = off-chain policy, §2 — the contract has no roster getter, so this owns it),
+watch their §4 graduated status, and surface the **`diverged` alarm**. **Glue, not consensus** —
+it composes the shipped pieces and re-implements none of them (the CLAUDE.md guardrail): status
+via `@plc-anchor/witness` `check()`, writes via `ingest --did/--roster --submit`. TypeScript,
+Node ≥22, `node:sqlite` (zero deps); `make console-test`.
+
+**Key decisions**
+- **The approve gate is the cost guardrail, enforced in code.** A roster DID moves
+  `candidate → approved → onboarding → anchored{…} → removed`, validated against
+  `ALLOWED_TRANSITIONS`. A dynamic filter only ever *proposes* a `candidate`; a human must
+  approve before the onboarder writes on-chain — so a broad filter can never auto-anchor the
+  network. **Onboarding never runs on a timer** (it spends on-chain); it is operator-triggered
+  only (`POST /worker/onboard`). The read-only loops (discover, status refresh) are timer-driven.
+- **The only net-new logic is the PDS-host parser** (`src/pdshost.ts`) — nothing in the repo
+  parsed service endpoints before. It only *selects* DIDs (the `pds_host` filter) and carries no
+  consensus weight; `ingest`'s integrity invariant still guards anything actually anchored.
+- **Worker pieces are built over injectable seams** (`StatusChecker`, `CommandRunner`,
+  `ExportClient` fetcher) so the lifecycle is offline-testable with no live ingest / Starknet /
+  network; the one `@plc-anchor/witness` binding is isolated in `witness.ts`.
+- **Deploy:** two Fly apps — `site/` (static `didmarc.dev` landing) and `console/`
+  (`plc.didmarc.dev`, SQLite on a volume, secrets via `fly secrets`). The `plc.` subdomain
+  reserves the method namespace (the §5a generality seam). Console image is Node-only for the
+  first deploy; baking the Rust `ingest` binary in (for on-chain onboarding) is a documented
+  multi-stage follow-up. **Appchain dropped** from the tracked open-questions — V1 is public
+  Starknet (§2); an appchain is a far-future option only if neutrality ever demands owning the
+  sequencer, not a live question.
+- **Remaining for item 6:** the live Fly bring-up + a fresh **mainnet** contract deploy (migration
+  = re-import from genesis, the already-proven path) + cost-allocation (paymaster/AA — MVP runs
+  one project-funded account) + governance (`REFERENCE.md` §6/§7).
+
 ---
 
 ## Open follow-ups (deliberately deferred)
@@ -136,10 +169,9 @@ stays silent when disagreement is benign.
   serves at read time; identical format). Mode-2-adjacent infra.
 - **Precise skew bound** + its re-evaluation trigger — V1 ships the conservative collapse; this
   is the documented successor (resolvers depend on the exact rule, so it's pinned when settled).
-- **Appchain timing** (`REFERENCE.md` §6a) — whether public Starknet's L1→L2 forced-inclusion
-  guarantee is strong enough for CR. Resolve before any settlement wiring; **not settled**.
-- **Item 6** — the Layer-2 admin/user tool (anchoring policy + cost allocation), governance, and
-  (only if credible neutrality demands owning the sequencer) an appchain. (`REFERENCE.md` §6.)
+- **Item 6 remainder** — live Fly bring-up + a fresh **mainnet** contract deploy, cost allocation
+  (paymaster/AA; MVP = one funded account), and governance (`REFERENCE.md` §6/§7). The console
+  MVP itself has landed (above).
 - **Generalization seam** (`REFERENCE.md` §5a) — the `merkle` leaf is separator-less, sound only
   because did:plc is fixed-width; add a length prefix *before* admitting variable-width subjects.
 
