@@ -6,8 +6,19 @@
 //! state. The approve gate is enforced here: `POST /roster/dids/:did/approve` is the only path
 //! from `candidate` to a state the onboarder will act on.
 
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { fileURLToPath } from "node:url";
 import type { RosterStore } from "./roster.ts";
+
+/** The bundled single-page UI, read once at startup (sibling `ui/index.html`). */
+function loadUi(): string | null {
+  try {
+    return readFileSync(fileURLToPath(new URL("./ui/index.html", import.meta.url)), "utf8");
+  } catch {
+    return null;
+  }
+}
 
 /** Optional worker actions, wired by `main.ts`, exposed as manual `POST /worker/*` triggers so
  * an operator can kick a cycle without waiting for the interval. Absent actions return 503. */
@@ -177,12 +188,22 @@ function send(res: ServerResponse, status: number, payload: unknown): void {
 /** Build (but do not listen on) the console HTTP server. */
 export function createConsoleServer(store: RosterStore, config: ServerConfig): Server {
   const table = routes();
+  const ui = loadUi();
   return createServer((req, res) => {
     void (async () => {
       try {
         const url = new URL(req.url ?? "/", "http://localhost");
         const parts = segments(url.pathname);
         const method = req.method ?? "GET";
+        if (method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+          if (ui === null) {
+            send(res, 404, { error: "UI not bundled" });
+            return;
+          }
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.end(ui);
+          return;
+        }
         for (const route of table) {
           if (route.method !== method) continue;
           const params = match(route, parts);

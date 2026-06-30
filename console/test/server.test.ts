@@ -32,6 +32,14 @@ async function req(method: string, path: string, body?: unknown): Promise<{ stat
   return { status: res.status, json: await res.json() };
 }
 
+test("GET / serves the bundled UI", async () => {
+  const res = await fetch(`${base}/`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") ?? "", /text\/html/);
+  const html = await res.text();
+  assert.match(html, /PLC anchor console/);
+});
+
 test("healthz reports contract address and counts", async () => {
   const { status, json } = await req("GET", "/healthz");
   assert.equal(status, 200);
