@@ -15,3 +15,6 @@ rust-version = "1.96"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# DRISL/CID differential authority (REFERENCE.md §5). Pinned in the shared Cargo.lock so
+# `ingest` (op re-encoding) and `oracle` (CID/DRISL check) use one identical encoder.
+atproto-dasl = "0.14"
