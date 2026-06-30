@@ -14,26 +14,48 @@ conformance/src/gen-adversarial-scenarios.mjs   # builds real chains + the ancho
                                                  # commitment + the mirror's served log
                                                  #   → adversarial/scenarios.generated.json (committed)
 adversarial/
-  mirror.ts        # MaliciousDirectory: a DirectorySource serving an attacker-chosen audit log
+  mirror.ts        # MaliciousDirectory (in-process DirectorySource) + startMaliciousMirror
+                   #   (an HTTP server speaking the PLC /{did}/log/audit route) — one log, two modes
   harness.ts       # reconstruct the AnchorView from the fixture (proofs stay real) + run check()
   report.ts        # render the narrative → docs/ADVERSARIAL-REPORT.md (the artifact)
   adversarial.test.ts  # CI pass/fail gate (incl. the §0 "benign must never alarm" wall)
+  mirror.test.ts       # CI: the HTTP wrapper + the REAL DirectoryClient fetch path, end-to-end
+  live.test.ts         # gated: REAL Sepolia anchor + HTTP malicious mirror + REAL check()
 ```
 
-**One source of truth (the generated fixture), three consumers:** the test gate, the narrative
-report, and (later) the live testnet runner. Nothing is mocked but the transport — the directory
-fetch and the chain reads. The decision logic is the shipping `check()`, and the Merkle proofs in
-the fixture are verified by the witness's own `verifyProof`, so a wrong root/format fails here
-exactly as it would on a real resolver.
+**One source of truth (the generated fixture), consumed three ways:** the test gate, the narrative
+report, and the live runner. Nothing is mocked but the transport — and even that is exercised for
+real in `mirror.test.ts` (the witness's own `DirectoryClient` fetches the malicious mirror over a
+loopback HTTP socket) and in `live.test.ts` (against Sepolia). The decision logic is the shipping
+`check()`, and the Merkle proofs in the fixture are verified by the witness's own `verifyProof`,
+so a wrong root/format fails here exactly as on a real resolver.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `make adversarial` | run the suite + regenerate `docs/ADVERSARIAL-REPORT.md` |
+| `make adversarial` | run the suite (offline) + regenerate `docs/ADVERSARIAL-REPORT.md` |
 | `make adversarial-check` | CI gate: scenarios behave as specified AND the committed report is current |
+| `make adversarial-live` | gated live read vs Sepolia (see env vars below) |
 | `make gen-adversarial-scenarios` | regenerate the fixture from `@did-plc/lib` (commit the result) |
 | `node adversarial/report.ts --stdout` | print the narrative without writing the file |
+
+### Live read (gated)
+
+The offline suite is the CI gate; the live read proves the same data path against the deployed
+anchor. It reads the anchor's real head, then has an HTTP malicious mirror lie *relative to it*:
+
+```sh
+WITNESS_LIVE_RPC=https://<keyed-sepolia> \
+WITNESS_LIVE_DID=did:plc:<anchored> \
+  make adversarial-live
+# optional: WITNESS_LIVE_CONTRACT=0x… (defaults to the recorded deployment)
+```
+
+Tentative-tier scenarios (honest mirror, unanchored→`absent`) run immediately. The
+confirmed-`diverged` headline requires a DID with a **confirmed** head (anchored ≥72h ago); for a
+still-within-window DID the same attack correctly yields a non-alarming status, and the runner
+reports that via `t.diagnostic` rather than failing.
 
 ## The governing invariant
 
@@ -67,9 +89,8 @@ ground-truthed against `@did-plc/lib` at generation time:
 | `late-recovery` | `late-recovery` | `plc_core::recovery` |
 | `integrity-mismatch` | `cid-mismatch` | ingest integrity gate (off-chain) |
 
-## Next
+## Status
 
-The gated **live testnet runner**: a thin HTTP wrapper over `mirror.ts` so the real
-`DirectoryClient` fetch transport is exercised against a malicious mirror at a real URL, paired
-with a real Sepolia anchor read. Tentative-tier read scenarios run live immediately; the
-confirmed-`diverged` headline needs a DID anchored ≥72h ahead. See `docs/PHASE-5-PLAN.md`.
+Offline suite (18 tests) + the gated live runner (4 tests) are green. Open follow-up: a richer
+live corpus once a DID has been anchored ≥72h (to exercise the confirmed-`diverged` headline
+against the real contract end-to-end). See `docs/PHASE-5-PLAN.md`.

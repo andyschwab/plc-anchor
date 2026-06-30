@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy-sepolia rust-build rust-test witness-test adversarial adversarial-check conformance fmt ci clean test-backend test-snforge test-offline
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy-sepolia rust-build rust-test witness-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
 
 # Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
 # (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
@@ -124,6 +124,9 @@ adversarial-check: ## CI gate: scenarios behave as specified AND the committed r
 	node adversarial/report.ts --stdout >/dev/null
 	node adversarial/report.ts
 	git diff --exit-code -- docs/ADVERSARIAL-REPORT.md
+
+adversarial-live: ## Gated live adversarial read vs Sepolia (real anchor + HTTP malicious mirror); needs WITNESS_LIVE_RPC [+ WITNESS_LIVE_DID]
+	cd adversarial && node --test live.test.ts
 
 # ---- Conformance / differential harness --------------------------------------
 conformance: ## Three-way DRISL/CID agreement (Cairo vs Rust oracle vs TS sidecar)

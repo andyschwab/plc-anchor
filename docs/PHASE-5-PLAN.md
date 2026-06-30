@@ -166,6 +166,29 @@ Differential, like everything consensus-touching, but the oracle is a **scenario
   asserting `confirmed` / `tentative-consistent` end-to-end (the gated manual job, alongside
   `e2e-sepolia.yml`).
 
+### Adversarial validation suite (`adversarial/`)
+
+Beyond the per-branch status tests above, the [`adversarial/`](../adversarial/) suite is the
+"does this actually defend?" layer (and the engineer-facing narrative,
+[`docs/ADVERSARIAL-REPORT.md`](ADVERSARIAL-REPORT.md)). It composes the already-differential-green
+modules into **named attacks** on real signed did:plc chains — no new consensus logic:
+
+- **read-side** (defender = the witness `check()`): one scenario per status-ladder branch,
+  including the alarm (`equivocation`, `vanishing-did` → `diverged`) and the §0 restraint walls
+  (`honest-lag`, `window-edge-skew`, `anchor-self-fault` → non-`diverged`). The malicious mirror
+  is a `DirectorySource` (in-process) and, in `mirror.test.ts`, an HTTP server that the **real
+  `DirectoryClient` fetch transport** hits — so the only thing the live runner adds is the
+  Sepolia anchor read.
+- **write-side** (defender = `plc_core::verify`/`recovery` or the ingest integrity gate):
+  `forged-signature`, `weaker-key-recovery`, `late-recovery`, `integrity-mismatch`, each
+  ground-truthed against `@did-plc/lib` at fixture-generation time (the generator throws if a bad
+  op is ever accepted).
+- **live** (`make adversarial-live`, gated on `WITNESS_LIVE_RPC` [+ `WITNESS_LIVE_DID`]): the real
+  Sepolia anchor + an HTTP malicious mirror + the real `check()`. The runner reads the anchor's
+  real head and synthesizes the lie relative to it, so expectations track on-chain reality — the
+  confirmed-`diverged` headline asserts only when the DID has a confirmed head (anchored ≥72h),
+  otherwise it confirms the same attack is correctly non-alarming and says so via `t.diagnostic`.
+
 ---
 
 ## 7. Sequencing
