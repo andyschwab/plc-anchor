@@ -117,11 +117,9 @@ output (which ops are confirmed vs nullifiable) to build the two-tier roots.
 
 ## 2. Phase 3 scope
 
-Lands in `plc_core` as contract code. Status: the permissionless endpoint with
-append + recovery + confirmed/tentative tiers is live and offline-tested, and the sha256
-Merkle commitment root (P3.2) has landed (pure `merkle` module + contract `tentative_root`/
-`confirmed_root` views, format-pinned by a TS cross-check). Multi-op genesis import (P3.4)
-remains.
+Lands in `plc_core` as contract code. **Status: complete.** The permissionless endpoint
+(append + recovery + confirmed/tentative tiers), the sha256 Merkle commitment root (P3.2),
+and multi-op genesis import (P3.4) are all live and offline-tested.
 
 - ✅ **P3.1 Per-DID head + state** — `state::{import_genesis, apply_append, DidHead}`; the
   `prev == head` rule on append via P2.3/P2.4. Differential on the corpus chain.
@@ -141,10 +139,16 @@ remains.
   `now`-parameterized views (roots recompute at read time so the recovery-window writes stay
   cheap). Format pinned by a TS cross-check (`gen-merkle-vectors`, raw `node:crypto` sha256)
   with a CI drift gate; differential-green (root/leaf/proof byte-identical) + contract tests.
-- ⬜ **P3.4 Genesis import is single-op today** — `import_genesis` verifies one genesis op;
-  importing a DID with existing history (`import(did, chain)`: replay genesis + each op) is
-  the remaining piece. `submit_op` (append/recover) is done. Authorization is the embedded
-  sig (P2.3), never the Starknet tx signer (`CLAUDE.md`). *Remaining.*
+- ✅ **P3.4 Multi-op genesis import** — `anchor::import(chain)` replays the *resolved* linear
+  history (genesis + each successor, reusing `store_genesis` + `apply_op`) to anchor a DID
+  with existing history in one call; a forking successor is rejected (`import-fork`).
+  Authorization is the embedded sig (P2.3), never the Starknet tx signer (`CLAUDE.md`).
+  Timestamp note: `createdAt` is **not** part of the signed PLC op (directory-assigned
+  metadata, absent from the op bytes/CID — confirmed against the corpus), so imported ops are
+  stamped with the import block time (the pragmatic `createdAt`, §1/§4). A freshly imported
+  chain is therefore tentative until the anchor has observed it for 72h; this is sound (it
+  never lets a non-key-holder change a DID — it only re-exposes the recovery window, which is
+  conservative) and consistent with the live `submit_op` path.
 
 **Open question to resolve before §3 settlement wiring (do not treat as settled):** appchain
 timing — whether public Starknet's L1→L2 forced-inclusion guarantee is strong enough for CR
@@ -190,11 +194,11 @@ P2.5 are a chain. Phase 3 starts only when §1 is differential-green end-to-end.
 
 ## 6. Session handoff (for the next session)
 
-Phase 2 and most of Phase 3 landed, including the P3.2 commitment root. Test counts:
-**plc_core 47/47, drisl 9/9, conformance 7/7**, all on the offline `scarb cairo-test` backend
-(contracts test via `contract_state_for_testing`, no deploy). A SessionStart hook
-(`.claude/hooks/`) installs the toolchain on the web — Scarb comes from its GitHub release
-because the pinned installer host is egress-blocked.
+Phase 2 and **all of Phase 3** landed (P3.1–P3.4). Test counts: **plc_core 53/53, drisl 9/9,
+conformance 7/7**, all on the offline `scarb cairo-test` backend (contracts test via
+`contract_state_for_testing`, no deploy). A SessionStart hook (`.claude/hooks/`) installs the
+toolchain on the web — Scarb comes from its GitHub release because the pinned installer host
+is egress-blocked.
 
 ### Done (modules in `cairo/packages/plc_core/src/`)
 - **Phase 2:** `key_parse`, `sig_verify`, `op_decode`, `op_verify`, `link`, `recovery`,
@@ -202,7 +206,8 @@ because the pinned installer host is egress-blocked.
 - **Phase 3:** `state` (head/chain model + `apply_op` + tiers), `merkle` (sha256 Merkle
   commitment over the DID→head map — leaf/node/root/proof, format-pinned by
   `gen-merkle-vectors`), `anchor` (the `#[starknet::contract]` endpoint with
-  import/submit/recovery + confirmed/tentative head **and root** views).
+  `import_genesis` / `import` (multi-op) / `submit_op` + recovery + confirmed/tentative head
+  **and root** views).
 
 ### Decisions made this session (don't relitigate)
 - **p256 is malleable, k256 is low-S** (verified vs `@atproto/crypto`; `REFERENCE.md` §5
@@ -213,7 +218,10 @@ because the pinned installer host is egress-blocked.
 - **Contract storage** = per-DID `Vec<StoredOp>` (signed bytes + `created_at` + signer index);
   CID / rotation keys / tombstone all rederive from the bytes.
 - **Timestamp** = block timestamp × 1000 (ms), used as the pragmatic `createdAt` the 72h
-  window measures against (§1).
+  window measures against (§1). Reaffirmed in P3.4: **`createdAt` is not part of the signed
+  PLC op** — it is directory-assigned metadata, absent from the op bytes and the CID
+  (confirmed against the corpus), so there is no embedded timestamp to use; block time is the
+  only on-chain option. Imported ops therefore also use the import block time (see P3.4).
 
 ### Next, in order
 1. ✅ **P3.2 — sha256 Merkle commitment root.** *Done.* Pure `merkle` module + `anchor`
@@ -223,12 +231,16 @@ because the pinned installer host is egress-blocked.
    CI drift gate. Roots are read-time views (recomputed over the roster), so writes stay
    cheap — the write-vs-proof cost tradeoff was resolved toward cheap writes; an incremental
    on-chain tree is a later optimization to measure if root reads get hot.
-2. **P3.4 — multi-op genesis `import`.** Today `import_genesis` is single-op; add
-   `import(did, chain)` that replays genesis + each op (reusing `genesis_record` + `apply_op`)
-   to anchor a DID with existing history in one call.
-3. Then build order item 4 (sync indexer, `ingest/`) and item 5 (resolver library — the
-   inclusion-proof verifier already lives in `merkle::verify_proof`, pinned here).
+2. ✅ **P3.4 — multi-op genesis `import`.** *Done.* `anchor::import(chain)` replays the
+   resolved linear history (`store_genesis` + `apply_op`) in one call; forking successors
+   rejected (`import-fork`); imported ops stamped with import block time (no embedded
+   `createdAt`). **Phase 3 is complete.**
+3. **Build order item 4 — sync indexer (`ingest/`):** firehose → submit deltas for anchored
+   DIDs (the off-chain feeder for `submit_op` / `import`).
+4. **Build order item 5 — resolver verification library:** the adoption surface. The
+   inclusion-proof verifier already lives in `merkle::verify_proof` (format pinned); item 5
+   packages root-fetch + proof-check for resolvers.
 
 ### Open question still pending (REFERENCE.md §6a)
 Appchain timing — whether public Starknet's L1→L2 forced-inclusion is strong enough for CR.
-Resolve before any settlement wiring; not blocking P3.2/P3.4.
+Resolve before any settlement wiring; not blocking the Phase 3 endpoint.

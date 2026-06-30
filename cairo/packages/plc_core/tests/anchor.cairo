@@ -206,3 +206,89 @@ fn submit_to_unknown_did_is_rejected() {
     let mut state = contract_state_for_testing();
     AnchorImpl::submit_op(ref state, "did:plc:doesnotexist000000000", update);
 }
+
+// ── P3.4: multi-op genesis import
+// ────────────────────────────────────────────────────
+
+/// Build alice's full corpus chain [genesis, update, tombstone] as signed bytes.
+fn alice_chain() -> Array<ByteArray> {
+    let vectors = op_verify_vectors();
+    array![
+        from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex),
+        from_hex(vectors.at(ALICE_UPDATE).signed_drisl_hex),
+        from_hex(vectors.at(ALICE_TOMBSTONE).signed_drisl_hex),
+    ]
+}
+
+#[test]
+fn import_replays_full_chain() {
+    let vectors = op_verify_vectors();
+    let expected_did = vectors.at(ALICE_GENESIS).did.clone();
+    let tombstone = from_hex(vectors.at(ALICE_TOMBSTONE).signed_drisl_hex);
+
+    let mut state = contract_state_for_testing();
+    let did = AnchorImpl::import(ref state, alice_chain());
+
+    assert!(did == expected_did, "import derived did mismatch");
+    assert!(AnchorImpl::is_anchored(@state, did.clone()), "anchored after import");
+    // The head is the last op (the tombstone).
+    assert!(
+        AnchorImpl::head_cid(@state, did.clone()) == derive_cid_string(CODEC_DAGCBOR, @tombstone),
+        "head should be the imported chain's last op",
+    );
+}
+
+#[test]
+fn import_commits_the_resolved_head() {
+    // After a bulk import the commitment reflects exactly the chain's last op — the same
+    // head the incremental import_then_append_chain test lands on (so the two paths agree).
+    // One DID → the tentative root is just its leaf over (did, tombstone head).
+    let tombstone = from_hex(op_verify_vectors().at(ALICE_TOMBSTONE).signed_drisl_hex);
+    let mut state = contract_state_for_testing();
+    let did = AnchorImpl::import(ref state, alice_chain());
+
+    let head = derive_cid_string(CODEC_DAGCBOR, @tombstone);
+    assert!(
+        AnchorImpl::tentative_root(@state) == leaf_hash(@did, @head),
+        "import did not commit the resolved head",
+    );
+}
+
+#[test]
+#[should_panic(expected: 'empty-chain')]
+fn import_rejects_empty_chain() {
+    let mut state = contract_state_for_testing();
+    let _ = AnchorImpl::import(ref state, array![]);
+}
+
+#[test]
+#[should_panic(expected: 'already-anchored')]
+fn import_rejects_already_anchored() {
+    let mut state = contract_state_for_testing();
+    let _ = AnchorImpl::import(ref state, alice_chain());
+    // Re-importing the same DID's chain must revert.
+    let _ = AnchorImpl::import(ref state, alice_chain());
+}
+
+#[test]
+#[should_panic(expected: 'prev-not-in-chain')]
+fn import_rejects_broken_linkage() {
+    // [genesis, tombstone] skips the update, so the tombstone's prev (the update CID) is not
+    // in the replayed chain.
+    let vectors = op_verify_vectors();
+    let broken = array![
+        from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex),
+        from_hex(vectors.at(ALICE_TOMBSTONE).signed_drisl_hex),
+    ];
+    let mut state = contract_state_for_testing();
+    let _ = AnchorImpl::import(ref state, broken);
+}
+
+#[test]
+#[should_panic(expected: 'not-genesis')]
+fn import_rejects_non_genesis_first() {
+    // A chain whose first op has a prev is not a genesis.
+    let update = from_hex(op_verify_vectors().at(ALICE_UPDATE).signed_drisl_hex);
+    let mut state = contract_state_for_testing();
+    let _ = AnchorImpl::import(ref state, array![update]);
+}
