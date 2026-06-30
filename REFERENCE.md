@@ -1,9 +1,16 @@
 # PLC Anchor — Project Reference
 
-A censorship-resistant, cryptographically-verifiable **anchor** for the AT Protocol DID
-PLC operation log, built on Starknet. It lets resolvers cross-check `plc.directory`
-against a trust-minimized, independently-verifiable root. It is an anchor, **not** a
-replacement for the directory.
+**DIDMARC — "atproto identity DMARC."** A cryptographically-verifiable **anchor** for the
+did:plc operation log, built on Starknet. PLC ops already self-certify per-op (authenticity
+— the DKIM analog); DIDMARC adds the layer PLC lacks: independent on-chain proof that
+`plc.directory` is serving a DID's **complete, current, and non-equivocated** history, plus
+a graduated status a resolver or PDS can enforce as policy (the SPF/DMARC analog).
+`plc.directory` stays canonical; the anchor is a **unilaterally adoptable** witness that
+holds it accountable — any one checker turns it on alone, the way an email receiver enables
+DMARC. It is an anchor, **not** a replacement for the directory.
+
+> *Name provisional: "DIDMARC" = DID-mapping Authentication, Reporting & Conformance,
+> picked so the email-auth analogy reads at a glance. Rename freely.*
 
 ---
 
@@ -16,16 +23,53 @@ identity is a signed, hash-linked log of operations served from a single directo
 ordering, and timestamping**. That single-operator trust is the chokepoint.
 
 This project re-verifies PLC operations on-chain and publishes a proven commitment to the
-current DID→document mapping, with a permissionless write path so no operator can suppress
-a valid op. It does not run the directory; it anchors the DIDs that opt in.
+current DID→document mapping. The **V1 product is the witness**: a resolver or PDS fetches a
+DID document from the directory (or a mirror) and checks it against the on-chain proof,
+getting back a graduated status — `confirmed` / `tentative-consistent` / `diverged` /
+`absent` (§4) — that it can act on. This needs **no network coordination and no protocol
+change**: a single checker adopts it alone. A permissionless write path (`submit_op`, §2) is
+retained as a **backstop** — a censorship escape hatch, and the seed of the later modes
+(§1a) — not the V1 headline. The project does not run the directory; it anchors the DIDs
+that opt in (a PDS naturally anchors its own users).
 
 **Residual trust (narrow, deliberate):**
 - **Ordering** — per-DID linearization of operations (cross-DID order is irrelevant; DIDs
   are independent).
-- **Timestamp** — the `createdAt` that drives PLC's 72-hour recovery window. We report it
-  pragmatically (§4).
+- **Timestamp** — `createdAt` is **not in the signed op** (it is directory-assigned
+  metadata, absent from the op bytes and the CID), so there is nothing to read and nothing
+  of the directory's to trust. The anchor substitutes **Starknet block time** — the window
+  is measured from when *we observed* the op, not when it was authored (§4). A weaker
+  dependency than "trust their clock," but a real one: our window lags the directory's.
 
 Per-op validity is **proven**, not assumed.
+
+---
+
+## 1a. Operating modes — V1 and the ladder beyond
+
+The same proven-root foundation supports three modes. Build them **in order; only Mode 1 is
+V1.** Modes 2–3 are stubbed here to record that the foundation makes them possible and to
+keep V1 from foreclosing them — they are explicitly *not* the focus.
+
+1. **Witness — "atproto identity DMARC" (V1, the product).** `plc.directory` stays the
+   canonical source of truth and the write path. The anchor is a read-side accountability
+   layer: it proves completeness, recency, and non-equivocation, and exposes a graduated
+   status (§4) that any resolver/PDS enforces **unilaterally**. This is what we ship and
+   what people adopt; everything in §3 serves it. Per-op authenticity is already PLC's
+   (DKIM); what the witness adds is the SPF/DMARC layer a single signature structurally
+   cannot — *was I shown the whole, current, non-equivocated history?*
+
+2. **Availability (later).** A proven root plus the op bytes (from a mirror) already let the
+   anchor answer a resolution with an inclusion proof. Promoting that to a real fallback —
+   serving identity when the directory is unreachable — is the natural Mode 2. The
+   foundation makes it possible; it is not V1. (Integrity, not availability, is the V1
+   guarantee.)
+
+3. **Canonical source in a partitioned PLC (final).** If PLC ever partitions — a regional or
+   political split, or the single operator becoming untrusted — the permissionless write
+   path and the proven root can serve as the neutral reconciliation point: a canonical head
+   when there is no longer one agreed directory. This is the escape hatch grown into a
+   source of truth. Strictly a last mode; designing for it now would over-build V1.
 
 ---
 
@@ -46,9 +90,14 @@ From these:
 - **One permissionless endpoint (a Starknet contract).** `import(did, chain)` verifies a
   DID's full op log from genesis and commits its head; `submit_op(op)` appends a new
   signed op. Anyone may import any DID's (public, self-certifying) history; **new** ops are
-  authorized by the owner's rotation key directly, via Starknet **native account
-  abstraction** — the PLC key *is* the signer. This single primitive is both the normal
-  write path and the censorship-resistance escape hatch.
+  authorized by the op's **embedded rotation-key signature, verified in-contract** — never
+  by the Starknet transaction signer or fee payer, who may be anyone (that is the
+  permissionless property). Native account abstraction and paymasters are gas/UX only (who
+  *pays*), never authorization (who may *write*); do not require the PLC key to be the
+  Starknet account signer. In witness mode the indexer (§3.4) supplies ops mirrored from the
+  directory; `submit_op`'s permissionless authorization is the **backstop** (escape hatch,
+  and the seed of Modes 2–3, §1a) — one primitive serving both the normal and the
+  adversarial path.
 - **Verification runs as a contract.** The network proves the blocks and settles to
   Ethereum. We run no bespoke prover and — initially — no sequencer (deploy on public
   Starknet first; an appchain is a later option, §6).
@@ -75,6 +124,8 @@ From these:
 
 The keystone is the long pole; everything composes around it. Consensus-critical modules
 are differential-tested against the reference implementations before merge (§5).
+**Build order is dependency order, not priority order:** the V1 *product* is the witness
+library (5), but it stands on 1–4.
 
 1. **DRISL / DASL CID in Cairo (keystone).** Canonical dCBOR42 encoding + DASL CID
    derivation (sha-256 over DRISL bytes). Green against the DASL conformance suite. The
@@ -85,15 +136,20 @@ are differential-tested against the reference implementations before merge (§5)
    higher-priority-key nullification. Differential-tested vs `@did-plc/lib`.
    → `cairo/packages/plc_core`
 3. **State commitment + anchor endpoint.** Per-DID head; a commitment over the DID→document
-   map (resolution = root + inclusion proof); confirmed/tentative tiers (§4); the
-   permissionless `import` / `submit_op` entrypoint with native-AA authorization.
-   → `cairo/packages/plc_core`
+   map (resolution = root + inclusion proof — the witness substrate); confirmed/tentative
+   tiers (§4); the `import` / `submit_op` entrypoint with embedded-signature authorization
+   (`submit_op` = the backstop write path, §2). → `cairo/packages/plc_core`
 4. **Sync indexer (off-chain, Rust).** Consume a PLC mirror's `/export/stream` (Eurosky /
-   microcosm) by sequence cursor; for anchored DIDs, submit deltas. Where ongoing
-   update cost lives and is allocated. → `ingest/`
-5. **Resolver verification library.** Given a DID, return the document + an inclusion proof
-   against the published root, with a confirmed/tentative flag. Must be cheap — this is the
-   adoption surface; an anchor nobody checks is theater.
+   microcosm) by sequence cursor; for anchored DIDs, submit deltas. **The normal anchoring
+   path in witness mode**, and where ongoing update cost lives and is allocated. → `ingest/`
+5. **Witness / resolver verification library — the V1 product.** Given a DID, return the
+   document + an inclusion proof against the published root, as the graduated status
+   (`confirmed` / `tentative-consistent` / `diverged` / `absent`, §4). This is "atproto
+   identity DMARC" (§1a Mode 1) — the adoption surface and the headline deliverable, even
+   though it is built last because it stands on 1–4. Must be cheap; an anchor nobody checks
+   is theater. Context captured ahead of time in
+   [`docs/PHASE-5-WITNESS-NOTES.md`](docs/PHASE-5-WITNESS-NOTES.md) (status algorithm +
+   the window-edge clock-reconciliation rule).
 6. **Later, deliberately deferred:** the **Layer-2 admin/user tool** (anchoring policy +
    cost allocation); **governance** (§7); an **appchain** — only if credible neutrality
    demands owning the sequencer (public Starknet's L1 force-inclusion provides the CR
@@ -113,6 +169,27 @@ fork/recovery mechanism. We surface this rather than hide it:
 - **Confirmed root** — commits ops *past* the window. Immutable; what resolvers treat as
   final.
 - **Tentative tip** — within-window ops, still nullifiable. Carried separately and flagged.
+
+These tiers **are** the witness's output (§1a Mode 1). The graduated status a checker gets:
+
+- **`confirmed`** — head committed past the 72h window; immutable. Strongest assertion.
+- **`tentative-consistent`** — within-window op; the on-chain view agrees with the directory
+  so far, but it is still nullifiable. **This subsumes the expected clock lag:** the anchor
+  measures the 72h window from *its own* block-time observation (§1), which is strictly later
+  than the directory's `createdAt`, so the anchor's confirmed/tentative boundary lags the
+  directory's. A head the directory already calls `confirmed` while the anchor still calls
+  `tentative` — histories otherwise agreeing — is `tentative-consistent`, **not** `diverged`.
+- **`diverged`** — the directory's served head *contradicts* the proven head (an op omitted,
+  or a head the anchor has already confirmed). The actionable alarm: warn / quarantine /
+  refuse to relay. The genuinely hard case is a *recovery at the window edge*: because the
+  anchor's clock lags, it can still honor a higher-priority-key nullification the directory
+  has already rejected as too-late, so the two commit to different heads from clock skew
+  alone (§5). The checker must not treat that as ordinary equivocation.
+- **`absent`** — DID not anchored; no opinion (the coverage gap, like DMARC `p=none`).
+
+A hard "reject unless `confirmed`" gate would reject every legitimate update from the last
+72h; the product is the *graduated* status, enforced like DMARC's `none` / `quarantine` /
+`reject`, not a binary stamp.
 
 Resolvers get an explicit confirmed/tentative status, never a silently-revisable root.
 
@@ -141,6 +218,15 @@ everything else.
 - **Recovery:** rotation keys are 1–5, priority-ordered (index 0 = highest). A lower-index
   key nullifies ops signed by higher-index keys within 72h, forking to the last
   universally-accepted state.
+- **`createdAt` is not in the signed op** — it is directory-assigned metadata, absent from
+  the op bytes and the CID (confirmed against the corpus). The contract has no authored
+  timestamp to read; it uses **Starknet block time** (× 1000 ms) as the pragmatic
+  `createdAt` the 72h window measures against, and imported ops are stamped with the import
+  block time. *Window-edge recovery is the delicate witness corner:* the anchor's clock is
+  strictly later than the directory's, so near the 72h edge the anchor can accept a
+  higher-priority-key nullification the directory rejected as too-late (conservative — it
+  only re-exposes the recovery window, never lets a non-key-holder mutate a DID), producing a
+  `diverged` (§4) from clock skew alone. Pin the exact rule when building the checker (item 5).
 - **Constraints:** max 10 verificationMethods/DID; max op size 7500 bytes (dCBOR-encoded).
 - **Op sizes (context):** legacy `create` ~330 B; modern `plc_operation` ~1.4–2.0 KB.
 
@@ -155,6 +241,34 @@ are vendored under `conformance/vectors`.
 - atproto data model: `https://atproto.com/specs/data-model`
 - DASL: `https://dasl.ing/` · CID `https://dasl.ing/cid.html` · dCBOR42 `https://dasl.ing/dcbor42.html`
 - Reference impls: `github.com/hyphacoop/go-dasl`, `docs.rs/atproto-dasl`, `@atcute/cbor` (npm)
+
+---
+
+## 5a. Generality — one witness core, pluggable verifiers
+
+DIDMARC has a clean **mechanism/policy seam**, and that is the axis we generalize on:
+
+- **Generic core (method-agnostic):** the sha256 Merkle commitment (`merkle` already takes
+  opaque `(subject, head)` bytes), the confirmed/tentative tiering + time-window machinery,
+  the per-subject storage, the inclusion-proof format, the graduated status, the endpoint
+  shape.
+- **Per-method verifier (policy):** encoding, subject-id derivation, signature schemes,
+  prev-linkage, the validity predicate, the recovery rule, constraints. PLC is the **first**
+  verifier; a second method is a second implementation *in code*, pinned to its own
+  reference oracle — **not** config/template variables (a parameterized validity engine has
+  no reference to be differential-green against, and every leak is a fork). This is the §6
+  "frozen core narrow, op-validation separately-governed" principle, made concrete.
+
+**Choices:** generalize the mechanism, hand-write each policy. Don't build the generic
+engine now — V1 is the PLC witness; just keep the seam clean (it nearly is).
+
+**Next steps when we reach for it:**
+- The `merkle` leaf uses a separator-less `did ‖ head_cid`, sound only because did:plc is
+  fixed-width. Add a length prefix *before* admitting variable-width subjects — cheap now,
+  format-breaking later.
+- The natural second module is **in-domain**: a witness over atproto account **repositories**
+  (signed repo/MST commit roots), same self-certifying shape, same constituency, and a
+  reference impl already exists to stay differential-testable.
 
 ---
 
@@ -195,8 +309,9 @@ Repos: `github.com/eurosky-social` (`u-at-proto`, `eu-haul`).
 
 - **Cairo 2.x** · **Scarb** (build) · **Starknet Foundry / `snforge`** (tests, gas
   reporting).
-- **Starknet** (public network first) · **native account abstraction** (PLC key as signer)
-  · **paymasters** (commitment-cost allocation).
+- **Starknet** (public network first) · **native account abstraction** + **paymasters**
+  (gas/UX and commitment-cost allocation only — never authorization; the op's embedded
+  signature, verified in-contract, is the sole authority).
 - **Crypto:** Cairo corelib `sha256` + `secp256k1` + `secp256r1` (syscalls, in-contract);
   Garaga only if an exotic curve is ever needed.
 - **Off-chain (Rust):** sync indexer + differential oracle (`atproto-dasl`).
@@ -205,6 +320,9 @@ Repos: `github.com/eurosky-social` (`u-at-proto`, `eu-haul`).
 
 ---
 
-*Scope discipline: this is an anchor — a permissionless, proven, verifiable write path and
-state root for the DIDs that opt in — not a PLC replacement. Keep the verification core
-exact, keep the endpoint permissionless, keep resolver verification cheap.*
+*Scope discipline: V1 is the **witness** — "atproto identity DMARC": independent proof that
+`plc.directory` serves a complete, current, non-equivocated history, exposed as a graduated
+status any resolver/PDS enforces unilaterally. `plc.directory` stays canonical; availability
+(Mode 2) and canonical-source-in-a-partition (Mode 3) are later, not V1 (§1a). The
+permissionless write path is the backstop, not the headline. Keep the verification core
+exact, keep the endpoint permissionless, keep the witness check cheap.*
