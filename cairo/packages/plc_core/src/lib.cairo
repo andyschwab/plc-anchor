@@ -13,12 +13,14 @@
 //!
 //! Phase 3 (next) — state commitment + anchor endpoint:
 //!   state      — per-DID head + confirmed/tentative DID→document roots (§4).
+//!   merkle     — sha256 Merkle commitment over the DID→head map (§4, P3.2).
 //!   anchor     — the permissionless endpoint: `import`/`submit_op` (§2).
 //!   governance — multisig + timelock + one-way freeze flag (§6b).
 
 pub mod anchor;
 pub mod key_parse;
 pub mod link;
+pub mod merkle;
 pub mod op_decode;
 pub mod op_verify;
 pub mod recovery;

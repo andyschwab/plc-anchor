@@ -16,6 +16,12 @@ jobs:
   # Path filters so unrelated changes skip expensive jobs. Other jobs gate on these.
   changes:
     runs-on: ubuntu-latest
+    # paths-filter reads the PR's changed-files list via the GitHub API on pull_request
+    # events; that needs pull-requests:read on top of contents:read (for checkout). Scoped
+    # here so the other jobs keep the top-level contents:read-only default.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       cairo: ${{ steps.filter.outputs.cairo }}
       rust: ${{ steps.filter.outputs.rust }}

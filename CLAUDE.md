@@ -96,18 +96,23 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    against a 7-op corpus + recovery scenarios ground-truthed by `@did-plc/lib`, tied together
    by `plc_core::verify::verify_next_op`. 21/21 plc_core + 9/9 drisl tests pass.
    (`cairo/packages/plc_core`; sequencing in [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md).)
-3. ⏳ **State commitment + confirmed/tentative roots + the permissionless `import`/`submit_op`
-   endpoint** (embedded-sig authorization). *In progress.* Done: per-DID head + state
-   (`plc_core::state`), the `anchor` `#[starknet::contract]` (`import_genesis`/`submit_op`/
-   views), and confirmed/tentative tiers + the recovery/fork path (per-DID chain storage;
-   72h rule via `classify_next_op`) — offline-tested via `contract_state_for_testing`,
-   recovery ground-truthed vs `@did-plc/lib`. Remaining: the sha256-Merkle DID→document
-   commitment root (P3.2) and multi-op genesis `import` (P3.4). See
-   [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md) §2.
+3. ✅ **State commitment + confirmed/tentative roots + the permissionless `import`/`submit_op`
+   endpoint** (embedded-sig authorization). Per-DID head + state (`plc_core::state`), the
+   `anchor` `#[starknet::contract]` (`import_genesis`/`import`/`submit_op`/views), and
+   confirmed/tentative tiers + the recovery/fork path (per-DID chain storage; 72h rule via
+   `classify_next_op`) — offline-tested via `contract_state_for_testing`, recovery
+   ground-truthed vs `@did-plc/lib`. **P3.2:** the sha256-Merkle DID→document commitment root
+   (`plc_core::merkle` + `anchor::{tentative_root, confirmed_root}`) — RFC 6962 leaf/node
+   domain separation, did-sorted, format-pinned by a TS cross-check (`gen-merkle-vectors`)
+   with a CI drift gate. **P3.4:** `anchor::import(chain)` replays a DID's resolved history in
+   one call (imported ops use the import block time — `createdAt` is not in the signed op).
+   See [`docs/PHASE-2-3-PLAN.md`](docs/PHASE-2-3-PLAN.md) §2.
 4. Sync indexer (`ingest/`): firehose → submit deltas for anchored DIDs.
-5. Resolver verification library (the adoption surface).
+5. Resolver verification library (the adoption surface) — inclusion-proof verifier lives in
+   `plc_core::merkle::verify_proof`, format pinned.
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
-**Current phase: 3 in progress — the permissionless endpoint (append + recovery + tiers) is
-live and offline-tested; remaining: the sha256-Merkle commitment root (P3.2) and multi-op
-genesis import (P3.4). See `docs/PHASE-2-3-PLAN.md` §2.**
+**Current phase: 3 complete — the permissionless endpoint (`import_genesis`/`import`/
+`submit_op` + recovery + confirmed/tentative tiers) and the sha256-Merkle commitment root are
+live and offline-tested (plc_core 53/53). Next: build order item 4 (sync indexer, `ingest/`).
+See `docs/PHASE-2-3-PLAN.md` §2.**
