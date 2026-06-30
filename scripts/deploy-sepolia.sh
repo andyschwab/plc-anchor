@@ -32,6 +32,9 @@ set -euo pipefail
 : "${STARKNET_RPC:?set STARKNET_RPC to a keyed Sepolia 0.10.x endpoint (declare is rate-limited on public dRPC)}"
 ACCOUNT="${SNCAST_ACCOUNT:-plc-sepolia}"
 CONTRACT_NAME="anchor"
+# The `anchor` contract lives in the `plc_core` package; the Cairo workspace has two members
+# (drisl, plc_core), so sncast needs `--package` to disambiguate.
+PACKAGE="${SNCAST_PACKAGE:-plc_core}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "==> Building the Cairo workspace (sierra artifacts) ..."
@@ -41,7 +44,7 @@ echo "==> Declaring '$CONTRACT_NAME' (account: $ACCOUNT) ..."
 # `|| true`: a re-declare of an unchanged class exits non-zero with "already declared" — not
 # fatal, we still want the class hash from the output.
 DECLARE_OUT="$(cd "$REPO_ROOT/cairo" && sncast --account "$ACCOUNT" declare \
-  --contract-name "$CONTRACT_NAME" --url "$STARKNET_RPC" 2>&1 || true)"
+  --contract-name "$CONTRACT_NAME" --package "$PACKAGE" --url "$STARKNET_RPC" 2>&1 || true)"
 echo "$DECLARE_OUT"
 
 CLASS_HASH="$(printf '%s\n' "$DECLARE_OUT" | grep -oiE '0x[0-9a-f]{60,64}' | head -n1 || true)"
