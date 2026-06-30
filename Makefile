@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy-sepolia rust-build rust-test witness-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy-sepolia rust-build rust-test witness-test console-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
 
 # Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
 # (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
@@ -111,6 +111,10 @@ rust-test: ## Test + lint the Rust workspace
 witness-test: ## Run the witness-ts library tests (Node-native TS; no install needed)
 	cd witness-ts && node --test
 
+# ---- Admin console (TypeScript) ----------------------------------------------
+console-test: ## Run the admin-console tests (Node-native TS; node:sqlite needs --experimental-sqlite)
+	cd console && node --experimental-sqlite --test
+
 # ---- Adversarial validation (DIDMARC attack/fork scenarios) ------------------
 # Real signed did:plc chains + a malicious-mirror DirectorySource + the real witness check().
 # The offline suite is the CI pass/fail gate; the report is the engineer-facing narrative
@@ -139,7 +143,7 @@ fmt: ## Format Rust + Cairo
 	cargo fmt
 	cd cairo && scarb fmt
 
-ci: gen-vectors-check gen-plc-vectors-check gen-op-verify-vectors-check gen-recovery-vectors-check gen-merkle-vectors-check gen-adversarial-scenarios-check cairo-build cairo-test rust-test witness-test adversarial-check conformance ## Everything CI runs
+ci: gen-vectors-check gen-plc-vectors-check gen-op-verify-vectors-check gen-recovery-vectors-check gen-merkle-vectors-check gen-adversarial-scenarios-check cairo-build cairo-test rust-test witness-test console-test adversarial-check conformance ## Everything CI runs
 
 clean: ## Remove build artifacts
 	cargo clean
