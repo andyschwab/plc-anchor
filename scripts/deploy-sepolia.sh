@@ -57,11 +57,20 @@ fi
 echo "==> class hash: $CLASS_HASH"
 
 echo "==> Deploying an instance (no constructor — auth is the op's embedded sig, §2) ..."
+# `|| true` so a deploy error is SHOWN (not swallowed by set -e). The class is already declared
+# by this point, so retrying just the deploy is safe.
 DEPLOY_OUT="$(cd "$REPO_ROOT/cairo" && sncast --account "$ACCOUNT" deploy \
-  --class-hash "$CLASS_HASH" --url "$STARKNET_RPC" 2>&1)"
+  --class-hash "$CLASS_HASH" --url "$STARKNET_RPC" 2>&1 || true)"
 echo "$DEPLOY_OUT"
 
+# The contract address is the first hash in the deploy output (before the tx hash).
 CONTRACT_ADDR="$(printf '%s\n' "$DEPLOY_OUT" | grep -oiE '0x[0-9a-f]{60,64}' | head -n1 || true)"
+if [[ -z "$CONTRACT_ADDR" ]]; then
+  echo "!! Deploy did not return a contract address — see the sncast output above." >&2
+  echo "   The class IS declared; retry just the deploy once the declare tx is accepted:" >&2
+  echo "     sncast --account $ACCOUNT deploy --class-hash $CLASS_HASH --url \$STARKNET_RPC" >&2
+  exit 1
+fi
 echo
 echo "============================================================"
 echo " Deployed. NEXT STEPS (see header):"
