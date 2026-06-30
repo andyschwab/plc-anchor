@@ -123,7 +123,8 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    DID → document + inclusion proof against the published root, as the graduated status
    (§1a Mode 1). The inclusion-proof verifier already lives in `plc_core::merkle::verify_proof`
    (format pinned); item 5 packages root-fetch + proof-check for resolvers. Built last
-   (stands on 1–4) but the headline deliverable.
+   (stands on 1–4) but the headline deliverable. Notes for when we get there:
+   [`docs/PHASE-5-WITNESS-NOTES.md`](docs/PHASE-5-WITNESS-NOTES.md).
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
 **Current phase: 3 complete — the permissionless endpoint (`import_genesis`/`import`/
