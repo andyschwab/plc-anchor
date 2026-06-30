@@ -147,9 +147,8 @@ library (5), but it stands on 1–4.
    (`confirmed` / `tentative-consistent` / `diverged` / `absent`, §4). This is "atproto
    identity DMARC" (§1a Mode 1) — the adoption surface and the headline deliverable, even
    though it is built last because it stands on 1–4. Must be cheap; an anchor nobody checks
-   is theater. Context captured ahead of time in
-   [`docs/PHASE-5-WITNESS-NOTES.md`](docs/PHASE-5-WITNESS-NOTES.md) (status algorithm +
-   the window-edge clock-reconciliation rule).
+   is theater. The status algorithm and the window-edge clock-reconciliation rule, as built,
+   are recorded in [`docs/HISTORY.md`](docs/HISTORY.md) (item 5).
 6. **Later, deliberately deferred:** the **Layer-2 admin/user tool** (anchoring policy +
    cost allocation); **governance** (§7); an **appchain** — only if credible neutrality
    demands owning the sequencer (public Starknet's L1 force-inclusion provides the CR
