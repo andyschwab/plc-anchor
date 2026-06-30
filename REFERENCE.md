@@ -35,8 +35,11 @@ that opt in (a PDS naturally anchors its own users).
 **Residual trust (narrow, deliberate):**
 - **Ordering** — per-DID linearization of operations (cross-DID order is irrelevant; DIDs
   are independent).
-- **Timestamp** — the `createdAt` that drives PLC's 72-hour recovery window. We report it
-  pragmatically (§4).
+- **Timestamp** — `createdAt` is **not in the signed op** (it is directory-assigned
+  metadata, absent from the op bytes and the CID), so there is nothing to read and nothing
+  of the directory's to trust. The anchor substitutes **Starknet block time** — the window
+  is measured from when *we observed* the op, not when it was authored (§4). A weaker
+  dependency than "trust their clock," but a real one: our window lags the directory's.
 
 Per-op validity is **proven**, not assumed.
 
@@ -169,11 +172,17 @@ These tiers **are** the witness's output (§1a Mode 1). The graduated status a c
 
 - **`confirmed`** — head committed past the 72h window; immutable. Strongest assertion.
 - **`tentative-consistent`** — within-window op; the on-chain view agrees with the directory
-  so far, but it is still nullifiable.
-- **`diverged`** — the directory's served head contradicts the proven head. The actionable
-  alarm: warn / quarantine / refuse to relay. Distinguish *committed-history* divergence
-  (alarming) from benign *within-window timing* divergence — an artifact of the timestamp
-  residual (§1, §5) that must not cry wolf.
+  so far, but it is still nullifiable. **This subsumes the expected clock lag:** the anchor
+  measures the 72h window from *its own* block-time observation (§1), which is strictly later
+  than the directory's `createdAt`, so the anchor's confirmed/tentative boundary lags the
+  directory's. A head the directory already calls `confirmed` while the anchor still calls
+  `tentative` — histories otherwise agreeing — is `tentative-consistent`, **not** `diverged`.
+- **`diverged`** — the directory's served head *contradicts* the proven head (an op omitted,
+  or a head the anchor has already confirmed). The actionable alarm: warn / quarantine /
+  refuse to relay. The genuinely hard case is a *recovery at the window edge*: because the
+  anchor's clock lags, it can still honor a higher-priority-key nullification the directory
+  has already rejected as too-late, so the two commit to different heads from clock skew
+  alone (§5). The checker must not treat that as ordinary equivocation.
 - **`absent`** — DID not anchored; no opinion (the coverage gap, like DMARC `p=none`).
 
 A hard "reject unless `confirmed`" gate would reject every legitimate update from the last
@@ -207,6 +216,15 @@ everything else.
 - **Recovery:** rotation keys are 1–5, priority-ordered (index 0 = highest). A lower-index
   key nullifies ops signed by higher-index keys within 72h, forking to the last
   universally-accepted state.
+- **`createdAt` is not in the signed op** — it is directory-assigned metadata, absent from
+  the op bytes and the CID (confirmed against the corpus). The contract has no authored
+  timestamp to read; it uses **Starknet block time** (× 1000 ms) as the pragmatic
+  `createdAt` the 72h window measures against, and imported ops are stamped with the import
+  block time. *Window-edge recovery is the delicate witness corner:* the anchor's clock is
+  strictly later than the directory's, so near the 72h edge the anchor can accept a
+  higher-priority-key nullification the directory rejected as too-late (conservative — it
+  only re-exposes the recovery window, never lets a non-key-holder mutate a DID), producing a
+  `diverged` (§4) from clock skew alone. Pin the exact rule when building the checker (item 5).
 - **Constraints:** max 10 verificationMethods/DID; max op size 7500 bytes (dCBOR-encoded).
 - **Op sizes (context):** legacy `create` ~330 B; modern `plc_operation` ~1.4–2.0 KB.
 
@@ -221,6 +239,34 @@ are vendored under `conformance/vectors`.
 - atproto data model: `https://atproto.com/specs/data-model`
 - DASL: `https://dasl.ing/` · CID `https://dasl.ing/cid.html` · dCBOR42 `https://dasl.ing/dcbor42.html`
 - Reference impls: `github.com/hyphacoop/go-dasl`, `docs.rs/atproto-dasl`, `@atcute/cbor` (npm)
+
+---
+
+## 5a. Generality — one witness core, pluggable verifiers
+
+DIDMARC has a clean **mechanism/policy seam**, and that is the axis we generalize on:
+
+- **Generic core (method-agnostic):** the sha256 Merkle commitment (`merkle` already takes
+  opaque `(subject, head)` bytes), the confirmed/tentative tiering + time-window machinery,
+  the per-subject storage, the inclusion-proof format, the graduated status, the endpoint
+  shape.
+- **Per-method verifier (policy):** encoding, subject-id derivation, signature schemes,
+  prev-linkage, the validity predicate, the recovery rule, constraints. PLC is the **first**
+  verifier; a second method is a second implementation *in code*, pinned to its own
+  reference oracle — **not** config/template variables (a parameterized validity engine has
+  no reference to be differential-green against, and every leak is a fork). This is the §6
+  "frozen core narrow, op-validation separately-governed" principle, made concrete.
+
+**Choices:** generalize the mechanism, hand-write each policy. Don't build the generic
+engine now — V1 is the PLC witness; just keep the seam clean (it nearly is).
+
+**Next steps when we reach for it:**
+- The `merkle` leaf uses a separator-less `did ‖ head_cid`, sound only because did:plc is
+  fixed-width. Add a length prefix *before* admitting variable-width subjects — cheap now,
+  format-breaking later.
+- The natural second module is **in-domain**: a witness over atproto account **repositories**
+  (signed repo/MST commit roots), same self-certifying shape, same constituency, and a
+  reference impl already exists to stay differential-testable.
 
 ---
 
