@@ -18,6 +18,11 @@ serde_json.workspace = true
 atproto-dasl.workspace = true
 # Minimal blocking HTTP client for the live `/export` source (no async runtime).
 ureq = "3"
+# Live on-chain submission path (the `live` feature). Kept optional so the default build and the
+# offline consensus tests stay lean — no async runtime / Starknet client unless `--features live`.
+starknet = { version = "0.17.0", optional = true }
+tokio = { version = "1", features = ["rt", "macros", "time"], optional = true }
+hex = { version = "0.4", optional = true }
 
 [lib]
 name = "ingest"
@@ -26,3 +31,8 @@ path = "src/lib.rs"
 [[bin]]
 name = "ingest"
 path = "src/main.rs"
+
+[features]
+# Wire the live Starknet `AnchorSink` (`StarknetSink`) + the `--submit` CLI mode + the on-chain
+# E2E test. Off by default: `cargo build`/`cargo test` exercise only the offline pipeline.
+live = ["dep:starknet", "dep:tokio", "dep:hex"]

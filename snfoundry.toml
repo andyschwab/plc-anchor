@@ -1,0 +1,15 @@
+# sncast config for the live Starknet (Sepolia) deploy + E2E testing path.
+# RPC: dRPC public Sepolia endpoint (spec 0.10.2, matches sncast 0.61.0's expected 0.10.x).
+# Cartridge (https://api.cartridge.gg/x/starknet/sepolia) is a 0.9.0 fallback but warns on version.
+# The `anchor` contract has no constructor — authorization is the op's embedded signature, not the
+# tx signer (REFERENCE.md §2).
+# Account secrets live OUTSIDE the repo (default ~/.starknet_accounts/); never commit a private key.
+#
+# Deployed Sepolia anchor (build-order item 4 E2E):
+#   contract:   0x0202a383c305f9fd8b6c2b2476280379c386b72237deaed7199b85d1cb608f0e
+#   class hash: 0x07b056164437b167d10d4392f39408072a3a7617e1e3e6ebbe82e52158a9d7f2
+# NOTE: the public dRPC endpoint below serves reads/calls/deploys but RATE-LIMITS the heavy
+# `declare`. For declare/redeploy use a keyed 0.10.x endpoint via `--url $STARKNET_RPC` (Alchemy).
+[sncast.default]
+url = "https://starknet-sepolia.drpc.org"
+account = "plc-sepolia"

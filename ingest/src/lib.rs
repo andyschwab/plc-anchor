@@ -24,6 +24,8 @@ pub mod pipeline;
 pub mod reencode;
 pub mod sink;
 pub mod source;
+#[cfg(feature = "live")]
+pub mod starknet_sink;
 
 pub use anchored::AnchorSet;
 pub use cursor::Cursor;
@@ -31,3 +33,5 @@ pub use export::ExportEntry;
 pub use pipeline::{process_batch, Indexer, Stats};
 pub use sink::{AnchorSink, Delta, DryRunSink};
 pub use source::{FixtureSource, HttpExportSource, OpSource};
+#[cfg(feature = "live")]
+pub use starknet_sink::{StarknetConfig, StarknetSink};

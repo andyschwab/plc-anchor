@@ -1,0 +1,39 @@
+name: E2E (Sepolia)
+
+# Gated, manual-only on-chain end-to-end test against the live `anchor` contract on Starknet
+# Sepolia (REFERENCE.md §3, build-order item 4 — the live AnchorSink). Kept OUT of the default
+# `ci.yml` so PRs stay offline + deterministic and no testnet funds are spent per push: the
+# consensus gate never depends on a live chain. Run it by hand from the Actions tab when wiring
+# or after touching the live submission path.
+on:
+  workflow_dispatch:
+
+concurrency:
+  # Serialize runs: the test submits real txs and reads back per-DID state; concurrent runs would
+  # race on the shared testing account's nonce and the contract roster.
+  group: e2e-sepolia
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.96.0"
+          components: clippy
+      # Lint the live path here (it pulls the async/Starknet deps the lean default CI skips).
+      - run: cargo clippy -p ingest --all-targets --features live -- -D warnings
+      # The on-chain E2E: drive a corpus genesis through StarknetSink → import_genesis, then
+      # read head_cid / tentative_root back and assert. Idempotent across runs.
+      - name: live E2E
+        env:
+          STARKNET_RPC: ${{ secrets.STARKNET_RPC }}
+          ANCHOR_CONTRACT_ADDRESS: ${{ secrets.ANCHOR_CONTRACT_ADDRESS }}
+          STARKNET_ACCOUNT_ADDRESS: ${{ secrets.STARKNET_ACCOUNT_ADDRESS }}
+          STARKNET_ACCOUNT_PRIVATE_KEY: ${{ secrets.STARKNET_ACCOUNT_PRIVATE_KEY }}
+        run: cargo test -p ingest --features live --test live_e2e -- --ignored --nocapture

@@ -129,8 +129,15 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    delta is submitted only if its re-encoded CID equals the directory's published CID — then
    routes genesis→`import_genesis` / append→`submit_op` and advances a resumable `after=<createdAt>`
    cursor. `HttpExportSource` (ureq) is the live `/export` path; `FixtureSource` drives the tests
-   (ingest 14/14). **Remaining seam:** the live `AnchorSink` Starknet submitter (needs a deployed
-   contract address + fee-paying account; the current `DryRunSink` logs the deltas it would submit).
+   (ingest 14/14). **Live seam closed:** `StarknetSink` (`ingest/src/starknet_sink.rs`, `live`
+   cargo feature) submits deltas to a deployed `anchor` via starknet-rs — `import_genesis`/`submit_op`
+   with manually-encoded Cairo `ByteArray` calldata, waiting for tx acceptance. `DryRunSink` stays
+   the offline default; the live path is feature-gated so the consensus tests pull no async/Starknet
+   deps. Wired into the CLI as `--submit`. **Proven on-chain (Sepolia):** the live E2E
+   (`ingest/tests/live_e2e.rs`, `--ignored`) drives a corpus genesis through the sink and reads back
+   `head_cid` byte-identical to the corpus CID + a non-empty `tentative_root`. Deployed address +
+   RPC notes in [`snfoundry.toml`](snfoundry.toml); the gated manual E2E job is
+   [`.github/workflows/e2e-sepolia.yml`](.github/workflows/e2e-sepolia.yml).
 5. Witness / resolver verification library — **the V1 product** ("atproto identity DMARC"):
    DID → document + inclusion proof against the published root, as the graduated status
    (§1a Mode 1). The inclusion-proof verifier already lives in `plc_core::merkle::verify_proof`
@@ -139,9 +146,12 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
    [`docs/PHASE-5-WITNESS-NOTES.md`](docs/PHASE-5-WITNESS-NOTES.md).
 6. Deferred: Layer-2 admin/user tool (policy + cost allocation); governance; appchain.
 
-**Current phase: build order item 4 done — the `ingest/` sync indexer pipeline is offline-tested
-(ingest 14/14) with the DRISL re-encoder differential-green against the conformance corpus; the
-on-chain `AnchorSink` submitter is the one remaining seam (needs a deployed contract). The
-permissionless endpoint + sha256-Merkle root from phase 3 stay live and offline-tested (plc_core
-53/53). Next: build order item 5 — the witness / resolver verification library (the V1 product),
-which packages root-fetch + `plc_core::merkle::verify_proof`. See `docs/PHASE-5-WITNESS-NOTES.md`.**
+**Current phase: build order item 4 fully done — the `ingest/` pipeline is offline-tested
+(ingest 14/14), and its live `AnchorSink` seam is now closed and proven on-chain: the `anchor`
+contract is deployed to Starknet Sepolia and the live E2E (`StarknetSink` → `import_genesis` →
+read-back) is green against it. The default build/consensus tests stay offline + lean (the live
+path is behind the `live` cargo feature); the on-chain test is the gated, manual
+`e2e-sepolia.yml`. The permissionless endpoint + sha256-Merkle root from phase 3 stay
+offline-tested (plc_core 53/53). Next: build order item 5 — the witness / resolver verification
+library (the V1 product), which packages root-fetch + `plc_core::merkle::verify_proof`. See
+`docs/PHASE-5-WITNESS-NOTES.md`.**
