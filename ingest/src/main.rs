@@ -1,13 +1,17 @@
 //! Firehose sync indexer (REFERENCE.md §3, build-order item 4).
 //!
-//! Backfills a PLC mirror's `/export` for the DIDs in a roster, re-encodes each op to its
-//! canonical DRISL bytes, checks it against the directory's published CID, and either logs the
-//! delta it would anchor (default, [`DryRunSink`]) or submits it to a live `anchor` contract
-//! (`--submit`, the [`ingest::StarknetSink`] — requires `--features live` and the env config it
-//! documents).
+//! Re-encodes each op to its canonical DRISL bytes, checks it against the directory's published
+//! CID, and either logs the delta it would anchor (default, [`DryRunSink`]) or submits it to a
+//! live `anchor` contract (`--submit`, the [`ingest::StarknetSink`] — requires `--features live`
+//! and the env config it documents). Two modes:
+//!
+//! - `--roster <dids.txt>` — firehose: scan `/export` for the DIDs in a roster (backfill / cron).
+//! - `--did <did:plc:...>` — single DID: pull just that DID's `/<did>/log/audit` and onboard it
+//!   in one request (no firehose scan) — the practical way to anchor one existing DID.
 //!
 //! ```text
 //! ingest --roster <dids.txt> [--source https://plc.directory] [--cursor <cursor.json>] [--count 1000] [--submit]
+//! ingest --did <did:plc:...>  [--source https://plc.directory] [--submit]
 //! ```
 
 use anyhow::{Context, Result};
