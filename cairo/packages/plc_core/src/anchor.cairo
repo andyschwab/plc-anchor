@@ -21,6 +21,8 @@
 //! (`state::record_from_signed`). `now` is the block timestamp in ms (seconds × 1000) — the
 //! pragmatic createdAt the 72h window uses (§1, §4).
 
+use crate::merkle::ProofStep;
+
 #[starknet::interface]
 pub trait IAnchor<TContractState> {
     /// Import a genesis op; returns its did:plc. Reverts if the DID is already anchored or
@@ -55,6 +57,15 @@ pub trait IAnchor<TContractState> {
     /// past the 72h window, mapped to their confirmed head (§4). Immutable history; the root
     /// a cautious resolver pins.
     fn confirmed_root(self: @TContractState) -> ByteArray;
+    /// Inclusion proof for `did`'s **tentative** head against `tentative_root()`: returns
+    /// `(head_cid, steps)`. A resolver rebuilds the leaf as `sha256(0x00 ‖ did ‖ head_cid)`
+    /// and walks `steps` to recompute the root, comparing it to a `tentative_root()` it
+    /// fetched independently (the proof server stays untrusted). Returns `("", [])` if `did`
+    /// is not anchored. The proof is root-specific — use this against the tentative root only.
+    fn tentative_proof(self: @TContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>);
+    /// Inclusion proof for `did`'s **confirmed** head against `confirmed_root()`. Returns
+    /// `("", [])` if `did` has no confirmed head yet (all ops still within the 72h window).
+    fn confirmed_proof(self: @TContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>);
 }
 
 #[starknet::contract]
@@ -64,12 +75,12 @@ pub mod anchor {
         Map, MutableVecTrait, StoragePathEntry, StoragePointerReadAccess, StoragePointerWriteAccess,
         Vec, VecTrait,
     };
-    use super::IAnchor;
-    use super::super::merkle::{merkle_root, sorted_leaves};
+    use super::super::merkle::{leaves_of, merkle_proof, merkle_root, sort_entries, sorted_leaves};
     use super::super::state::{
         OpRecord, apply_op, confirmed_head as confirmed_head_of, genesis_record, record_from_signed,
         tentative_head,
     };
+    use super::{IAnchor, ProofStep};
 
     #[storage]
     struct Storage {
@@ -202,6 +213,14 @@ pub mod anchor {
         fn confirmed_root(self: @ContractState) -> ByteArray {
             self.commitment_root(true, now_ms())
         }
+
+        fn tentative_proof(self: @ContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>) {
+            self.tier_proof(did, false, 0)
+        }
+
+        fn confirmed_proof(self: @ContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>) {
+            self.tier_proof(did, true, now_ms())
+        }
     }
 
     #[generate_trait]
@@ -238,6 +257,16 @@ pub mod anchor {
         /// hashing — a read-time view, so the recovery-window writes stay cheap (the write
         /// vs proof cost tradeoff, REFERENCE.md §4).
         fn commitment_root(self: @ContractState, confirmed: bool, now: u64) -> ByteArray {
+            merkle_root(@sorted_leaves(self.collect_entries(confirmed, now)))
+        }
+
+        /// The `{did → head}` map at one tier: every anchored DID whose selected head is
+        /// non-empty (`confirmed` → the head past the 72h window at `now`, else the tentative
+        /// tip), in roster order. The shared substrate of both the root and the inclusion
+        /// proof, so they commit to the identical entry set. O(total ops) — a read-time view.
+        fn collect_entries(
+            self: @ContractState, confirmed: bool, now: u64,
+        ) -> Array<(ByteArray, ByteArray)> {
             let n = self.did_keys.len();
             let mut entries: Array<(ByteArray, ByteArray)> = array![];
             let mut i: u64 = 0;
@@ -254,7 +283,37 @@ pub mod anchor {
                 }
                 i += 1;
             }
-            merkle_root(@sorted_leaves(entries))
+            entries
+        }
+
+        /// Inclusion proof for `did` at one tier: collect the same entry set the root commits
+        /// to, sort it canonically, locate `did`'s leaf, and return `(head, merkle_proof)`.
+        /// `("", [])` if `did` has no head at this tier (not anchored, or no confirmed op
+        /// yet). Sorting once and deriving the leaves from the sorted entries keeps the proof
+        /// path and the root in lockstep (`merkle`).
+        fn tier_proof(
+            self: @ContractState, did: ByteArray, confirmed: bool, now: u64,
+        ) -> (ByteArray, Array<ProofStep>) {
+            let sorted = sort_entries(self.collect_entries(confirmed, now));
+            let m = sorted.len();
+            let mut idx = 0;
+            let mut head_out: ByteArray = "";
+            let mut found = false;
+            let mut i = 0;
+            while i < m {
+                let (d, h) = sorted.at(i).clone();
+                if d == did {
+                    idx = i;
+                    head_out = h;
+                    found = true;
+                    break;
+                }
+                i += 1;
+            }
+            if !found {
+                return ("", array![]);
+            }
+            (head_out, merkle_proof(@leaves_of(@sorted), idx))
         }
 
         /// Materialize the stored chain as `OpRecord`s (CID + rotation keys decoded from each

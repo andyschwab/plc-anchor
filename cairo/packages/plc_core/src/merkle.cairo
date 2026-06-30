@@ -37,8 +37,9 @@ const LEAF_PREFIX: u8 = 0x00;
 const NODE_PREFIX: u8 = 0x01;
 
 /// A sibling on an inclusion path: its 32-byte digest and whether it sits on the *left* of
-/// the node being recomputed (so the verifier hashes in the correct order).
-#[derive(Drop, Clone)]
+/// the node being recomputed (so the verifier hashes in the correct order). `Serde` so the
+/// anchor's `proof()` views can return it across the ABI (resolvers consume it off-chain).
+#[derive(Drop, Clone, Serde)]
 pub struct ProofStep {
     pub sibling: ByteArray,
     pub sibling_is_left: bool,
@@ -117,20 +118,27 @@ fn byte_lt(a: @ByteArray, b: @ByteArray) -> bool {
 /// total order is strict and the result is insertion-order-independent — part of the pinned
 /// format (a different order would fork the root).
 pub fn sorted_leaves(entries: Array<(ByteArray, ByteArray)>) -> Array<ByteArray> {
-    let ordered = merge_sort(entries);
+    leaves_of(@sort_entries(entries))
+}
+
+/// Map already-sorted `(did, head)` entries to their leaf digests, in order. Split out so a
+/// caller that needs the sorted *entries* (e.g. to locate a DID's leaf index for an inclusion
+/// proof) and the leaves can share one sort.
+pub fn leaves_of(sorted: @Array<(ByteArray, ByteArray)>) -> Array<ByteArray> {
     let mut leaves: Array<ByteArray> = array![];
     let mut k = 0;
-    while k < ordered.len() {
-        let (did, head) = ordered.at(k);
+    while k < sorted.len() {
+        let (did, head) = sorted.at(k);
         leaves.append(leaf_hash(did, head));
         k += 1;
     }
     leaves
 }
 
-/// Top-down merge sort of `entries` by `did` ascending. Stable (left wins ties), though DIDs
-/// are distinct so ties never occur; the canonical order is what the pinned root commits to.
-fn merge_sort(entries: Array<(ByteArray, ByteArray)>) -> Array<(ByteArray, ByteArray)> {
+/// Top-down merge sort of `entries` by `did` ascending, O(N log N). Stable (left wins ties),
+/// though DIDs are distinct so ties never occur; the canonical order is what the pinned root
+/// commits to (a different order would fork the root).
+pub fn sort_entries(entries: Array<(ByteArray, ByteArray)>) -> Array<(ByteArray, ByteArray)> {
     let n = entries.len();
     if n <= 1 {
         return entries;
@@ -148,7 +156,7 @@ fn merge_sort(entries: Array<(ByteArray, ByteArray)>) -> Array<(ByteArray, ByteA
         }
         i += 1;
     }
-    merge(merge_sort(left), merge_sort(right))
+    merge(sort_entries(left), sort_entries(right))
 }
 
 /// Merge two did-sorted runs into one, preserving the ascending order.
