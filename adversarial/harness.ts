@@ -1,0 +1,127 @@
+//! Offline runner: drive `check()` over each adversarial scenario from the generated fixture.
+//!
+//! The fixture (`scenarios.generated.json`, built by conformance/gen-adversarial-scenarios.mjs)
+//! carries real did:plc chains, the anchor's real Merkle roots + inclusion proofs, the malicious
+//! mirror's served audit log, and the expected graduated status. This runner reconstructs the
+//! `AnchorView` from those bytes (the proofs are verified by the witness's own `verifyProof`, so
+//! a wrong root/format fails here exactly as it would on a real resolver) and the
+//! `MaliciousDirectory` from the served log, then runs the real `check()`. No fakes of the
+//! decision logic — only the transport (chain reads, directory fetch) is local.
+
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ProofStep } from "../witness-ts/src/merkle.ts";
+import type { AuditEntry } from "../witness-ts/src/directory.ts";
+import { type AnchorView, check, type CheckResult } from "../witness-ts/src/status.ts";
+import { MaliciousDirectory } from "./mirror.ts";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const FIXTURE_PATH = join(HERE, "scenarios.generated.json");
+
+/** Anchor reads for a read-class scenario (real roots + inclusion proofs). */
+export interface ScenarioAnchor {
+  did: string;
+  anchored: boolean;
+  confirmedHead: string;
+  tentativeHead: string;
+  confirmedRoot: string;
+  confirmedProof: { sibling: string; siblingIsLeft: boolean }[];
+  tentativeRoot: string;
+  tentativeProof: { sibling: string; siblingIsLeft: boolean }[];
+}
+
+/** The defender's verdict on a write-class adversarial submission. */
+export interface WriteVerdict {
+  rejected: boolean;
+  /** The contract / gate's rejection reason string (e.g. `recovery-weaker-key`). */
+  reason: string;
+  /** Which module enforces it (in-contract verify/recovery, or the off-chain ingest gate). */
+  defender: string;
+  /** How this rejection was ground-truthed at fixture-generation time. */
+  provenance: string;
+}
+
+/**
+ * A scenario as emitted by the generator — data + prose + expectation, fully self-describing.
+ *
+ * `read` scenarios drive the witness `check()` (anchor + directory present, `expect` a status).
+ * `write` scenarios are malicious submissions the contract/ingest gate rejects (`proposed` +
+ * `verdict`), ground-truthed at generation time against @did-plc/lib.
+ */
+export interface Scenario {
+  id: string;
+  title: string;
+  threat: string;
+  class: "read" | "write";
+  setup: string[];
+  lesson: string;
+  /** read-class only. True for the non-attack cases the alarm must stay silent on (the §0 wall). */
+  benign?: boolean;
+  /** read-class only. */
+  anchor?: ScenarioAnchor;
+  /** read-class only. */
+  directory?: { auditLog: AuditEntry[] };
+  /** read-class only. */
+  expect?: { status: string; reason: string };
+  /** write-class only: what the attacker submits. */
+  proposed?: string[];
+  /** write-class only: the rejection. */
+  verdict?: WriteVerdict;
+}
+
+export interface Fixture {
+  now: number;
+  skewHorizonMs: number;
+  scenarios: Scenario[];
+}
+
+export interface ScenarioOutcome {
+  scenario: Scenario;
+  actual: CheckResult;
+  pass: boolean;
+}
+
+const hexToBytes = (h: string): Uint8Array =>
+  Uint8Array.from(h.match(/.{2}/g)?.map((b) => parseInt(b, 16)) ?? []);
+
+const decodeProof = (steps: { sibling: string; siblingIsLeft: boolean }[]): ProofStep[] =>
+  steps.map((s) => ({ sibling: hexToBytes(s.sibling), siblingIsLeft: s.siblingIsLeft }));
+
+/** Reconstruct an `AnchorView` from a read-class scenario's fixture bytes (proofs stay real). */
+export function anchorViewFor(a: ScenarioAnchor): AnchorView {
+  return {
+    isAnchored: async () => a.anchored,
+    confirmedProof: async () => ({ head: a.confirmedHead, proof: decodeProof(a.confirmedProof) }),
+    tentativeProof: async () => ({ head: a.tentativeHead, proof: decodeProof(a.tentativeProof) }),
+    confirmedRoot: async () => hexToBytes(a.confirmedRoot),
+    tentativeRoot: async () => hexToBytes(a.tentativeRoot),
+  };
+}
+
+export function loadFixture(): Fixture {
+  return JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as Fixture;
+}
+
+/** Run one read-class scenario through the real `check()` and compare to its expectation. */
+export async function runScenario(s: Scenario, fixture: Fixture): Promise<ScenarioOutcome> {
+  if (!s.anchor || !s.directory || !s.expect) {
+    throw new Error(`runScenario: ${s.id} is not a read-class scenario`);
+  }
+  const actual = await check(s.anchor.did, anchorViewFor(s.anchor), new MaliciousDirectory(s.directory.auditLog), {
+    now: () => fixture.now,
+    skewHorizonMs: fixture.skewHorizonMs,
+  });
+  const pass = actual.status === s.expect.status && actual.reason === s.expect.reason;
+  return { scenario: s, actual, pass };
+}
+
+/** Run every scenario in the fixture (read-class scenarios run offline; write-class are gated elsewhere). */
+export async function runAll(fixture = loadFixture()): Promise<ScenarioOutcome[]> {
+  const out: ScenarioOutcome[] = [];
+  for (const s of fixture.scenarios) {
+    if (s.class !== "read") continue;
+    out.push(await runScenario(s, fixture));
+  }
+  return out;
+}

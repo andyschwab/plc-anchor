@@ -1,10 +1,15 @@
 name: E2E (Sepolia)
 
-# Gated, manual-only on-chain end-to-end test against the live `anchor` contract on Starknet
-# Sepolia (REFERENCE.md §3, build-order item 4 — the live AnchorSink). Kept OUT of the default
-# `ci.yml` so PRs stay offline + deterministic and no testnet funds are spent per push: the
-# consensus gate never depends on a live chain. Run it by hand from the Actions tab when wiring
-# or after touching the live submission path.
+# Gated, manual-only on-chain tests against the live `anchor` contract on Starknet Sepolia
+# (REFERENCE.md §3). Kept OUT of the default `ci.yml` so PRs stay offline + deterministic and no
+# testnet funds are spent per push: the consensus gate never depends on a live chain. Run by hand
+# from the Actions tab when wiring or after touching the live path.
+#
+# Two jobs:
+#   e2e              — the WRITE path (build-order item 4): drive a corpus genesis through the
+#                      StarknetSink and read it back. Needs the testing account's key.
+#   adversarial-live — the READ path (build-order item 5, adversarial/): the real witness against
+#                      a malicious mirror + the real anchor. Read-only — no account key, no txs.
 on:
   workflow_dispatch:
 
@@ -40,3 +45,24 @@ jobs:
           STARKNET_ACCOUNT_ADDRESS: ${{ secrets.STARKNET_ACCOUNT_ADDRESS }}
           STARKNET_ACCOUNT_PRIVATE_KEY: ${{ secrets.STARKNET_ACCOUNT_PRIVATE_KEY }}
         run: cargo test -p ingest --features live --test live_e2e -- --ignored --nocapture
+
+  adversarial-live:
+    # The read-side product under attack: real witness check() vs an HTTP malicious mirror + the
+    # real Sepolia anchor. Read-only (RPC calls only), so it needs no account key. Independent of
+    # the `e2e` job — it targets WITNESS_LIVE_DID, which the write E2E doesn't touch.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # No install: witness-ts/adversarial run on Node type-stripping with only built-ins.
+      # WITNESS_LIVE_DID is a non-secret repo variable; if unset, the DID-specific scenarios skip
+      # and only the always-true unanchored→absent check runs. The confirmed-`diverged` headline
+      # asserts only once that DID has a confirmed head (anchored ≥72h); see adversarial/README.md.
+      - name: live adversarial read
+        env:
+          WITNESS_LIVE_RPC: ${{ secrets.STARKNET_RPC }}
+          WITNESS_LIVE_CONTRACT: ${{ secrets.ANCHOR_CONTRACT_ADDRESS }}
+          WITNESS_LIVE_DID: ${{ vars.WITNESS_LIVE_DID }}
+        run: make adversarial-live

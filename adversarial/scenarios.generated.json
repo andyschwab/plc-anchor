@@ -1,0 +1,755 @@
+{
+  "_generated": "by conformance/src/gen-adversarial-scenarios.mjs — DO NOT EDIT. Run: make gen-adversarial-scenarios",
+  "_about": "DIDMARC adversarial-validation scenarios: real signed did:plc chains + a malicious mirror / malicious submission → the expected graduated status (read) or rejection (write).",
+  "now": 1782777600000,
+  "skewHorizonMs": 1209600000,
+  "scenarios": [
+    {
+      "id": "confirmed-match",
+      "title": "Confirmed — the directory serves exactly what the anchor proved",
+      "threat": "The baseline: no attack, full agreement. What a healthy did:plc looks like through the witness — the strongest possible assertion.",
+      "class": "read",
+      "benign": true,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored; its CONFIRMED head is opB (bafyreigxuanmkaq…), proven on Starknet and immutable past the 72h window.",
+        "The directory serves the same history, with opB as its current live head."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": true,
+        "confirmedHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "tentativeHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "confirmedRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "confirmedProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ],
+        "tentativeRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "tentativeProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ]
+      },
+      "directory": {
+        "auditLog": [
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-demo.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": null,
+              "sig": "cXEBKTeVrQWCCb8AXWoQkFqYtTwZfrYjnSa7lWdQdT4ewrccBBPSknba7sKylVTqb0E1Ok1DWUqI-vpCgzogQQ"
+            }
+          },
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+            "createdAt": "2026-02-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-b.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+              "sig": "YSETGODxkqNdLsDywNoMGCAUQo4iGw89uN16WBBe8mkjqPTxamF9yMVc6p32YkfTkaYfbOTPrg79h5nS2fQvOw"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "status": "confirmed",
+        "reason": "confirmed-head-match"
+      },
+      "lesson": "The witness re-derives the anchor's confirmed root from an independently-fetched inclusion proof and finds the directory's live head is byte-identical. This is `confirmed` — the DMARC `pass`. A resolver can treat the directory's answer as cryptographically backed."
+    },
+    {
+      "id": "young-did",
+      "title": "Young DID — anchored, but nothing is immutable yet",
+      "threat": "Not an attack — the two-tier model in action. A freshly-anchored DID whose ops are all still inside the 72h window, so the anchor has made nothing immutable. There is no confirmed history to contradict.",
+      "class": "read",
+      "benign": true,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored, but its only op is recent — still nullifiable inside the 72h recovery window.",
+        "The anchor's CONFIRMED tier is empty; it holds only a TENTATIVE tip.",
+        "The directory serves that same recent op."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": true,
+        "confirmedHead": "",
+        "tentativeHead": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+        "confirmedRoot": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "confirmedProof": [],
+        "tentativeRoot": "521c56ba12b3480aae5f007399d991d157530f14f9fe1f4bcfff93b1c439f7d0",
+        "tentativeProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ]
+      },
+      "directory": {
+        "auditLog": [
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+            "createdAt": "2026-06-29T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-demo.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": null,
+              "sig": "cXEBKTeVrQWCCb8AXWoQkFqYtTwZfrYjnSa7lWdQdT4ewrccBBPSknba7sKylVTqb0E1Ok1DWUqI-vpCgzogQQ"
+            }
+          },
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+            "createdAt": "2026-06-29T12:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-a.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+              "sig": "8lQCANQa_hWdJRXID3NoxQ-Pxc9YXlnilDUbvMYkWX8Fk2vrAS9qApqOcC6swB22XEmtmM4ouyOEC0Gd1N1wiA"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "status": "tentative-consistent",
+        "reason": "within-window-uncommitted"
+      },
+      "lesson": "With nothing confirmed, the strongest honest answer is `tentative-consistent`, never an alarm. The anchor refuses to assert immutability it hasn't earned yet — there is no hard `reject-unless-confirmed` gate (REFERENCE.md §4)."
+    },
+    {
+      "id": "honest-lag",
+      "title": "Honest lag — the directory is legitimately ahead",
+      "threat": "Not an attack — the benign case the alarm must never fire on. The directory has accepted a new, valid op the anchor hasn't ingested/confirmed yet. A trigger-happy check would cry wolf here, and the operator would disable it (Phase 5 plan §0).",
+      "class": "read",
+      "benign": true,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored, with opA (bafyreienfqk6fwp…) as its CONFIRMED head.",
+        "The directory honestly serves genesis → opA → opB: it has moved on to a newer op (opB) the anchor hasn't confirmed yet.",
+        "opA — everything the anchor has proven — is still right there on the directory's live chain."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": true,
+        "confirmedHead": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+        "tentativeHead": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+        "confirmedRoot": "521c56ba12b3480aae5f007399d991d157530f14f9fe1f4bcfff93b1c439f7d0",
+        "confirmedProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ],
+        "tentativeRoot": "521c56ba12b3480aae5f007399d991d157530f14f9fe1f4bcfff93b1c439f7d0",
+        "tentativeProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ]
+      },
+      "directory": {
+        "auditLog": [
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+            "createdAt": "2026-02-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-demo.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": null,
+              "sig": "cXEBKTeVrQWCCb8AXWoQkFqYtTwZfrYjnSa7lWdQdT4ewrccBBPSknba7sKylVTqb0E1Ok1DWUqI-vpCgzogQQ"
+            }
+          },
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+            "createdAt": "2026-03-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-a.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+              "sig": "8lQCANQa_hWdJRXID3NoxQ-Pxc9YXlnilDUbvMYkWX8Fk2vrAS9qApqOcC6swB22XEmtmM4ouyOEC0Gd1N1wiA"
+            }
+          },
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+            "createdAt": "2026-06-29T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-b.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+              "sig": "YSETGODxkqNdLsDywNoMGCAUQo4iGw89uN16WBBe8mkjqPTxamF9yMVc6p32YkfTkaYfbOTPrg79h5nS2fQvOw"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "status": "tentative-consistent",
+        "reason": "confirmed-head-in-live-chain"
+      },
+      "lesson": "The histories AGREE on everything the anchor has proven — the only difference is newer ops the anchor hasn't caught up to. `tentative-consistent`, not an alarm. This restraint is what earns the alarm its credibility: `diverged` means something precisely because lag does not trigger it."
+    },
+    {
+      "id": "equivocation",
+      "title": "Equivocation — a mirror omits a confirmed op",
+      "threat": "An attacker controls (or compromises) the PLC mirror a victim resolver queries, and serves a forged history that forks below — and omits — an op the anchor already made immutable.",
+      "class": "read",
+      "benign": false,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored. Its real history is genesis → opA → opB.",
+        "The anchor has made opB (bafyreigxuanmkaq…) its CONFIRMED head — proven on Starknet, immutable past the 72h window.",
+        "The malicious mirror instead serves genesis → a forged op, omitting opA and opB entirely. The forged head is months old, so this cannot be ingest lag."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": true,
+        "confirmedHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "tentativeHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "confirmedRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "confirmedProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ],
+        "tentativeRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "tentativeProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ]
+      },
+      "directory": {
+        "auditLog": [
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+            "createdAt": "2024-01-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-demo.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": null,
+              "sig": "cXEBKTeVrQWCCb8AXWoQkFqYtTwZfrYjnSa7lWdQdT4ewrccBBPSknba7sKylVTqb0E1Ok1DWUqI-vpCgzogQQ"
+            }
+          },
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreia4eeiy5oloztiqoseaa7y5sfjxcdq5wvez4aa64e33qesdtdeil4",
+            "createdAt": "2024-01-02T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://attacker-controlled.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+              "sig": "YOrSEg1HZDOjXy1KS2pon7tk3Y9Fa6OpjPwB0wCzsYlWaQ1lLfu-wqWmPgkaeK2_yC7ZcwVge1U89tqIGHbcew"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "status": "diverged",
+        "reason": "confirmed-head-absent"
+      },
+      "lesson": "The witness verifies the confirmed head against an independently-fetched root, then finds it NOWHERE in the mirror's live chain — and the mirror's head is far too old to be lag. This is the sole actionable alarm — `diverged`, the DMARC `reject`. A resolver acts on it unilaterally: no PLC-side coordination, no trust in the mirror."
+    },
+    {
+      "id": "vanishing-did",
+      "title": "Vanishing DID — a mirror erases an anchored identity",
+      "threat": "A censoring mirror returns an empty (or 404) audit log for a DID the anchor knows is anchored — trying to make an identity simply disappear from a resolver's view.",
+      "class": "read",
+      "benign": false,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored with opB (bafyreigxuanmkaq…) as its CONFIRMED head.",
+        "The malicious mirror serves an EMPTY audit log — as if the DID never existed."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": true,
+        "confirmedHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "tentativeHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "confirmedRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "confirmedProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ],
+        "tentativeRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "tentativeProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ]
+      },
+      "directory": {
+        "auditLog": []
+      },
+      "expect": {
+        "status": "diverged",
+        "reason": "confirmed-head-absent"
+      },
+      "lesson": "An anchored DID cannot be silently erased. The anchor still proves a confirmed head the (empty) directory serves nothing for, and an absent directory head is not within any skew horizon → `diverged`. Censorship by omission is exactly what the anchor makes detectable."
+    },
+    {
+      "id": "window-edge-skew",
+      "title": "Window-edge skew — a contradiction that benign skew could explain (the §0 wall)",
+      "threat": "The hardest case, and the one a naive check gets fatally wrong. Near the 72h edge, the anchor (later clock) can accept a recovery the directory rejected — committing to a head the directory never served. That looks IDENTICAL to omission, but it is benign. Alarming here would be a false positive, and false positives get the check turned off.",
+      "class": "read",
+      "benign": true,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored; the anchor's CONFIRMED head is opB (bafyreigxuanmkaq…).",
+        "The directory's live chain does NOT contain opB — but its head is RECENT (a few days old), well inside the conservative skew horizon.",
+        "Without the anchor's exact per-op observation time, this is indistinguishable from a window-edge recovery the two sides timed differently."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": true,
+        "confirmedHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "tentativeHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "confirmedRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "confirmedProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ],
+        "tentativeRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "tentativeProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ]
+      },
+      "directory": {
+        "auditLog": [
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+            "createdAt": "2026-06-20T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-demo.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": null,
+              "sig": "cXEBKTeVrQWCCb8AXWoQkFqYtTwZfrYjnSa7lWdQdT4ewrccBBPSknba7sKylVTqb0E1Ok1DWUqI-vpCgzogQQ"
+            }
+          },
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreia4eeiy5oloztiqoseaa7y5sfjxcdq5wvez4aa64e33qesdtdeil4",
+            "createdAt": "2026-06-25T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://attacker-controlled.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+              "sig": "YOrSEg1HZDOjXy1KS2pon7tk3Y9Fa6OpjPwB0wCzsYlWaQ1lLfu-wqWmPgkaeK2_yC7ZcwVge1U89tqIGHbcew"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "status": "tentative-consistent",
+        "reason": "skew-pending"
+      },
+      "lesson": "Same contradiction as `equivocation`, but the directory's head is recent enough that clock skew could explain it — so the witness defers with `skew-pending`, NOT `diverged`. This is the governing invariant made executable: when skew can plausibly explain a disagreement, never alarm. Re-evaluate once the window closes."
+    },
+    {
+      "id": "anchor-self-fault",
+      "title": "Anchor self-fault — the witness distrusts its own unproven head",
+      "threat": "Not a directory attack — a humility check. If the anchor returns a confirmed head whose inclusion proof does NOT reconstruct the independently-fetched root (a node bug, a stale read, a malicious RPC), the witness must not blame the directory for it.",
+      "class": "read",
+      "benign": true,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored and the anchor claims a confirmed head — but its own inclusion proof fails to verify against the confirmed root the resolver fetched.",
+        "The directory, meanwhile, serves a totally different and old history."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": true,
+        "confirmedHead": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+        "tentativeHead": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+        "confirmedRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+        "confirmedProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ],
+        "tentativeRoot": "521c56ba12b3480aae5f007399d991d157530f14f9fe1f4bcfff93b1c439f7d0",
+        "tentativeProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ]
+      },
+      "directory": {
+        "auditLog": [
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreiunrelatedoldheadxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "createdAt": "2020-01-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {}
+          }
+        ]
+      },
+      "expect": {
+        "status": "tentative-consistent",
+        "reason": "anchor-proof-unverified"
+      },
+      "lesson": "Even with a directory that looks divergent, an UNPROVEN anchor head yields `tentative-consistent`, not `diverged`. The witness alarms only on what it can cryptographically stand behind — an anchor-side fault is the anchor's problem, never grounds to accuse the directory."
+    },
+    {
+      "id": "coverage-gap",
+      "title": "Coverage gap — the DID isn't anchored at all",
+      "threat": "Not an attack — honesty about scope. DIDMARC is opt-in per DID (membership is off-chain policy). For a DID nobody anchored, the witness has no opinion to offer — and must say so rather than imply safety.",
+      "class": "read",
+      "benign": true,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u has never been anchored.",
+        "The directory serves whatever it serves; the witness has no on-chain proof to compare against."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": false,
+        "confirmedHead": "",
+        "tentativeHead": "",
+        "confirmedRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+        "confirmedProof": [],
+        "tentativeRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+        "tentativeProof": []
+      },
+      "directory": {
+        "auditLog": [
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-demo.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": null,
+              "sig": "cXEBKTeVrQWCCb8AXWoQkFqYtTwZfrYjnSa7lWdQdT4ewrccBBPSknba7sKylVTqb0E1Ok1DWUqI-vpCgzogQQ"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "status": "absent",
+        "reason": "not-anchored"
+      },
+      "lesson": "`absent` is the DMARC `p=none`: no coverage, no claim. The witness never fabricates confidence for a DID outside its roster — a resolver knows precisely where the protection applies and where it doesn't."
+    },
+    {
+      "id": "forged-signature",
+      "title": "Forged signature — an unsigned op submitted as authentic",
+      "threat": "Anyone can call the permissionless endpoint and pay the gas (that's the design). So an attacker submits a well-formed op for a victim DID with a signature they don't hold the key for.",
+      "class": "write",
+      "proposed": [
+        "forks at opA on did:plc:pcnytiamasqdcm6cwddqmzy3, presented as a normal append",
+        "signature: tampered (does not verify under any of the DID's rotation keys)"
+      ],
+      "verdict": {
+        "rejected": true,
+        "reason": "invalid-sig",
+        "defender": "plc_core::op_verify / sig_verify (in-contract)",
+        "provenance": "Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted."
+      },
+      "lesson": "Authorization is the op's EMBEDDED signature, verified in-contract against the fork-point's rotation keys — never the Starknet fee-payer. The transaction can be paid by anyone; the op still has to be signed by a real PLC key. The forgery is rejected before any state changes (`invalid-sig`)."
+    },
+    {
+      "id": "weaker-key-recovery",
+      "title": "Weaker-key recovery — a low-priority key tries to override a higher one",
+      "threat": "An attacker who holds only a LOW-priority rotation key (e.g. a leaked device key) tries to fork the history and nullify an op signed by a HIGHER-priority key — a recovery they aren't entitled to make.",
+      "class": "write",
+      "proposed": [
+        "forks at genesis on did:plc:pcnytiamasqdcm6cwddqmzy3, nullifying opA (which was signed by rotation key index 1)",
+        "signed by rotation key index 2 — strictly lower priority than the key it tries to override"
+      ],
+      "verdict": {
+        "rejected": true,
+        "reason": "recovery-weaker-key",
+        "defender": "plc_core::recovery (in-contract)",
+        "provenance": "Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted."
+      },
+      "lesson": "PLC recovery only flows downward in priority: a fork is valid only if signed by a key of STRICTLY higher priority than the disputed op's signer. The weaker key cannot override the stronger one, so the contract rejects (`recovery-weaker-key`) — the key hierarchy is enforced on-chain, not assumed."
+    },
+    {
+      "id": "late-recovery",
+      "title": "Late recovery — a valid key, but after the 72h window",
+      "threat": "An attacker holds a high-priority key and attempts a legitimate-looking recovery — but the op being disputed is already older than the 72h recovery window, so the recovery is no longer permitted.",
+      "class": "write",
+      "proposed": [
+        "forks at genesis on did:plc:pcnytiamasqdcm6cwddqmzy3, signed by the highest-priority key (index 0)",
+        "the disputed op was created more than 72h ago — outside the recovery window"
+      ],
+      "verdict": {
+        "rejected": true,
+        "reason": "late-recovery",
+        "defender": "plc_core::recovery (in-contract)",
+        "provenance": "Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted."
+      },
+      "lesson": "Even the strongest key can't rewrite history indefinitely. Once an op has survived the 72h window it is immutable, and a fork below it is rejected (`late-recovery`). This is the window that makes the confirmed tier meaningful — and it's enforced on the directory-assigned clock, the same input PLC uses."
+    },
+    {
+      "id": "integrity-mismatch",
+      "title": "Integrity mismatch — bytes that don't hash to their claimed CID",
+      "threat": "A malicious mirror feeds the off-chain ingest pipeline op bytes under a CID they were never the hash of (tampered content presented as an existing, valid op) — hoping a forged delta lands on-chain.",
+      "class": "write",
+      "proposed": [
+        "serves op bytes claiming CID bafyreias7ru5xzuvn6n…",
+        "but the bytes actually hash to bafyreial5preeswxbpb… (content was altered without re-signing)"
+      ],
+      "verdict": {
+        "rejected": true,
+        "reason": "cid-mismatch (delta dropped)",
+        "defender": "ingest integrity gate (off-chain)",
+        "provenance": "Verified at fixture-generation time by recomputing the operation's canonical DRISL CID and confirming it differs from the claimed CID — the exact integrity check `ingest::reencode` runs before submitting any delta."
+      },
+      "lesson": "Before submitting any delta, ingest re-encodes the operation to canonical DRISL and checks the resulting CID equals the directory's published CID. Tampered bytes hash to a different CID, so the delta is dropped and never reaches the endpoint. The integrity gate means the feeder can't be tricked into anchoring forged content even by the source it reads from."
+    }
+  ]
+}
