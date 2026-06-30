@@ -1,0 +1,236 @@
+{
+  "_generated": "by conformance/src/gen-adversarial-scenarios.mjs — DO NOT EDIT. Run: make gen-adversarial-scenarios",
+  "_about": "DIDMARC adversarial-validation scenarios: real signed did:plc chains + a malicious mirror's served history + the anchor's real Merkle commitment → the expected graduated status.",
+  "now": 1782777600000,
+  "skewHorizonMs": 1209600000,
+  "scenarios": [
+    {
+      "id": "equivocation",
+      "title": "Equivocation — a mirror omits a confirmed op",
+      "threat": "An attacker controls (or compromises) the PLC mirror a victim resolver queries, and serves a forged history that forks below — and omits — an op the anchor already made immutable.",
+      "class": "read",
+      "benign": false,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored. Its real history is genesis → opA → opB.",
+        "The anchor has made opB (bafyreigxuanmkaq…) its CONFIRMED head — proven on Starknet, immutable past the 72h window.",
+        "The malicious mirror instead serves genesis → a forged op, omitting opA and opB entirely. The forged head is months old, so this cannot be ingest lag."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": true,
+        "confirmedHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "tentativeHead": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+        "confirmedRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "confirmedProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ],
+        "tentativeRoot": "3d947190f049e4f51b1efde09f6b3ce9112690c85333ea27eb9286fbe9a0a567",
+        "tentativeProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ]
+      },
+      "directory": {
+        "auditLog": [
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+            "createdAt": "2024-01-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-demo.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": null,
+              "sig": "cXEBKTeVrQWCCb8AXWoQkFqYtTwZfrYjnSa7lWdQdT4ewrccBBPSknba7sKylVTqb0E1Ok1DWUqI-vpCgzogQQ"
+            }
+          },
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreia4eeiy5oloztiqoseaa7y5sfjxcdq5wvez4aa64e33qesdtdeil4",
+            "createdAt": "2024-01-02T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://attacker-controlled.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+              "sig": "YOrSEg1HZDOjXy1KS2pon7tk3Y9Fa6OpjPwB0wCzsYlWaQ1lLfu-wqWmPgkaeK2_yC7ZcwVge1U89tqIGHbcew"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "status": "diverged",
+        "reason": "confirmed-head-absent"
+      },
+      "lesson": "The witness re-derives the anchor's confirmed root from an independently-fetched inclusion proof, then finds the confirmed head is NOWHERE in the mirror's live chain and the mirror's head is far too old to be lag. This is the sole actionable alarm — `diverged`, the DMARC `reject`. A resolver acts on it unilaterally: no PLC-side coordination, no trust in the mirror."
+    },
+    {
+      "id": "honest-lag",
+      "title": "Honest lag — the directory is legitimately ahead",
+      "threat": "Not an attack — the benign case the alarm must never fire on. The directory has accepted a new, valid op the anchor has not ingested/confirmed yet. A trigger-happy check would cry wolf here, and the operator would disable it (Phase 5 plan §0).",
+      "class": "read",
+      "benign": true,
+      "setup": [
+        "DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored, with opA (bafyreienfqk6fwp…) as its CONFIRMED head.",
+        "The directory honestly serves genesis → opA → opB: it has moved on to a newer op (opB) that the anchor simply hasn't confirmed yet.",
+        "opA — everything the anchor has proven — is still right there on the directory's live chain."
+      ],
+      "anchor": {
+        "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+        "anchored": true,
+        "confirmedHead": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+        "tentativeHead": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+        "confirmedRoot": "521c56ba12b3480aae5f007399d991d157530f14f9fe1f4bcfff93b1c439f7d0",
+        "confirmedProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ],
+        "tentativeRoot": "521c56ba12b3480aae5f007399d991d157530f14f9fe1f4bcfff93b1c439f7d0",
+        "tentativeProof": [
+          {
+            "sibling": "716cf7dbe03226c10444c073a558f45dc64838bf2eb40c2af69d5f38ed5902f8",
+            "siblingIsLeft": true
+          },
+          {
+            "sibling": "e3f9e1d593d92fb586ca0cddc544128719d29ba6016a95f1a723abca904579fc",
+            "siblingIsLeft": false
+          }
+        ]
+      },
+      "directory": {
+        "auditLog": [
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+            "createdAt": "2026-02-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-demo.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": null,
+              "sig": "cXEBKTeVrQWCCb8AXWoQkFqYtTwZfrYjnSa7lWdQdT4ewrccBBPSknba7sKylVTqb0E1Ok1DWUqI-vpCgzogQQ"
+            }
+          },
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+            "createdAt": "2026-03-01T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-a.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": "bafyreihqzyvgiepjrseat4247mc6hna4jli6cafmngh5th4u2i4wdlndtm",
+              "sig": "8lQCANQa_hWdJRXID3NoxQ-Pxc9YXlnilDUbvMYkWX8Fk2vrAS9qApqOcC6swB22XEmtmM4ouyOEC0Gd1N1wiA"
+            }
+          },
+          {
+            "did": "did:plc:6dhcuzar5ggiqcptlt5qly5u",
+            "cid": "bafyreigxuanmkaq2522n6tvea6ittkleavxh4metocnvsjq62kzshjjf3q",
+            "createdAt": "2026-06-29T00:00:00.000Z",
+            "nullified": false,
+            "operation": {
+              "type": "plc_operation",
+              "verificationMethods": {
+                "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+              },
+              "rotationKeys": [
+                "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM"
+              ],
+              "alsoKnownAs": [
+                "at://didmarc-b.test"
+              ],
+              "services": {
+                "atproto_pds": {
+                  "type": "AtprotoPersonalDataServer",
+                  "endpoint": "https://pds.didmarc.test"
+                }
+              },
+              "prev": "bafyreienfqk6fwpkku5yektm5miearu6y7b6myjjtbz2kzl3xwm3srnzqu",
+              "sig": "YSETGODxkqNdLsDywNoMGCAUQo4iGw89uN16WBBe8mkjqPTxamF9yMVc6p32YkfTkaYfbOTPrg79h5nS2fQvOw"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "status": "tentative-consistent",
+        "reason": "confirmed-head-in-live-chain"
+      },
+      "lesson": "The histories AGREE on everything the anchor has proven — the only difference is newer ops the anchor hasn't caught up to. The witness reports `tentative-consistent`, not an alarm. This restraint is what earns the alarm its credibility: `diverged` means something precisely because lag does not trigger it."
+    }
+  ]
+}
