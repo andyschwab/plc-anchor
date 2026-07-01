@@ -55,11 +55,20 @@ a human must approve before the onboarder writes on-chain. Transitions are valid
 | DELETE | `/roster/filters/:id` | remove a filter |
 | POST | `/worker/discover` | run one discover-scan now |
 | POST | `/worker/onboard` | onboard all approved DIDs now (writes on-chain) |
-| POST | `/worker/refresh` | refresh all anchored DIDs' status now |
+| POST | `/worker/refresh` | check every active DID against the anchor now |
 
 The read-only loops (discover, refresh) run on timers; **onboarding never does** — it spends
 on-chain, so it is operator-triggered only (`POST /worker/onboard`), reinforcing the approve
 gate.
+
+### Status reflects on-chain reality
+
+The refresher checks **every active (non-`removed`) roster DID** against the anchor via
+`@plc-anchor/witness`, not just ones the console onboarded. So a DID anchored **anywhere** —
+including via `ingest` directly — shows its real §4 status once you add it to the roster, and is
+promoted to `anchored` on observation (no write, so the approve gate is untouched). Workflow: set
+the Starknet secrets → **Add** the DID → it lights up with its Sepolia status. `absent` means the
+anchor doesn't know it yet.
 
 ## Running
 
@@ -71,11 +80,28 @@ make console-test            # or: cd console && node --experimental-sqlite --te
 STARKNET_RPC=https://<sepolia-rpc> node --experimental-sqlite src/main.ts
 ```
 
-Env: `PORT` (8787), `ROSTER_DB` (`./roster.db`), `STARKNET_RPC`, `ANCHOR_CONTRACT_ADDRESS`
-(default = the Sepolia deployment), `PLC_DIRECTORY_URL` (`https://plc.directory`),
-`REFRESH_INTERVAL_MS` (300000; 0 disables).
+Env: `PORT` (8787), `ROSTER_DB` (`./roster.db`), `STARKNET_RPC` (enables the refresh loop),
+`ANCHOR_CONTRACT_ADDRESS` (default = the Sepolia deployment), `PLC_DIRECTORY_URL`
+(`https://plc.directory`), `REFRESH_INTERVAL_MS` (300000; 0 disables), `INGEST_COMMAND` (enables
+onboarding; set to `/usr/local/bin/ingest` in the Docker image), plus the ingest fee-payer
+secrets (`STARKNET_ACCOUNT_ADDRESS`, `STARKNET_ACCOUNT_PRIVATE_KEY`).
 
-## Not yet here (next build phases)
+## Deploy (Fly)
 
-The UI · the `didmarc.dev` landing page · the Fly deploy + mainnet repoint. See the plan; the
-durable record lands in `docs/HISTORY.md` when item 6 completes.
+Two apps: `site/` (static landing) and this console. The console image is **multi-stage** —
+stage 1 builds the Rust `ingest` binary (`--features live`) so the Onboard button works on Fly;
+stage 2 is the Node runtime with the console + `witness-ts`. Build context is the **repo root**:
+
+```sh
+fly deploy --config console/fly.toml --dockerfile console/Dockerfile   # from repo root
+fly --config console/fly.toml secrets set STARKNET_RPC=… \
+    STARKNET_ACCOUNT_ADDRESS=0x… STARKNET_ACCOUNT_PRIVATE_KEY=0x…
+```
+
+Without `STARKNET_RPC` the refresh loop is off (`[refresh] disabled`) and the console only curates
+policy — that's the usual cause of a live console that "isn't connected."
+
+## Not yet here
+
+Mainnet repoint (a fresh contract deploy — see `scripts/deploy.sh` + `deployments/`) · cost
+allocation (paymaster/AA) · governance. The durable record lands in `docs/HISTORY.md`.

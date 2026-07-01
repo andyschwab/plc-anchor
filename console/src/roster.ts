@@ -9,10 +9,15 @@ import { DatabaseSync } from "node:sqlite";
 import type { Filter, RosterEntry, RosterState, WitnessStatus } from "./types.ts";
 
 /** Legal lifecycle transitions. A filter match enters at `candidate`; only an operator's
- * approve moves `candidate → approved`, and only then can the onboarder write on-chain. */
+ * approve moves `candidate → approved`, and only then can the *onboarder* write on-chain.
+ *
+ * `candidate → anchored` and `approved → anchored` are the **observation** path: the refresher
+ * learns a DID is already anchored on-chain (by anyone) and reflects that. Observation writes
+ * nothing, so it does not weaken the approve gate — the onboarder still acts only on `approved`
+ * (the spend), and `anchored` simply means "present on-chain," however it got there. */
 export const ALLOWED_TRANSITIONS: Readonly<Record<RosterState, readonly RosterState[]>> = {
-  candidate: ["approved", "removed"],
-  approved: ["onboarding", "removed"],
+  candidate: ["approved", "anchored", "removed"],
+  approved: ["onboarding", "anchored", "removed"],
   onboarding: ["anchored", "approved", "removed"], // → approved == onboarding failed, retry
   anchored: ["removed"],
   removed: ["candidate"],
@@ -143,10 +148,18 @@ export class RosterStore {
     return (rows as RosterRow[]).map(toEntry);
   }
 
-  /** The alarm list: anchored DIDs the witness reports as `diverged`. */
+  /** Every non-`removed` entry — the DIDs the refresher checks against the anchor. */
+  listActive(): RosterEntry[] {
+    const rows = this.#db
+      .prepare("SELECT * FROM roster WHERE state != 'removed' ORDER BY updated_at DESC")
+      .all();
+    return (rows as RosterRow[]).map(toEntry);
+  }
+
+  /** The alarm list: any live DID the witness reports as `diverged`. */
   diverged(): RosterEntry[] {
     const rows = this.#db
-      .prepare("SELECT * FROM roster WHERE state = 'anchored' AND status = 'diverged'")
+      .prepare("SELECT * FROM roster WHERE state != 'removed' AND status = 'diverged'")
       .all();
     return (rows as RosterRow[]).map(toEntry);
   }
@@ -217,6 +230,14 @@ export class RosterStore {
     this.#db
       .prepare("UPDATE roster SET error = ?, updated_at = ? WHERE did = ?")
       .run(error, this.#now(), did);
+  }
+
+  /** Reflect that `did` is anchored on-chain (observed by the refresher, however it got there):
+   * promote candidate/approved/onboarding → anchored. Idempotent; a no-op for removed DIDs. */
+  markObservedAnchored(did: string): void {
+    const entry = this.get(did);
+    if (entry === null || entry.state === "anchored" || entry.state === "removed") return;
+    this.transition(did, "anchored");
   }
 
   // ---- filters ------------------------------------------------------------

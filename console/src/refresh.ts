@@ -29,20 +29,23 @@ export class RefreshService {
     this.#checker = checker;
   }
 
-  /** Refresh one DID; records the status, or an error if the check throws. */
+  /** Refresh one DID against the anchor; records the status, or an error if the check throws.
+   * Any status other than `absent` means the anchor knows the DID, so we reflect it as
+   * `anchored` (the observation path) — this is what makes a DID anchored *anywhere* (e.g. via
+   * `ingest` directly) show its real §4 status once added to the roster. */
   async refresh(did: string): Promise<void> {
     try {
       const outcome = await this.#checker.check(did);
       this.#store.setStatus(did, outcome);
+      if (outcome.status !== "absent") this.#store.markObservedAnchored(did);
     } catch (err) {
       this.#store.setError(did, err instanceof Error ? err.message : String(err));
     }
   }
 
-  /** Refresh every anchored DID. Returns the count of DIDs now reported `diverged`. */
+  /** Refresh every active (non-removed) DID against the anchor. Returns the count now `diverged`. */
   async refreshAll(): Promise<number> {
-    const anchored = this.#store.list("anchored");
-    for (const entry of anchored) {
+    for (const entry of this.#store.listActive()) {
       await this.refresh(entry.did);
     }
     return this.#store.diverged().length;

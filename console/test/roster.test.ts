@@ -46,11 +46,24 @@ test("the happy-path lifecycle is legal", () => {
   assert.equal(s.transition(DID, "anchored").state, "anchored");
 });
 
-test("candidate cannot skip the approve gate to onboarding", () => {
+test("candidate cannot skip the approve gate to onboarding (the spend)", () => {
   const s = store();
   s.upsertCandidate(DID, "explicit");
+  // onboarding is the on-chain WRITE — still gated behind approve.
   assert.throws(() => s.transition(DID, "onboarding"), TransitionError);
-  assert.throws(() => s.transition(DID, "anchored"), TransitionError);
+});
+
+test("candidate can be observed anchored on-chain (no write, no gate)", () => {
+  const s = store();
+  s.upsertCandidate(DID, "explicit");
+  s.markObservedAnchored(DID);
+  assert.equal(s.get(DID)!.state, "anchored");
+  // idempotent, and never resurrects a removed DID.
+  s.markObservedAnchored(DID);
+  assert.equal(s.get(DID)!.state, "anchored");
+  s.transition(DID, "removed");
+  s.markObservedAnchored(DID);
+  assert.equal(s.get(DID)!.state, "removed", "observation does not revive a removed DID");
 });
 
 test("onboarding failure can fall back to approved and clears nothing illegal", () => {

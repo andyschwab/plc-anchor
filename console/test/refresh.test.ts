@@ -41,11 +41,13 @@ test("a thrown check is captured as an error, not a crash", async () => {
   assert.equal(s.get(DID)!.status, null);
 });
 
-test("refreshAll returns the diverged count and only touches anchored DIDs", async () => {
+test("refreshAll checks every active DID and returns the diverged count", async () => {
   const s = RosterStore.open();
   anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
   anchored(s, "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
-  s.upsertCandidate("did:plc:cccccccccccccccccccccccc", "explicit"); // candidate, untouched
+  s.upsertCandidate("did:plc:cccccccccccccccccccccccc", "explicit"); // a candidate — now also checked
+  s.upsertCandidate("did:plc:dddddddddddddddddddddddd", "explicit");
+  s.transition("did:plc:dddddddddddddddddddddddd", "removed"); // removed — skipped
 
   const checked: string[] = [];
   const checker: StatusChecker = {
@@ -56,6 +58,25 @@ test("refreshAll returns the diverged count and only touches anchored DIDs", asy
   };
   const divergedCount = await new RefreshService(s, checker).refreshAll();
   assert.equal(divergedCount, 1);
-  assert.equal(checked.length, 2, "only the two anchored DIDs are checked");
-  assert.ok(!checked.some((d) => d.includes("cccc")));
+  assert.equal(checked.length, 3, "the two anchored DIDs and the candidate are checked");
+  assert.ok(!checked.some((d) => d.includes("dddd")), "removed DIDs are skipped");
+});
+
+test("a candidate observed anchored on-chain is reflected and shows status", async () => {
+  const s = RosterStore.open();
+  s.upsertCandidate("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "explicit"); // anchored elsewhere (ingest)
+  s.upsertCandidate("did:plc:cccccccccccccccccccccccc", "explicit"); // not on-chain
+  const checker: StatusChecker = {
+    check: async (did): Promise<CheckOutcome> =>
+      did.includes("aaaa")
+        ? { status: "confirmed", reason: "confirmed-head-match", headCid: "bafyX" }
+        : { status: "absent", reason: "not-anchored", headCid: null },
+  };
+  await new RefreshService(s, checker).refreshAll();
+  const observed = s.get("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa")!;
+  assert.equal(observed.state, "anchored", "on-chain DID promoted to anchored");
+  assert.equal(observed.status, "confirmed");
+  const stillCandidate = s.get("did:plc:cccccccccccccccccccccccc")!;
+  assert.equal(stillCandidate.state, "candidate", "absent DID stays a candidate");
+  assert.equal(stillCandidate.status, "absent");
 });
