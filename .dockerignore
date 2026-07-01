@@ -1,0 +1,35 @@
+# flyctl launch added from .gitignore
+# Rust
+target
+**/**/target
+**/Cargo.lock.bak
+
+# Cairo / Scarb
+**/cairo/target
+**/**/.snfoundry_cache
+**/**/*.sierra.json
+
+# Node / TS
+**/node_modules
+**/conformance/dist
+**/*.tsbuildinfo
+
+# OS / editors
+**/.DS_Store
+**/*.swp
+**/.idea
+**/.vscode
+
+# flyctl launch added from console/.gitignore
+console/**/node_modules
+console/**/*.tsbuildinfo
+# Runtime roster store
+console/**/*.db
+console/**/*.db-journal
+console/**/*.db-wal
+console/**/*.db-shm
+
+# flyctl launch added from witness-ts/.gitignore
+witness-ts/**/node_modules
+witness-ts/**/*.tsbuildinfo
+fly.toml

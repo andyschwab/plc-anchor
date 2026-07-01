@@ -1,41 +1,45 @@
 # Admin console → plc.didmarc.dev
 # Deploy from the REPO ROOT (the build context needs witness-ts/ as a sibling):
 #   fly launch --no-deploy --config console/fly.toml --dockerfile console/Dockerfile
-#   fly volumes create roster_data --region fra --size 1
-#   fly secrets set STARKNET_RPC=... ANCHOR_CONTRACT_ADDRESS=... \
+#   fly --config console/fly.toml volumes create roster_data --region fra --size 1
+#   fly --config console/fly.toml secrets set STARKNET_RPC=... ANCHOR_CONTRACT_ADDRESS=... \
 #                   STARKNET_ACCOUNT_ADDRESS=... STARKNET_ACCOUNT_PRIVATE_KEY=...
 #   fly deploy --config console/fly.toml --dockerfile console/Dockerfile
-#   fly certs add plc.didmarc.dev
+#
+#   fly certs add plc.didmarc.dev --config console/fly.toml
+#   fly certs add testnet.plc.didmarc.dev --config console/fly.toml
 app = "didmarc-console"
 primary_region = "fra"
 
 [build]
-  dockerfile = "Dockerfile"
-
-# SQLite roster store lives on a persistent volume (mounted at /data; ROSTER_DB points here).
-[mounts]
-  source = "roster_data"
-  destination = "/data"
+  dockerfile = 'Dockerfile'
 
 [env]
-  PORT = "8787"
-  ROSTER_DB = "/data/roster.db"
-  PLC_DIRECTORY_URL = "https://plc.directory"
-  REFRESH_INTERVAL_MS = "300000"
-  DISCOVER_INTERVAL_MS = "0"   # enable (e.g. 3600000) once pds_host filters are curated
-  # ANCHOR_CONTRACT_ADDRESS defaults to the Sepolia deploy; override here for mainnet.
-  # STARKNET_RPC and the account secrets are set via `fly secrets`, never committed.
-  # INGEST_COMMAND is left unset until the ingest binary is baked in (see Dockerfile).
+  DISCOVER_INTERVAL_MS = '0'
+  PLC_DIRECTORY_URL = 'https://plc.directory'
+  PORT = '8787'
+  REFRESH_INTERVAL_MS = '300000'
+  ROSTER_DB = '/data/roster.db'
+
+[[mounts]]
+  source = 'roster_data'
+  destination = '/data'
 
 [http_service]
   internal_port = 8787
   force_https = true
-  auto_stop_machines = false   # the worker loops should stay warm
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
 
-[[http_service.checks]]
-  method = "GET"
-  path = "/healthz"
-  interval = "30s"
-  timeout = "5s"
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    method = 'GET'
+    path = '/healthz'
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 1024
