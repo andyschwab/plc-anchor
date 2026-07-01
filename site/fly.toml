@@ -1,22 +1,29 @@
-# Landing/education page → didmarc.dev
-# Deploy from this directory:  fly launch --no-deploy   (first time, to create the app)
-#                              fly deploy
-# Then point the apex + www at it:  fly certs add didmarc.dev && fly certs add www.didmarc.dev
-app = "didmarc"
-primary_region = "fra"  # EU infra — on-brand for the sovereignty constituency
+# fly.toml app configuration file generated for plc-anchor on 2026-07-01T08:35:47Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'plc-anchor'
+primary_region = 'fra'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [http_service]
-  internal_port = 80
-  force_https = true        # .dev is HSTS-preloaded anyway; Fly issues the LE cert
-  auto_stop_machines = true
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 0  # a static page can cold-start
+  min_machines_running = 0
 
-[[http_service.checks]]
-  method = "GET"
-  path = "/"
-  interval = "30s"
-  timeout = "5s"
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    method = 'GET'
+    path = '/'
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256
