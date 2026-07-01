@@ -1,0 +1,22 @@
+{
+  "name": "@plc-anchor/console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Layer-2 admin console (build item 6) — roster policy + state dashboard over the anchor. Glue over ingest + witness; no consensus logic.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "console-server": "./src/main.ts"
+  },
+  "scripts": {
+    "test": "node --experimental-sqlite --test",
+    "typecheck": "tsc --noEmit",
+    "start": "node --experimental-sqlite src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.0"
+  }
+}

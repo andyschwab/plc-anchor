@@ -50,6 +50,10 @@ run there — the offline builtin gives `#[test]` with no proc macro. Tests are 
   Node ≥22 (type-stripping, no build step); `make witness-test`. The resolver-side
   `verifyProof` is pinned byte-identical to `merkle.cairo` via the shared `gen-merkle-vectors`
   JSON fixture.
+- `console/` — the Layer-2 admin console (item 6): roster policy + the §4 status dashboard, as
+  **glue** over `ingest` (writes) and `witness-ts` (reads) — no consensus logic. TypeScript,
+  Node ≥22, `node:sqlite` store; `make console-test`. `site/` is the static `didmarc.dev`
+  landing page. Both deploy on Fly (`console/fly.toml`, `site/fly.toml`).
 - `adversarial/` — the attack/fork **validation suite** (testnet adversarial validation): real
   signed did:plc chains + a malicious PLC mirror (in-process and over HTTP) + the real witness
   `check()` / contract rejection, rendered as the engineer-facing
@@ -72,9 +76,10 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
   canonical-source-in-a-partition (Mode 3) are explicitly later, not V1. (§1a)
 - **The approach:** per-DID, lazy, on-chain verification via a permissionless endpoint; no
   bulk genesis replay; no in-protocol membership; public Starknet first. (§2)
-- **Appchain timing is an open question** — depends on whether public Starknet's L1→L2
-  forced-inclusion guarantee is strong enough for CR. Resolve before §3 settlement wiring.
-  Do not treat "appchain deferred" as settled. (§6a)
+- **Appchain is deferred and not tracked for V1.** V1 ships on public Starknet (§2). An
+  appchain is a far-future option only if credible neutrality ever demands owning the
+  sequencer; it is not an open question gating any current work. Don't reopen it absent that
+  driver. (§6)
 - **Crypto is a corelib library call** — `sha256`/`secp256k1`/`secp256r1` syscalls, because
   verification runs in a contract. No pure-Cairo crypto, no Garaga unless an exotic curve
   appears. (§8)
@@ -118,7 +123,7 @@ the references; the `anchor` contract is deployed to Sepolia
 | 3 | State commitment + the `import`/`submit_op` endpoint | `cairo/packages/plc_core` (`anchor`) | ✅ |
 | 4 | Sync indexer (firehose → deltas) | `ingest/` | ✅ |
 | 5 | **Witness / resolver library — the V1 product** | `witness-ts/` | ✅ feature-complete, offline-green |
-| 6 | Layer-2 admin/user tool; governance; appchain | — | deferred |
+| 6 | Layer-2 admin console (roster policy + state dashboard) | `console/`, `site/` | 🚧 MVP built, offline-green; pending live deploy + mainnet |
 
 What landed per item, the load-bearing decisions, the open follow-ups, and the V1 live-bring-up
 checklist all live in **[`docs/HISTORY.md`](docs/HISTORY.md)**. The design baseline is

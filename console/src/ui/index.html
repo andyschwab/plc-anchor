@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DIDMARC — PLC anchor console</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --line: #272b36; --fg: #e6e8ee; --muted: #9aa3b2;
+    --accent: #5b8cff; --ok: #34c759; --warn: #ffb020; --bad: #ff453a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line); display: flex;
+    align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; display: grid; gap: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 0 0 12px; }
+  .alarm { border-color: var(--bad); background: #2a1416; }
+  .alarm h2 { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  td.did { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
+    border: 1px solid var(--line); }
+  .state-candidate { color: var(--muted); }
+  .state-approved { color: var(--accent); }
+  .state-onboarding { color: var(--warn); }
+  .state-anchored { color: var(--fg); }
+  .state-removed { color: var(--muted); opacity: .6; }
+  .status-confirmed { color: var(--ok); }
+  .status-tentative-consistent { color: var(--warn); }
+  .status-diverged { color: var(--bad); font-weight: 700; }
+  .status-absent { color: var(--muted); }
+  button { background: #222634; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 11px; cursor: pointer; font-size: 12px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  input { background: #11141c; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 9px; font-size: 13px; min-width: 280px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .toolbar { display: flex; gap: 8px; }
+  .err { color: var(--bad); font-size: 12px; min-height: 16px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>DIDMARC · PLC anchor console</h1>
+  <span class="meta" id="meta">loading…</span>
+  <span class="meta toolbar" style="margin-left:auto">
+    <button id="discover">Discover</button>
+    <button id="onboard">Onboard approved</button>
+    <button id="refresh">Refresh status</button>
+  </span>
+</header>
+<main>
+  <section class="panel alarm" id="alarmPanel" hidden>
+    <h2>Diverged — directory contradicts the proven head</h2>
+    <table><tbody id="alarmBody"></tbody></table>
+  </section>
+
+  <section class="panel">
+    <h2>Add DID</h2>
+    <div class="row">
+      <input id="didInput" placeholder="did:plc:…" />
+      <button class="primary" id="addDid">Add candidate</button>
+      <span class="err" id="addErr"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Roster</h2>
+    <table>
+      <thead><tr><th>DID</th><th>State</th><th>Status</th><th>PDS host</th><th>Source</th><th></th></tr></thead>
+      <tbody id="rosterBody"></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>PDS-host filters</h2>
+    <div class="row" style="margin-bottom:12px">
+      <input id="filterInput" placeholder="pds.example.eu" />
+      <button class="primary" id="addFilter">Add filter</button>
+      <span class="err" id="filterErr"></span>
+    </div>
+    <table><tbody id="filterBody"></tbody></table>
+  </section>
+</main>
+
+<script>
+const api = (path, opts) => fetch(path, opts).then(async (r) => {
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+  return body;
+});
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const cell = (v) => v == null || v === "" ? '<span class="muted">—</span>' : esc(v);
+
+async function refreshView() {
+  const [health, roster, filters] = await Promise.all([
+    api("/healthz"), api("/roster"), api("/roster/filters"),
+  ]);
+  const c = health.counts;
+  document.getElementById("meta").textContent =
+    `anchor ${health.contractAddress.slice(0, 10)}…  ·  ${c.total} DIDs · ${c.anchored} anchored · ${c.diverged} diverged`;
+
+  const diverged = roster.filter((e) => e.status === "diverged");
+  const alarm = document.getElementById("alarmPanel");
+  alarm.hidden = diverged.length === 0;
+  document.getElementById("alarmBody").innerHTML = diverged
+    .map((e) => `<tr><td class="did">${esc(e.did)}</td><td>${cell(e.statusReason)}</td><td>${cell(e.headCid)}</td></tr>`)
+    .join("");
+
+  document.getElementById("rosterBody").innerHTML = roster.map((e) => {
+    const approve = e.state === "candidate"
+      ? `<button data-approve="${esc(e.did)}">Approve</button>` : "";
+    const remove = e.state !== "removed"
+      ? `<button class="danger" data-remove="${esc(e.did)}">Remove</button>` : "";
+    return `<tr>
+      <td class="did">${esc(e.did)}</td>
+      <td><span class="pill state-${e.state}">${e.state}</span></td>
+      <td>${e.status ? `<span class="status-${e.status}">${e.status}</span>` : '<span class="muted">—</span>'}</td>
+      <td>${cell(e.pdsHost)}</td>
+      <td class="muted">${cell(e.source)}</td>
+      <td class="toolbar">${approve}${remove}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="6" class="muted">roster is empty</td></tr>`;
+
+  document.getElementById("filterBody").innerHTML = filters.map((f) =>
+    `<tr><td>${esc(f.value)}</td><td>${f.enabled ? "enabled" : "disabled"}</td>
+     <td class="toolbar"><button class="danger" data-filter="${f.id}">Remove</button></td></tr>`
+  ).join("") || `<tr><td class="muted">no filters — roster is explicit-only</td></tr>`;
+}
+
+async function guard(fn, errEl) {
+  try { if (errEl) errEl.textContent = ""; await fn(); await refreshView(); }
+  catch (e) { if (errEl) errEl.textContent = e.message; else alert(e.message); }
+}
+
+document.getElementById("addDid").onclick = () => guard(async () => {
+  const did = document.getElementById("didInput").value.trim();
+  if (!did) throw new Error("enter a DID");
+  await api("/roster/dids", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ did }) });
+  document.getElementById("didInput").value = "";
+}, document.getElementById("addErr"));
+
+document.getElementById("addFilter").onclick = () => guard(async () => {
+  const value = document.getElementById("filterInput").value.trim();
+  if (!value) throw new Error("enter a host");
+  await api("/roster/filters", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ value }) });
+  document.getElementById("filterInput").value = "";
+}, document.getElementById("filterErr"));
+
+document.body.addEventListener("click", (ev) => {
+  const t = ev.target;
+  if (t.dataset.approve) guard(() => api(`/roster/dids/${encodeURIComponent(t.dataset.approve)}/approve`, { method: "POST" }));
+  else if (t.dataset.remove) guard(() => api(`/roster/dids/${encodeURIComponent(t.dataset.remove)}`, { method: "DELETE" }));
+  else if (t.dataset.filter) guard(() => api(`/roster/filters/${t.dataset.filter}`, { method: "DELETE" }));
+});
+
+for (const [id, path] of [["discover", "/worker/discover"], ["onboard", "/worker/onboard"], ["refresh", "/worker/refresh"]]) {
+  document.getElementById(id).onclick = () => guard(() => api(path, { method: "POST" }));
+}
+
+refreshView().catch((e) => { document.getElementById("meta").textContent = "error: " + e.message; });
+setInterval(() => refreshView().catch(() => {}), 15000);
+</script>
+</body>
+</html>
