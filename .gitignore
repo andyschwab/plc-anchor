@@ -13,6 +13,13 @@ node_modules
 conformance/dist
 *.tsbuildinfo
 
+# Starknet — never commit account keys. Accounts live in ~/.starknet_accounts/ by default;
+# these patterns guard against an in-repo SNCAST_ACCOUNTS_FILE. deployments/*.json is PUBLIC
+# (addresses/hashes only) and IS committed.
+.starknet_accounts/
+*_accounts.json
+starknet_accounts.json
+
 # OS / editors
 .DS_Store
 *.swp

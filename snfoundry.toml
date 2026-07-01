@@ -1,22 +1,25 @@
-# sncast config for the live Starknet (Sepolia) deploy + E2E testing path.
-# RPC: dRPC public Sepolia endpoint (spec 0.10.2, matches sncast 0.61.0's expected 0.10.x).
-# Cartridge (https://api.cartridge.gg/x/starknet/sepolia) is a 0.9.0 fallback but warns on version.
+# sncast config for the live Starknet deploy + E2E paths. Two profiles, NO `default` — the
+# network is always explicit (mainnet safety). Scripts key off NETWORK=sepolia|mainnet
+# (scripts/lib/starknet-common.sh); these profiles mirror that for manual `sncast` use.
+#
 # The `anchor` contract has no constructor — authorization is the op's embedded signature, not the
-# tx signer (REFERENCE.md §2).
-# Account secrets live OUTSIDE the repo (default ~/.starknet_accounts/); never commit a private key.
+# tx signer (REFERENCE.md §2). It is NOT upgradeable, so each redeploy is a fresh class + new
+# address with an EMPTY roster (re-import DIDs). Run `NETWORK=<net> scripts/deploy.sh`.
 #
-# Deployed Sepolia anchor (build-order item 5 — carries the tentative_proof/confirmed_proof views):
-#   contract:   0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180
-#   class hash: 0x1346eb7e036c732c0d24c302df13ca41c083cdf05b766fe64e28dac6ca32d24
-# Previous (item 4 E2E, no proof views — superseded):
-#   contract:   0x0202a383c305f9fd8b6c2b2476280379c386b72237deaed7199b85d1cb608f0e
-#   class hash: 0x07b056164437b167d10d4392f39408072a3a7617e1e3e6ebbe82e52158a9d7f2
-# NOTE: the public dRPC endpoint below serves reads/calls/deploys but RATE-LIMITS the heavy
-# `declare`. For declare/redeploy use a keyed 0.10.x endpoint via `--url $STARKNET_RPC` (Alchemy).
+# CURRENT ADDRESSES: see deployments/<network>.json (the machine-readable source of truth).
+#   (superseded item-4 Sepolia E2E instance, for the record:
+#    contract 0x0202a383c305f9fd8b6c2b2476280379c386b72237deaed7199b85d1cb608f0e)
+# WALLETS: scripts/wallet.sh (one funded operator account per network — also the ingest fee-payer).
+# Account secrets live OUTSIDE the repo (sncast accounts file, ~/.starknet_accounts/); never commit.
 #
-# The contract is not upgradeable, so each redeploy is a fresh class + new address with an EMPTY
-# roster — run `make deploy-sepolia`, record the new hashes here, update the ANCHOR_CONTRACT_ADDRESS
-# secret, and re-import DIDs (scripts/deploy-sepolia.sh has the full runbook).
-[sncast.default]
+# The public dRPC endpoints below serve reads/calls/deploys but RATE-LIMIT the heavy `declare`.
+# For declare/redeploy pass a keyed 0.10.x endpoint via STARKNET_RPC (Alchemy/Infura/etc.), which
+# the scripts pick up as a `--url` override.
+
+[sncast.sepolia]
 url = "https://starknet-sepolia.drpc.org"
 account = "plc-sepolia"
+
+[sncast.mainnet]
+url = "https://starknet-mainnet.drpc.org"
+account = "plc-mainnet"

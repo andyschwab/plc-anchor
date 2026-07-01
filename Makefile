@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy-sepolia rust-build rust-test witness-test console-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy deploy-sepolia wallet-create wallet-deploy wallet-info rust-build rust-test witness-test console-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
 
 # Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
 # (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
@@ -83,8 +83,21 @@ gen-adversarial-scenarios-check: gen-adversarial-scenarios ## Fail if the advers
 cairo-build: ## Build the Cairo workspace (drisl, plc_core)
 	cd cairo && scarb build
 
-deploy-sepolia: ## Declare + deploy the anchor contract to Sepolia (local; needs sncast + STARKNET_RPC). NOT upgradeable → new address
-	scripts/deploy-sepolia.sh
+deploy: ## Declare + deploy the anchor to NETWORK=sepolia|mainnet (local; needs sncast + keyed STARKNET_RPC). NOT upgradeable → new address
+	NETWORK=$(NETWORK) scripts/deploy.sh
+
+deploy-sepolia: ## Alias: deploy to Sepolia (== make deploy NETWORK=sepolia)
+	NETWORK=sepolia scripts/deploy.sh
+
+wallet-create: ## Create the operator wallet for NETWORK=sepolia|mainnet (then fund the printed address)
+	NETWORK=$(NETWORK) scripts/wallet.sh create
+
+wallet-deploy: ## Deploy the operator account on-chain for NETWORK (after funding it)
+	NETWORK=$(NETWORK) scripts/wallet.sh deploy
+
+wallet-info: ## Show accounts + operator balance for NETWORK=sepolia|mainnet
+	NETWORK=$(NETWORK) scripts/wallet.sh list
+	NETWORK=$(NETWORK) scripts/wallet.sh balance
 
 cairo-test: ## Run Cairo tests (drisl conformance + plc_core op_verify gate; reports gas estimates)
 	cd cairo && $(CAIRO_TEST)

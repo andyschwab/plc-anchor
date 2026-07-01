@@ -1,0 +1,12 @@
+{
+  "network": "sepolia",
+  "contract": "anchor",
+  "package": "plc_core",
+  "classHash": "0x1346eb7e036c732c0d24c302df13ca41c083cdf05b766fe64e28dac6ca32d24",
+  "contractAddress": "0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180",
+  "deployTx": "",
+  "account": "plc-sepolia",
+  "deployedAt": "",
+  "explorer": "https://sepolia.starkscan.co/contract/0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180",
+  "note": "build-order item 5 deploy (carries tentative_proof/confirmed_proof views). anchor is not upgradeable; a redeploy is a new address with an empty roster (re-import DIDs). Migrated from the snfoundry.toml comment block."
+}
