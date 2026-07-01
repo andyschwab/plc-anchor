@@ -49,10 +49,10 @@
 <body>
 <div class="wrap">
   <header>
-    <div class="tag">atproto identity DMARC</div>
+    <div class="tag">a witness for atproto identity</div>
     <h1><span class="mono">DIDMARC</span> — hold the directory accountable</h1>
     <p class="expand"><b>D</b>ID <b>M</b>apping <b>A</b>lignment, <b>R</b>eporting &amp;
-      <b>C</b>onformance — the <a href="https://dmarc.org">DMARC</a> of atproto identity.</p>
+      <b>C</b>onformance — an independent accountability layer for atproto identity.</p>
     <p class="lede">Independent, on-chain proof that <code>plc.directory</code> serves a DID's
       <b>complete, current, and non-equivocated</b> history — exposed as a graduated status any
       resolver or PDS can enforce <b>unilaterally</b>, with no network coordination and no
@@ -61,59 +61,59 @@
   </header>
 
   <section>
-    <h2>The analogy</h2>
-    <p>atproto identities are a signed, hash-linked log of operations served from one directory.
-      Every op is self-certifying — but a single signature can't tell you whether you were shown
-      the <i>whole</i> history. Email solved the same gap with a layered stack:</p>
+    <h2>The gap a signature leaves</h2>
+    <p>An atproto identity is a signed, hash-linked log of operations, served from a single
+      directory. Every operation is self-certifying — but a signature only vouches for the
+      operation it's attached to. It can't tell you whether the directory showed you <i>all</i> of
+      them, the <i>latest</i> ones, or the <i>same</i> ones it showed everyone else.</p>
     <div class="analogy">
       <div class="card">
-        <h3>PLC ≈ DKIM</h3>
-        <p>Each operation is signed by a then-valid rotation key. Per-op authenticity — already
-          there.</p>
+        <h3>What a signature proves</h3>
+        <p>This operation is authentic — signed by a key that was valid at the time. PLC already
+          gives you this, per operation.</p>
       </div>
       <div class="card">
-        <h3>DIDMARC ≈ SPF / DMARC</h3>
-        <p>The layer a signature structurally can't provide: <i>was I shown the complete, current,
-          non-equivocated history?</i> Verified on-chain.</p>
+        <h3>What it can't</h3>
+        <p>That you were shown the <i>complete, current, and non-equivocated</i> history. No
+          signature can speak for the operations it isn't on — including the ones you never saw.</p>
       </div>
     </div>
   </section>
 
   <section>
     <h2>What a directory can do to you</h2>
-    <p>Here is the trap: <b>every operation can be validly signed and the directory can still
-      lie</b>. A signature proves one op is authentic — but the directory alone decides
-      <i>which</i> ops you're shown. A single-operator directory is the chokepoint, and these
-      attacks need no forged key:</p>
+    <p>That gap isn't theoretical. Every operation can be perfectly signed and the directory can
+      still deceive you, because it alone decides <i>which</i> operations you see. None of the
+      attacks below needs a stolen key — only control of the directory a resolver trusts:</p>
     <div class="threats">
       <div class="card">
-        <h3>Omission</h3>
-        <p>Serve a forked history that quietly drops an operation the DID really signed — rolling
-          an identity back to an attacker-favorable state.</p>
-        <p class="why"><b>Signatures can't catch it:</b> every op shown is genuinely signed; it's
-          the <i>set</i> that's a lie.</p>
+        <h3>Omission — undo a fix</h3>
+        <p>Your account key is stolen, so you do the right thing and rotate it out with a new
+          signed operation. The directory serves your history with that one operation missing — so
+          to the rest of the network the stolen key is still live, and the thief keeps signing as
+          you.</p>
+        <p class="why"><b>The lie is the operation left out.</b></p>
       </div>
       <div class="card">
-        <h3>Erasure</h3>
-        <p>Return an empty or 404 audit log for a DID that plainly exists — making an identity
-          simply vanish from a resolver's view.</p>
-        <p class="why"><b>Signatures can't catch it:</b> nothing served means nothing to verify;
-          absence carries no proof of its own.</p>
+        <h3>Erasure — make someone vanish</h3>
+        <p>The directory simply returns nothing for a DID that plainly exists. Every app that looks
+          the person up sees no such identity — handle dangling, posts unresolvable — with no error
+          to appeal.</p>
+        <p class="why"><b>Absence carries no proof to check.</b></p>
       </div>
       <div class="card">
-        <h3>Split-view</h3>
-        <p>Show one history to you and a different one to everyone else. Each branch is internally
-          consistent and fully signed — classic equivocation.</p>
-        <p class="why"><b>Signatures can't catch it:</b> no single viewer holds both halves, so no
-          one can see the fork.</p>
+        <h3>Split-view — two faces</h3>
+        <p>Show the victim their real history, while showing one targeted service a forked version
+          that points their account at a server the attacker runs. Neither side ever sees the
+          other's copy.</p>
+        <p class="why"><b>No one viewer holds both halves.</b></p>
       </div>
     </div>
-    <p style="margin-top:14px;color:var(--muted);font-size:14px">This is the SPF/DMARC-shaped gap
-      that per-op signing (PLC's DKIM layer) structurally leaves open —
-      <i>was I shown the complete, current, non-equivocated history?</i> DIDMARC answers it. Each
-      attack above is a real, ground-truthed scenario in the
+    <p style="margin-top:14px;color:var(--muted);font-size:14px">Each of these is a real,
+      ground-truthed scenario in the
       <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md">adversarial
-      report</a>.</p>
+      report</a>. DIDMARC is the layer that catches them: independent, on-chain proof of the whole,
+      current history, so a resolver can tell when the directory's answer doesn't add up.</p>
   </section>
 
   <section>
@@ -123,7 +123,7 @@
       prover and no trusted snapshot. The contract commits a proven DID→document root. A resolver
       fetches a document from the directory and checks it against that root, getting back a
       status. <code>plc.directory</code> stays canonical; DIDMARC is a read-side witness that
-      anyone turns on alone — the way an email receiver enables DMARC.</p>
+      anyone turns on alone — no coordination and no protocol change.</p>
   </section>
 
   <section>
@@ -136,17 +136,17 @@
       <li class="bad"><b>diverged</b> — the directory's served head <i>contradicts</i> the proven
         head. This is the alarm that fires on <b>omission</b> and <b>erasure</b> above: warn,
         quarantine, or refuse to relay.</li>
-      <li class="muted"><b>absent</b> — DID not anchored; no opinion (the coverage gap, like DMARC
-        <code>p=none</code>).</li>
+      <li class="muted"><b>absent</b> — DID not anchored; no opinion. DIDMARC has nothing to say
+        about an identity nobody opted in.</li>
     </ul>
     <p style="margin-top:14px;color:var(--muted);font-size:14px"><b style="color:var(--fg)">Never a
       false <code>diverged</code>.</b> A directory that's merely running ahead, or a contradiction
       that plain clock skew could explain, stays at <code>tentative-consistent</code> — not an
       alarm. A false alarm gets the check switched off, so that restraint is exactly what makes
       <code>diverged</code> mean something.</p>
-    <p style="margin-top:14px;color:var(--muted);font-size:14px">Adoption is the DMARC ramp:
-      start by logging the status, then quarantine on <code>diverged</code>, then refuse to relay
-      — each resolver decides on its own.</p>
+    <p style="margin-top:14px;color:var(--muted);font-size:14px">Adoption is a ramp: start by just
+      logging the status, then quarantine on <code>diverged</code>, then refuse to relay — each
+      resolver decides on its own, at its own pace.</p>
   </section>
 
   <footer>
