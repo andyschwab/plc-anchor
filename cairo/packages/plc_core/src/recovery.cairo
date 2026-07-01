@@ -18,8 +18,11 @@
 //!     is within 72h of now. Only the first nullified op gates the decision; the rest are
 //!     swept along.
 //!
-//! `now` / `createdAt` are externally supplied (the directory-assigned timestamp PLC's
-//! window depends on — the narrow residual trust of §1), never a block clock.
+//! `createdAt` is the directory-assigned timestamp PLC's window depends on — the narrow
+//! residual trust of §1, never a block clock. `now` is the caller's current-time input: in
+//! production the anchor feeds the Starknet block clock (`get_block_timestamp() * 1000`,
+//! `anchor.cairo`); the differential tests supply a fixed value. This module stays
+//! clock-agnostic — it only does arithmetic on whatever `now`/`createdAt` it is handed.
 
 /// 72 hours in milliseconds (`72 * HOUR`, matching `@did-plc/lib`; PLC timestamps are ms).
 pub const RECOVERY_WINDOW_MS: u64 = 259200000;
