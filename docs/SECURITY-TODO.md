@@ -36,11 +36,12 @@ Missing fields silently become `undefined`/`NaN` and flow into comparisons rathe
 surfacing as explicit errors.
 
 **Work items:**
-- [ ] Replace the bare cast with explicit runtime validation: `Array.isArray`, max array
+- [x] Replace the bare cast with explicit runtime validation: `Array.isArray`, max array
   length, required fields (`cid`, `createdAt`, `nullified`, `operation`) present and correctly
-  typed.
-- [ ] Treat missing/malformed fields as a hard error (throw), not silent `undefined`.
-- [ ] Add a max-bytes cap on the raw fetch body (or check `Content-Length` before reading).
+  typed. — `parseAuditLog`/`isAuditEntry` in `directory.ts`.
+- [x] Treat missing/malformed fields as a hard error (throw), not silent `undefined`.
+- [x] Add a max-bytes cap on the raw fetch body (or check `Content-Length` before reading). —
+  `readBoundedText` (streaming cap + `Content-Length` pre-check), 8 MiB.
 
 ---
 
@@ -53,10 +54,10 @@ can stack-overflow the long-running indexer process. `serde_json::from_str` has 
 guard either, so the crash can happen before re-encoding is reached.
 
 **Work items:**
-- [ ] Add `max_depth: usize` parameter to `json_to_ipld` (64 is well above any legitimate PLC
-  op); return `Err` instead of recursing further.
-- [ ] Add a max-bytes cap on HTTP response bodies in `source.rs` before passing to
-  `serde_json::from_str`.
+- [x] Add `max_depth: usize` parameter to `json_to_ipld` (64 is well above any legitimate PLC
+  op); return `Err` instead of recursing further. — depth budget, `MAX_DEPTH = 64`.
+- [x] Add a max-bytes cap on HTTP response bodies in `source.rs` before passing to
+  `serde_json::from_str`. — `MAX_BODY_BYTES = 32 MiB` via ureq `.limit(...)` on both reads.
 
 ---
 
@@ -69,8 +70,9 @@ When `Date.parse(entry.createdAt)` yields `NaN`, `withinHorizon` silently defaul
 indefinitely.
 
 **Work item:**
-- [ ] Treat `NaN` from `Date.parse` as an unverifiable state — propagate an error or surface
-  a distinct status (e.g. `error`) rather than absorbing it as non-alarming.
+- [x] Treat `NaN` from `Date.parse` as an unverifiable state — propagate an error or surface
+  a distinct status (e.g. `error`) rather than absorbing it as non-alarming. — new `error`
+  status (`directory-timestamp-unparseable`), CLI exit 1.
 
 ---
 
@@ -83,8 +85,10 @@ the same fork-point/authorization logic inline. Two parallel implementations of
 security-critical code risk silent drift if one is patched without the other.
 
 **Work item:**
-- [ ] Either delete `verify.cairo` and its dead transitive code, or wire `state.cairo`/
-  `anchor.cairo` through it so there is a single implementation.
+- [x] Either delete `verify.cairo` and its dead transitive code, or wire `state.cairo`/
+  `anchor.cairo` through it so there is a single implementation. — deleted `verify.cairo` +
+  `tests/verify.cairo`; `state::apply_op` is the single integrated path. (`check_prev_link`
+  kept — a standalone P2.4 primitive with its own test in `tests/link.cairo`.)
 
 ---
 
@@ -94,6 +98,9 @@ security-critical code risk silent drift if one is patched without the other.
 
 Comment claims `now`/`createdAt` are "never a block clock." They are — `anchor.cairo` feeds
 `get_block_timestamp() * 1000`. One-line correction.
+
+- [x] Done — corrected to distinguish `createdAt` (directory time, never a block clock) from
+  `now` (the caller's clock; the block timestamp in production, a fixed value in tests).
 
 ---
 
