@@ -124,8 +124,9 @@ pinned core needs only `node:crypto`.
 
 Before item 6, the [`adversarial/`](../adversarial/README.md) suite validates the design against
 attack/fork cases, rendered as the engineer-facing
-[`docs/ADVERSARIAL-REPORT.md`](ADVERSARIAL-REPORT.md). 12 scenarios (8 read-side, one per
-status-ladder branch; 4 write-side rejections ground-truthed vs `@did-plc/lib`) on real signed
+[`docs/ADVERSARIAL-REPORT.md`](ADVERSARIAL-REPORT.md). 13 scenarios (8 read-side, one per
+status-ladder branch; 5 write-side rejections ground-truthed vs `@did-plc/lib` — including
+`recovery-of-imported`, the 4a capture) on real signed
 did:plc chains, plus an HTTP malicious-mirror exercising the real `DirectoryClient` fetch path
 offline and a gated live read vs Sepolia (`make adversarial-live`). **No new consensus logic** —
 it composes the already-differential-green modules into named attacks. This is the keep-it-high-
