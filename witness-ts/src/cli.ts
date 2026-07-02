@@ -9,13 +9,17 @@
 //!
 //!   node src/cli.ts <did:plc:...> [--rpc URL] [--contract ADDR] [--directory URL]
 //!
-//! `--rpc` defaults to $STARKNET_RPC; `--contract` to the recorded Sepolia deployment.
+//! `--rpc` defaults to $STARKNET_RPC; `--contract` to $ANCHOR_CONTRACT_ADDRESS, else the
+//! recorded Sepolia deployment. Reading a **mainnet** DID REQUIRES an explicit mainnet contract
+//! (flag or env) — the Sepolia default reads the wrong network and would mis-report.
 
 import { AnchorReader } from "./starknet.ts";
 import { DirectoryClient } from "./directory.ts";
 import { check, type CheckResult } from "./status.ts";
 
-/** The Sepolia anchor (post-4a; `deployments/sepolia.json`) — carries the proof views. */
+/** The Sepolia anchor (post-4a; `deployments/sepolia.json`) — carries the proof views. Used
+ * only when neither --contract nor $ANCHOR_CONTRACT_ADDRESS is given (a testnet/dev default;
+ * mainnet callers must pass the mainnet address explicitly). */
 const DEFAULT_CONTRACT = "0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3";
 const DEFAULT_DIRECTORY = "https://plc.directory";
 
@@ -44,7 +48,7 @@ export function parseArgs(argv: string[]): Args {
   return {
     did,
     rpc,
-    contract: opts.get("contract") ?? DEFAULT_CONTRACT,
+    contract: opts.get("contract") ?? process.env.ANCHOR_CONTRACT_ADDRESS ?? DEFAULT_CONTRACT,
     directory: opts.get("directory") ?? DEFAULT_DIRECTORY,
   };
 }

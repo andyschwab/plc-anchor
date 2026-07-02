@@ -36,7 +36,8 @@ import { SETTINGS_DEFAULTS, SettingsStore, validateSettings, type ConsoleSetting
 import { createConsoleServer, type WorkerActions } from "./server.ts";
 import { DirectoryResolver, WitnessChecker } from "./witness.ts";
 
-// Post-4a redeploy (the "imported ops are settled" fix); overridable via ANCHOR_CONTRACT_ADDRESS.
+// The post-4a Sepolia anchor — an explicit DEV convenience only, never the production path.
+// Fail-closed: production must set ANCHOR_CONTRACT_ADDRESS (see resolveContractAddress).
 const SEPOLIA_ANCHOR = "0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3";
 const bool = (v: string | undefined): boolean => /^(1|true)$/i.test(v?.trim() ?? "");
 const num = (v: string | undefined, dflt: number): number => {
@@ -46,10 +47,22 @@ const num = (v: string | undefined, dflt: number): number => {
 const list = (v: string | undefined): string[] | undefined =>
   v?.trim() ? v.split(",").map((s) => s.trim()).filter((s) => s.length > 0) : undefined;
 
+/** Resolve the anchor contract, fail-closed. An explicit ANCHOR_CONTRACT_ADDRESS always wins;
+ * absent it, we refuse to boot in production rather than silently read the Sepolia *testnet*
+ * contract (wrong network's roster → a manufactured `diverged`). Dev falls back to Sepolia. */
+function resolveContractAddress(): string {
+  const explicit = process.env.ANCHOR_CONTRACT_ADDRESS?.trim();
+  if (explicit) return explicit;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("ANCHOR_CONTRACT_ADDRESS is required in production (no testnet fallback)");
+  }
+  return SEPOLIA_ANCHOR;
+}
+
 // --- Boot-only / secret config (restart to change) ---------------------------
 const port = Number(process.env.PORT ?? 8787);
 const dbPath = process.env.ROSTER_DB ?? "./roster.db";
-const contractAddress = process.env.ANCHOR_CONTRACT_ADDRESS ?? SEPOLIA_ANCHOR;
+const contractAddress = resolveContractAddress();
 const rpc = process.env.STARKNET_RPC;
 const ingestCommand = process.env.INGEST_COMMAND?.trim();
 
