@@ -17,7 +17,7 @@
 //! bound deferred in the plan — generous on purpose.
 
 import { leafHash, verifyProof, type ProofStep } from "./merkle.ts";
-import { directoryHead, type AuditEntry } from "./directory.ts";
+import { deriveLiveChain, type AuditEntry, type LiveChain } from "./directory.ts";
 
 // The four graduated statuses, plus `error`: an *unverifiable* input (e.g. the directory
 // served a head with an unparseable `createdAt`), distinct from any of the four honest
@@ -60,6 +60,13 @@ export interface CheckOptions {
   skewHorizonMs?: number;
   /** Clock injection for tests. Default `Date.now`. */
   now?: () => number;
+  /**
+   * How the directory's live head + live-CID set are derived from its audit log. The default
+   * (`deriveLiveChain`) re-derives PLC recovery from the op contents — discarding the directory's
+   * untrusted `nullified` flag (SECURITY-TODO item 1). Tests that isolate the status ladder from
+   * the crypto (or drive it with stub ops) inject a flag-based derivation instead.
+   */
+  deriveLive?: (log: readonly AuditEntry[], did: string) => LiveChain;
 }
 
 const DEFAULT_SKEW_HORIZON_MS = 14 * 24 * 60 * 60 * 1000;
@@ -80,6 +87,7 @@ export async function check(
 ): Promise<CheckResult> {
   const skewHorizonMs = options.skewHorizonMs ?? DEFAULT_SKEW_HORIZON_MS;
   const now = options.now ?? Date.now;
+  const deriveLive = options.deriveLive ?? deriveLiveChain;
 
   if (!(await anchor.isAnchored(did))) {
     return result("absent", "not-anchored", {
@@ -99,8 +107,7 @@ export async function check(
 
   const confirmedProofVerified =
     cProof.head !== "" && verifyProof(leafHash(did, cProof.head), cProof.proof, cRoot);
-  const dirHead = directoryHead(log);
-  const liveCids = new Set(log.filter((e) => !e.nullified).map((e) => e.cid));
+  const { liveCids, head: dirHead } = deriveLive(log, did);
 
   const ev: CheckResult["evidence"] = {
     directoryHead: dirHead?.cid ?? null,

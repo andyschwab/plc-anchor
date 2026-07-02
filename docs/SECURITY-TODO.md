@@ -4,14 +4,14 @@ Findings from the June 2026 internal security audit. Ordered by priority; items 
 only ones that meaningfully affect security properties. Items 3–6 are resilience/quality
 improvements.
 
-**Status (2026-07-01):** items 2–6 are done and landed on
-`claude/security-updates-review-4ejk28`. **Item 1 (HIGH) is the only remaining work** — it is a
-larger, consensus-critical change scoped for its own focused follow-up; see the expanded notes
-in that section.
+**Status (2026-07-02):** **all items are done.** Items 2–6 landed on
+`claude/security-updates-review-4ejk28`; item 1 (HIGH) landed on
+`claude/final-security-todo-m6xhy7` — the witness now re-derives `nullified` locally from op
+contents, differential-green against `@did-plc/lib`.
 
 ---
 
-## 1. Re-derive `nullified` from op contents — HIGH  *(remaining — own follow-up)*
+## 1. Re-derive `nullified` from op contents — HIGH  *(done)*
 
 **Files:** `witness-ts/src/directory.ts`, `witness-ts/src/status.ts`
 
@@ -45,18 +45,25 @@ DRISL-encoded *unsigned* op and compressed did:key pubkeys.
 `conformance/`), never a hand-tuned fixture.
 
 **Work items:**
-- [ ] Add a Node-builtin ECDSA verifier for secp256k1 + P-256 over did:key rotation keys
-  (did:key decode, point decompression, compact→DER, low-S enforcement for k256).
-- [ ] Implement signer-index resolution for an op against a `rotationKeys` set (the TS analog
-  of `op_verify::verify_op_authorized`), over the *unsigned* DRISL bytes.
-- [ ] Implement `deriveNullified(ops: AuditEntry[]): Set<string>` in `directory.ts` — scan
-  the op chain for any rotation using a lower-index recovery key within the 72h window of the
-  op it supersedes; that op and everything after it are nullified regardless of the directory
-  claim.
-- [ ] Wire into `status.ts` in place of the directory-asserted `nullified` flag.
-- [ ] Add a differential vector corpus (ground-truthed vs `@did-plc/lib`) plus adversarial test
-  cases in `witness-ts/test/`: directory claims op is not nullified but local re-derivation says
-  it is → expect `diverged`.
+- [x] Add a Node-builtin ECDSA verifier for secp256k1 + P-256 over did:key rotation keys
+  (did:key decode, point decompression, low-S enforcement for k256, p256 malleability). —
+  `witness-ts/src/crypto.ts` (`node:crypto`, compact `r‖s` via `dsaEncoding: "ieee-p1363"`;
+  no new dependency). Byte-exact vs `@atproto/crypto`.
+- [x] Implement signer-index resolution for an op against a `rotationKeys` set (the TS analog
+  of `op_verify::verify_op_authorized`), over the *unsigned* DRISL bytes. — `opverify.ts`
+  (`verifyOpAuthorized`) over `dagcbor.ts`'s canonical encoder (byte-exact vs `@ipld/dag-cbor`).
+- [x] Implement re-derivation in `directory.ts` — `deriveLiveChain` replays the audit log
+  (recomputing CIDs, verifying signatures, applying the lower-index-key + 72h-window recovery
+  rule), and `deriveNullified(ops): Set<string>` returns the non-live CIDs, regardless of the
+  directory claim. Mirrors `state::apply_op` / `recovery::classify_next_op`.
+- [x] Wire into `status.ts` in place of the directory-asserted `nullified` flag. — `check` now
+  derives its live head + live-CID set via `deriveLiveChain` (default; injectable for the
+  ladder/transport tests, which drive stub ops).
+- [x] Add a differential vector corpus (ground-truthed vs `@did-plc/lib`) plus adversarial test
+  cases in `witness-ts/test/`. — `conformance/src/gen-nullified-vectors.mjs` +
+  `witness-ts/test/nullified.test.ts` (valid recovery, weaker-key/late/forged/build-on-tombstone
+  injections, flag-independence, and the status payoff: a flag-lying mirror can no longer suppress
+  the correct verdict). Wired into `make ci` via `gen-nullified-vectors-check`.
 
 ---
 
@@ -142,9 +149,10 @@ Comment claims `now`/`createdAt` are "never a block clock." They are — `anchor
 ```
 3 & 4  (ingest bounds, timestamp guard)   — DONE
 2      (response validation)              — DONE
-└─ 1   (nullified re-derivation)          — REMAINING; builds on the now-validated op payloads
+└─ 1   (nullified re-derivation)          — DONE; builds on the now-validated op payloads
 5 & 6  (Cairo cleanup)                    — DONE
 ```
 
-Item 2 is done, so item 1 now starts from validated, well-typed op payloads — the signature
-re-derivation can assume `operation` is a present object with the expected field types.
+Item 1 builds on item 2's validation: `deriveLiveChain` starts from `parseAuditLog`'s
+well-typed entries (`operation` is guaranteed a present object) and re-derives PLC recovery from
+those payloads, discarding the untrusted `nullified` flag.

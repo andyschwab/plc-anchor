@@ -7,10 +7,13 @@
 export { emptyRoot, leafHash, nodeHash, verifyProof, type ProofStep } from "./merkle.ts";
 export {
   type AuditEntry,
+  deriveLiveChain,
+  deriveNullified,
   DirectoryClient,
   type DirectoryHead,
   directoryHead,
   type Fetcher,
+  type LiveChain,
   parseAuditLog,
 } from "./directory.ts";
 export {
