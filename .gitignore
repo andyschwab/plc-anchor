@@ -25,3 +25,7 @@ starknet_accounts.json
 *.swp
 .idea/
 .vscode/
+
+# mainnet/testnet operator secrets — never commit (Phase 5)
+secrets/
+*.env
