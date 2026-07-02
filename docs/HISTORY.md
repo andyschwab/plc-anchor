@@ -185,6 +185,13 @@ old exact-host filter) — made operable and cost-safe at ~20k. Load-bearing dec
 - **Table went server-side.** `GET /roster` is paginated/filtered/sorted over indexed columns
   (`{rows,total}`); the UI is a debounced grid (queries stay in the low-ms at 20k). The `pds_host`
   filter CRUD was dropped (criterion is config).
+- **Non-secret config is live-editable** (`src/settings.ts`, `GET/PUT /settings`, the ⚙ panel).
+  A store-backed facade composes over the existing `active`/`budget` accessors; workers re-read
+  config each tick and cadence changes reschedule live (self-scheduling timer), so the criterion,
+  PDS endpoints, budget, intervals, enrich knobs, and directory/mirror URLs change with no
+  redeploy. Precedence: hardcoded ← `SETTINGS_DEFAULTS_FILE` ← env ← persisted UI edits. Secrets +
+  boot-only knobs (RPC, keys, contract address, port, DB path, ingest command, admin token) stay in
+  env and are surfaced **read-only** (presence only). Env is now a *seed*, not the runtime source.
 
 ---
 

@@ -2,34 +2,29 @@
 //! driven ("Eurosky MVP") deployment: enumerate a PDS → tail /export → enrich identity → onboard
 //! (only when Active, budget-capped) → refresh status.
 //!
-//! Run: `node --experimental-sqlite src/main.ts`. Each loop is independent and degrades to a no-op
-//! when its config is absent, so the API is useful before a live anchor/account is wired. Cursors,
-//! the Active toggle, and the budget all persist in the store, so a restart resumes mid-backlog and
-//! honours the last operator toggle.
+//! Run: `node --experimental-sqlite src/main.ts`. **Non-secret config is live-editable** via the
+//! Settings panel (`GET/PUT /settings`, persisted in the store): the criterion, PDS endpoints,
+//! budget, loop cadences, enrich batch/delay, and directory/mirror URLs all take effect on the next
+//! tick with no restart — env just seeds the boot defaults. Boot-only + secret config (port, DB
+//! path, contract address, ingest command, RPC, keys, the admin token) stays in env and is surfaced
+//! read-only in the panel.
 //!
-//! Env:
-//!   PORT                       HTTP port (default 8787)
-//!   ROSTER_DB                  SQLite path (default ./roster.db; ":memory:" for ephemeral)
-//!   ROSTER_CRITERION           membership rule, e.g. "pds_domain:eurosky.social" (enables the tail)
-//!   PDS_ENDPOINTS              comma-sep PDS base URLs to enumerate (default https://eurosky.social)
-//!   IMPORT_BUDGET_PER_TICK     max on-chain imports per onboard tick (default 25)
-//!   ACTIVE_DEFAULT             "1"/"true" to boot Active (spend on); default off
-//!   STARKNET_RPC               JSON-RPC endpoint (enables the refresh loop + fee lookups)
-//!   ANCHOR_CONTRACT_ADDRESS    anchor contract (default: the Sepolia deployment)
-//!   PLC_DIRECTORY_URL          directory/mirror base (default https://plc.directory)
-//!   PLC_MIRROR_URL             /export source for the tail (default = PLC_DIRECTORY_URL)
-//!   INGEST_COMMAND             ingest argv for onboarding (enables on-chain writes)
-//!   ENUMERATE_INTERVAL_MS      PDS enumeration cadence (default 3600000; 0 disables)
-//!   TAIL_INTERVAL_MS           /export tail cadence (default 60000; 0 disables)
-//!   ENRICH_INTERVAL_MS         enrichment cadence (default 30000; 0 disables)
-//!   ENRICH_BATCH / ENRICH_DELAY_MS  per-tick enrich count (default 50) / inter-request ms (200)
-//!   REFRESH_INTERVAL_MS        status refresh cadence (default 300000; 0 disables)
-//!   CONSOLE_ADMIN_TOKEN        operator secret; when set, writes require a login session
-//!   CONSOLE_SESSION_TTL_MS     session lifetime after login (default 3600000)
-//!   CONSOLE_ALLOW_OPEN_WRITES  "1"/"true" to run with writes OPEN when no admin token is set
+//! Env (all optional; each seeds the matching live setting or a boot-only knob):
+//!   PORT / ROSTER_DB                          HTTP port (8787) / SQLite path (./roster.db)
+//!   ROSTER_CRITERION / PDS_ENDPOINTS          seed the criterion / enumeration targets
+//!   IMPORT_BUDGET_PER_TICK / ACTIVE_DEFAULT   seed the budget / boot Active state
+//!   {ENUMERATE,TAIL,ENRICH,REFRESH}_INTERVAL_MS   seed loop cadences (0 disables)
+//!   ENRICH_BATCH / ENRICH_DELAY_MS            seed enrich batch size / inter-request ms
+//!   PLC_DIRECTORY_URL / PLC_MIRROR_URL        seed the directory / mirror bases
+//!   SETTINGS_DEFAULTS_FILE                    optional JSON file of default settings (below env)
+//!   STARKNET_RPC                              JSON-RPC endpoint (enables refresh + fee lookups)
+//!   ANCHOR_CONTRACT_ADDRESS                   anchor contract (default: the Sepolia deployment)
+//!   INGEST_COMMAND                            ingest argv for onboarding (enables on-chain writes)
+//!   CONSOLE_ADMIN_TOKEN / CONSOLE_SESSION_TTL_MS / CONSOLE_ALLOW_OPEN_WRITES   the write gate
 
+import { readFileSync } from "node:fs";
 import { SharedSecretAuth, type Authenticator } from "./auth.ts";
-import { parseCriterion, type Criterion } from "./criterion.ts";
+import { parseCriterion } from "./criterion.ts";
 import { EnumerationService, ExportClient, TailService } from "./discover.ts";
 import { EnrichmentService } from "./enrich.ts";
 import { starknetFeeResolver } from "./fees.ts";
@@ -37,105 +32,141 @@ import { Onboarder, SpawnRunner, type FeeResolver } from "./onboard.ts";
 import { PdsClient } from "./pds.ts";
 import { RefreshService } from "./refresh.ts";
 import { RosterStore } from "./roster.ts";
+import { SETTINGS_DEFAULTS, SettingsStore, validateSettings, type ConsoleSettings } from "./settings.ts";
 import { createConsoleServer, type WorkerActions } from "./server.ts";
 import { DirectoryResolver, WitnessChecker } from "./witness.ts";
 
 const SEPOLIA_ANCHOR = "0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180";
 const bool = (v: string | undefined): boolean => /^(1|true)$/i.test(v?.trim() ?? "");
+const num = (v: string | undefined, dflt: number): number => {
+  const n = Number(v);
+  return v !== undefined && Number.isFinite(n) ? n : dflt;
+};
+const list = (v: string | undefined): string[] | undefined =>
+  v?.trim() ? v.split(",").map((s) => s.trim()).filter((s) => s.length > 0) : undefined;
 
+// --- Boot-only / secret config (restart to change) ---------------------------
 const port = Number(process.env.PORT ?? 8787);
 const dbPath = process.env.ROSTER_DB ?? "./roster.db";
 const contractAddress = process.env.ANCHOR_CONTRACT_ADDRESS ?? SEPOLIA_ANCHOR;
-const directoryUrl = process.env.PLC_DIRECTORY_URL ?? "https://plc.directory";
-const mirrorUrl = process.env.PLC_MIRROR_URL ?? directoryUrl;
-const pdsEndpoints = (process.env.PDS_ENDPOINTS ?? "https://eurosky.social")
-  .split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-const importBudget = Number(process.env.IMPORT_BUDGET_PER_TICK ?? 25);
+const rpc = process.env.STARKNET_RPC;
+const ingestCommand = process.env.INGEST_COMMAND?.trim();
 
-const store = RosterStore.open(dbPath);
-store.setActiveDefault(bool(process.env.ACTIVE_DEFAULT));
-
-// The criterion is required to *tail* for changes; enumeration works without it. A provided-but-
-// invalid criterion fails loudly; an absent one just disables the tail.
-let criterion: Criterion | null = null;
-if (process.env.ROSTER_CRITERION?.trim()) {
-  criterion = parseCriterion(process.env.ROSTER_CRITERION);
-  console.error(`[criterion] ${criterion.label}`);
-} else {
-  console.error("[criterion] none set (ROSTER_CRITERION) — tail disabled; enumeration still runs");
+/** Build the live-settings defaults: hardcoded ← optional JSON file ← env. Persisted UI edits
+ * (in the store) then override these at runtime. Fails loudly on invalid env/file config. */
+function settingsDefaults(): ConsoleSettings {
+  const d: ConsoleSettings = { ...SETTINGS_DEFAULTS };
+  const file = process.env.SETTINGS_DEFAULTS_FILE?.trim();
+  if (file) {
+    try {
+      Object.assign(d, JSON.parse(readFileSync(file, "utf8")) as Partial<ConsoleSettings>);
+    } catch (err) {
+      console.error(`[settings] ignoring ${file}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  const e = process.env;
+  if (e.ROSTER_CRITERION?.trim()) d.criterion = e.ROSTER_CRITERION.trim();
+  const eps = list(e.PDS_ENDPOINTS);
+  if (eps) d.pdsEndpoints = eps;
+  if (e.IMPORT_BUDGET_PER_TICK !== undefined) d.importBudget = num(e.IMPORT_BUDGET_PER_TICK, d.importBudget);
+  if (e.ACTIVE_DEFAULT !== undefined) d.active = bool(e.ACTIVE_DEFAULT);
+  if (e.ENUMERATE_INTERVAL_MS !== undefined) d.enumerateIntervalMs = num(e.ENUMERATE_INTERVAL_MS, d.enumerateIntervalMs);
+  if (e.TAIL_INTERVAL_MS !== undefined) d.tailIntervalMs = num(e.TAIL_INTERVAL_MS, d.tailIntervalMs);
+  if (e.ENRICH_INTERVAL_MS !== undefined) d.enrichIntervalMs = num(e.ENRICH_INTERVAL_MS, d.enrichIntervalMs);
+  if (e.REFRESH_INTERVAL_MS !== undefined) d.refreshIntervalMs = num(e.REFRESH_INTERVAL_MS, d.refreshIntervalMs);
+  if (e.ENRICH_BATCH !== undefined) d.enrichBatch = num(e.ENRICH_BATCH, d.enrichBatch);
+  if (e.ENRICH_DELAY_MS !== undefined) d.enrichDelayMs = num(e.ENRICH_DELAY_MS, d.enrichDelayMs);
+  if (e.PLC_DIRECTORY_URL?.trim()) {
+    d.directoryUrl = e.PLC_DIRECTORY_URL.trim();
+    d.mirrorUrl = d.directoryUrl; // the mirror follows the directory unless set explicitly
+  }
+  if (e.PLC_MIRROR_URL?.trim()) d.mirrorUrl = e.PLC_MIRROR_URL.trim();
+  return validateSettings(d);
 }
 
+const store = RosterStore.open(dbPath);
+const settings = new SettingsStore(store, settingsDefaults());
+settings.seedDefaults();
+
+const feeResolver: FeeResolver | null = rpc ? starknetFeeResolver(rpc) : null;
 const actions: WorkerActions = {};
 let lastRefreshAt: number | null = null;
 
-/** Run `fn` now and every `intervalMs` (unref'd so it never holds the process open). */
-function every(intervalMs: number, fn: () => Promise<unknown>): void {
+/** Run `fn` on a self-rescheduling timer whose period is re-read from `getIntervalMs` each cycle,
+ * so cadence changes (and enable/disable at 0) apply live. While disabled it polls every 30s to
+ * notice a re-enable. Unref'd so it never holds the process open. */
+function loop(getIntervalMs: () => number, fn: () => Promise<unknown>): void {
+  const DISABLED_POLL_MS = 30_000;
   const tick = async (): Promise<void> => {
-    try {
-      await fn();
-    } catch (err) {
-      console.error("[worker] loop error:", err instanceof Error ? err.message : err);
+    let interval = getIntervalMs();
+    if (!Number.isFinite(interval) || interval < 0) interval = 0;
+    if (interval > 0) {
+      try {
+        await fn();
+      } catch (err) {
+        console.error("[worker] loop error:", err instanceof Error ? err.message : err);
+      }
     }
+    setTimeout(() => void tick(), interval > 0 ? interval : DISABLED_POLL_MS).unref();
   };
   void tick();
-  if (intervalMs > 0) setInterval(() => void tick(), intervalMs).unref();
 }
 
-// --- Enumerate (backlog): page each PDS's listRepos → auto-approved candidates. ---
-const enumerators = pdsEndpoints.map((url) => new EnumerationService(store, new PdsClient(url)));
-const enumerateIntervalMs = Number(process.env.ENUMERATE_INTERVAL_MS ?? 3_600_000);
+// --- Enumerate (backlog): page each configured PDS's listRepos → auto-approved candidates. ---
 actions.enumerate = async () => {
   const results = [];
-  for (const e of enumerators) results.push(await e.enumerateBacklog());
-  return { endpoints: pdsEndpoints, results };
+  for (const url of settings.get().pdsEndpoints) {
+    results.push({ pds: url, ...(await new EnumerationService(store, new PdsClient(url)).enumerateBacklog()) });
+  }
+  return { results };
 };
-if (enumerators.length > 0) every(enumerateIntervalMs, actions.enumerate);
+loop(() => settings.get().enumerateIntervalMs, actions.enumerate);
 
 // --- Tail (ongoing): /export from ~now, criterion-filtered → auto-approved candidates. ---
-const tailIntervalMs = Number(process.env.TAIL_INTERVAL_MS ?? 60_000);
-if (criterion) {
-  const tail = new TailService(store, new ExportClient(mirrorUrl), criterion);
-  actions.tail = async () => tail.scanOnce();
-  every(tailIntervalMs, actions.tail);
-}
+actions.tail = async () => {
+  const s = settings.get();
+  if (!s.criterion) return { skipped: "no criterion set" };
+  const tail = new TailService(store, new ExportClient(s.mirrorUrl), parseCriterion(s.criterion));
+  return tail.scanOnce();
+};
+loop(() => settings.get().tailIntervalMs, actions.tail);
 
 // --- Enrich: throttled identity metadata over the directory (always cheap/off-chain). ---
-const enrichIntervalMs = Number(process.env.ENRICH_INTERVAL_MS ?? 30_000);
-const enrichBatch = Number(process.env.ENRICH_BATCH ?? 50);
-const enrichDelayMs = Number(process.env.ENRICH_DELAY_MS ?? 200);
-const enricher = new EnrichmentService(store, new DirectoryResolver(directoryUrl));
-actions.enrich = async () => enricher.enrichStale(enrichBatch, enrichDelayMs);
-if (enrichIntervalMs > 0) every(enrichIntervalMs, actions.enrich);
+actions.enrich = async () => {
+  const s = settings.get();
+  const enricher = new EnrichmentService(store, new DirectoryResolver(s.directoryUrl));
+  return enricher.enrichStale(s.enrichBatch, s.enrichDelayMs);
+};
+loop(() => settings.get().enrichIntervalMs, actions.enrich);
 
 // --- Refresh (read side): §4 status + the diverged alarm. Needs an RPC. ---
-const rpc = process.env.STARKNET_RPC;
-const refreshIntervalMs = Number(process.env.REFRESH_INTERVAL_MS ?? 300_000);
-const feeResolver: FeeResolver | null = rpc ? starknetFeeResolver(rpc) : null;
 if (rpc) {
-  const refresher = new RefreshService(store, new WitnessChecker(rpc, contractAddress, directoryUrl));
   actions.refresh = async () => {
+    const refresher = new RefreshService(store, new WitnessChecker(rpc, contractAddress, settings.get().directoryUrl));
     const diverged = await refresher.refreshAll();
     lastRefreshAt = Date.now();
     if (diverged > 0) console.error(`[refresh] ${diverged} DID(s) DIVERGED`);
     return { diverged, lastRefreshAt };
   };
-  if (refreshIntervalMs > 0) every(refreshIntervalMs, actions.refresh);
+  loop(() => settings.get().refreshIntervalMs, actions.refresh);
 } else {
   console.error("[refresh] disabled (set STARKNET_RPC)");
 }
 
 // --- Onboard: the spend. Only when a live ingest is configured; gated on Active + budget. ---
-const ingestCommand = process.env.INGEST_COMMAND?.trim();
 if (ingestCommand) {
-  const onboarder = new Onboarder(
-    store,
-    new SpawnRunner(),
-    { ingestCommand: ingestCommand.split(/\s+/), source: directoryUrl, defaultBudget: importBudget },
-    feeResolver,
-  );
-  // Onboarding runs on the refresh cadence but is a no-op unless Active (the spend gate).
-  actions.onboard = async () => onboarder.onboardApproved();
-  every(refreshIntervalMs, actions.onboard);
+  const argv = ingestCommand.split(/\s+/);
+  actions.onboard = async () => {
+    const s = settings.get();
+    const onboarder = new Onboarder(
+      store,
+      new SpawnRunner(),
+      { ingestCommand: argv, source: s.directoryUrl, defaultBudget: s.importBudget },
+      feeResolver,
+    );
+    return onboarder.onboardApproved();
+  };
+  loop(() => settings.get().refreshIntervalMs, actions.onboard);
 } else {
   console.error("[onboard] disabled (set INGEST_COMMAND to enable on-chain writes)");
 }
@@ -154,9 +185,26 @@ if (adminSecret) {
     "(or CONSOLE_ALLOW_OPEN_WRITES=1 to run open)");
 }
 
+/** The current criterion label for healthz/UI (settings guarantees a valid-or-empty spec). */
+const criterionLabel = (): string | null => {
+  const c = settings.get().criterion;
+  return c ? parseCriterion(c).label : null;
+};
+
+/** Boot-only / secret config, surfaced read-only in the Settings panel — presence only, no values. */
+const locked = () => ({
+  contractAddress,
+  port,
+  dbPath,
+  rpcConfigured: Boolean(rpc),
+  ingestConfigured: Boolean(ingestCommand),
+});
+
 const server = createConsoleServer(store, {
   contractAddress,
-  criterionLabel: criterion?.label,
+  criterionLabel,
+  settings,
+  locked,
   lastRefreshAt: () => lastRefreshAt,
   actions,
   auth,
@@ -165,6 +213,6 @@ const server = createConsoleServer(store, {
 server.listen(port, () =>
   console.error(
     `console listening on :${port} (anchor ${contractAddress}; ` +
-      `active=${store.getActive()} budget=${store.getBudget() ?? importBudget})`,
+      `active=${store.getActive()} budget=${store.getBudget() ?? settings.get().importBudget})`,
   ),
 );

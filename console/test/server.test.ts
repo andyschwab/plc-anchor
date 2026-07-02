@@ -7,6 +7,7 @@ import { after, before, test } from "node:test";
 import { SharedSecretAuth } from "../src/auth.ts";
 import { createConsoleServer } from "../src/server.ts";
 import { RosterStore } from "../src/roster.ts";
+import { SettingsStore } from "../src/settings.ts";
 
 const DID = "did:plc:abcdefghijklmnopqrstuvwx";
 let base = "";
@@ -14,7 +15,12 @@ let store: RosterStore;
 const server = (() => {
   store = RosterStore.open();
   // These CRUD tests exercise routes without auth, so opt into open-writes explicitly.
-  return createConsoleServer(store, { contractAddress: "0xanchor", allowOpenWrites: true });
+  return createConsoleServer(store, {
+    contractAddress: "0xanchor",
+    allowOpenWrites: true,
+    settings: new SettingsStore(store),
+    locked: () => ({ port: 8787, contractAddress: "0xanchor", rpcConfigured: false }),
+  });
 })();
 
 before(async () => {
@@ -110,6 +116,29 @@ test("settings/active reads and sets the toggle + budget", async () => {
 
   // Reset for later tests.
   await req("POST", "/settings/active", { active: false, budget: null });
+});
+
+test("GET /settings returns live settings + a read-only locked snapshot", async () => {
+  const { status, json } = await req("GET", "/settings");
+  assert.equal(status, 200);
+  assert.equal(json.settings.tailIntervalMs, 60000);
+  assert.deepEqual(json.settings.pdsEndpoints, ["https://eurosky.social"]);
+  assert.equal(json.locked.contractAddress, "0xanchor");
+  assert.equal(json.locked.rpcConfigured, false);
+});
+
+test("PUT /settings patches live fields and rejects bad input", async () => {
+  const ok = await req("PUT", "/settings", { tailIntervalMs: 12345, criterion: "pds_domain:eurosky.social" });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.settings.tailIntervalMs, 12345);
+  assert.equal(ok.json.settings.criterion, "pds_domain:eurosky.social");
+  // Persisted: a fresh GET sees it.
+  assert.equal((await req("GET", "/settings")).json.settings.tailIntervalMs, 12345);
+  // Bad input → 400.
+  const bad = await req("PUT", "/settings", { importBudget: -5 });
+  assert.equal(bad.status, 400);
+  const badCrit = await req("PUT", "/settings", { criterion: "bogus:x" });
+  assert.equal(badCrit.status, 400);
 });
 
 test("aggregates rollup exposes counts, fee totals, active, and cursors", async () => {

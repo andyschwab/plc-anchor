@@ -79,6 +79,7 @@ on-chain" however it got there. Transitions are validated (`ALLOWED_TRANSITIONS`
 | POST | `/roster/dids/:did/approve` | `candidate → approved` (manual; unused by the criterion UI) |
 | DELETE | `/roster/dids/:did` | → `removed` |
 | GET/POST | `/settings/active` | read / set the Active toggle (`{active, budget?}`) |
+| GET/PUT | `/settings` | read / patch the **live config** (below); `PUT` validates, 400 on bad input |
 | POST | `/worker/{enumerate,tail,enrich,onboard,refresh}` | kick a worker cycle now |
 
 `GET /roster` query params: `state`, `status`, `q` (substring over DID + handle), `pdsHost`,
@@ -92,6 +93,25 @@ the onboarder captures the tip tx and resolves `actual_fee` via `STARKNET_RPC` (
 accumulating per-DID fee (genesis + appends). If the ingest build predates the `ANCHORED` line, it
 degrades to count-only. Fees are stored as raw decimal felt strings (STRK wei) and rolled up in
 `/roster/aggregates`.
+
+## Live settings (the ⚙ panel)
+
+Non-secret config is **runtime-editable** — no redeploy. The UI's **Settings** panel reads/writes
+`GET/PUT /settings`; edits persist in the store (`meta` KV, on the Fly volume) and take effect on
+the **next worker tick** (the loops re-read config each cycle, and cadence changes reschedule live
+via a self-scheduling timer). Editable fields: `criterion`, `pdsEndpoints`, `importBudget`, the
+four loop intervals (`0` disables a loop), `enrichBatch`/`enrichDelayMs`, `directoryUrl`/`mirrorUrl`
+(plus `active`, which is the header toggle). Validation is server-side (`src/settings.ts`): the
+criterion must parse, intervals/counts are non-negative integers, URLs must be well-formed.
+
+Precedence (low → high): hardcoded defaults ← optional `SETTINGS_DEFAULTS_FILE` (a committed JSON
+seed) ← **env** ← **persisted UI edits**. So env stays authoritative for any field nobody has
+touched, a committed file can carry deploy defaults, and a UI edit wins at runtime. **Boot-only and
+secret** config (`PORT`, `ROSTER_DB`, `ANCHOR_CONTRACT_ADDRESS`, `INGEST_COMMAND`, `STARKNET_RPC`,
+the account keys, `CONSOLE_ADMIN_TOKEN`) is **not** editable here — it stays in env and is surfaced
+**read-only** in the panel (presence booleans + non-secret identifiers only; secret *values* are
+never returned). Changing the criterion re-scopes membership going forward but does not auto-remove
+DIDs that no longer match; swapping PDS endpoints leaves prior cursors/DIDs in place.
 
 ## Auth (write gate)
 
@@ -146,10 +166,13 @@ Env (criterion-driven additions in **bold**):
 | `REFRESH_INTERVAL_MS` | status refresh + onboard cadence | `300000` |
 | `INGEST_COMMAND` | ingest argv (enables on-chain writes) | (unset → onboarding off) |
 | `PORT` / `ROSTER_DB` | HTTP port / SQLite path | `8787` / `./roster.db` |
+| `SETTINGS_DEFAULTS_FILE` | optional JSON file of default live settings (below env) | (none) |
 | `CONSOLE_ADMIN_TOKEN` / `CONSOLE_SESSION_TTL_MS` / `CONSOLE_ALLOW_OPEN_WRITES` | the write gate | closed |
 
-The Active toggle, budget, and all cursors persist in the store, so a restart resumes mid-backlog
-and honours the last operator toggle (`ACTIVE_DEFAULT` only seeds the first boot).
+The **bold** rows only *seed* the live settings (see [Live settings](#live-settings-the--panel)) —
+once edited in the ⚙ panel, the stored value wins over env. The Active toggle, budget, and all
+cursors persist in the store, so a restart resumes mid-backlog and honours the last operator toggle
+(`ACTIVE_DEFAULT` only seeds the first boot).
 
 ## Deploy (Fly)
 

@@ -61,6 +61,14 @@
   .stat .v { font-size: 18px; font-weight: 600; margin-top: 2px; }
   .filters { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  /* Settings panel */
+  .setgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 18px; }
+  .setgrid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  .setgrid input { width: 100%; }
+  .locked { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .locked .k { color: var(--muted); } .locked code { color: var(--fg); }
+  .saverow { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .ok { color: var(--ok); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -70,6 +78,7 @@
   <span class="toggle" style="margin-left:auto">
     <span class="meta" id="budgetWrap" hidden>budget <input id="budget" type="number" min="0" style="width:64px" /></span>
     <button id="toggle" class="off" title="gates on-chain anchoring (the spend)">○ Inactive</button>
+    <button id="settingsBtn" title="edit console settings">⚙ Settings</button>
     <span id="authBox" class="row" hidden>
       <input id="secret" type="password" placeholder="admin secret" style="min-width:140px" />
       <button class="primary" id="unlock">Unlock</button>
@@ -93,6 +102,18 @@
       <button id="w-enrich">Enrich</button>
       <button id="w-onboard">Onboard</button>
       <button id="w-refresh">Refresh</button>
+    </div>
+  </section>
+
+  <section class="panel" id="settingsPanel" hidden>
+    <h2>Settings — live config (no redeploy)</h2>
+    <div class="setgrid" id="setgrid"></div>
+    <div class="locked" id="lockedBox"></div>
+    <div class="saverow">
+      <button class="primary" id="saveSettings">Save</button>
+      <span class="err" id="settingsErr"></span>
+      <span class="ok" id="settingsOk"></span>
+      <span class="muted" id="settingsNote"></span>
     </div>
   </section>
 
@@ -301,6 +322,65 @@ document.getElementById("unlock").onclick = () => guard(async () => {
   renderAuth();
 });
 document.getElementById("lock").onclick = () => { sessionStorage.removeItem(TOKEN_KEY); renderAuth(); };
+
+// --- Settings panel (live, non-secret config) ---
+const putj = (path, body) => api(path, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+const canWrite = () => writeMode === "open" || (writeMode === "gated" && !!token());
+const SETTING_FIELDS = [
+  { key: "criterion", label: "Criterion (empty disables the tail)", type: "text", ph: "pds_domain:eurosky.social" },
+  { key: "pdsEndpoints", label: "PDS endpoints (comma/newline separated)", type: "list", ph: "https://eurosky.social" },
+  { key: "directoryUrl", label: "PLC directory URL", type: "text" },
+  { key: "mirrorUrl", label: "/export mirror URL", type: "text" },
+  { key: "enumerateIntervalMs", label: "Enumerate interval (ms, 0=off)", type: "int" },
+  { key: "tailIntervalMs", label: "Tail interval (ms, 0=off)", type: "int" },
+  { key: "enrichIntervalMs", label: "Enrich interval (ms, 0=off)", type: "int" },
+  { key: "refreshIntervalMs", label: "Refresh interval (ms, 0=off)", type: "int" },
+  { key: "enrichBatch", label: "Enrich batch (per tick)", type: "int" },
+  { key: "enrichDelayMs", label: "Enrich delay (ms/request)", type: "int" },
+];
+
+async function loadSettings() {
+  document.getElementById("settingsErr").textContent = "";
+  document.getElementById("settingsOk").textContent = "";
+  const { settings, locked } = await api("/settings");
+  const editable = canWrite();
+  document.getElementById("setgrid").innerHTML = SETTING_FIELDS.map((f) => {
+    const v = f.key === "pdsEndpoints" ? (settings.pdsEndpoints || []).join(", ") : settings[f.key];
+    const type = f.type === "int" ? "number" : "text";
+    return `<label>${esc(f.label)}
+      <input id="set-${f.key}" type="${type}" value="${esc(v == null ? "" : v)}" placeholder="${esc(f.ph || "")}" ${editable ? "" : "disabled"} /></label>`;
+  }).join("");
+  document.getElementById("lockedBox").innerHTML =
+    `<div class="k" style="margin-bottom:6px">Boot-only / secret (set via env, restart to change)</div>` +
+    Object.entries(locked).map(([k, val]) => `<div class="k">${esc(k)}: <code>${esc(String(val))}</code></div>`).join("");
+  const note = document.getElementById("settingsNote");
+  document.getElementById("saveSettings").disabled = !editable;
+  note.textContent = editable ? "Active + budget are in the header." : "unlock to edit";
+}
+
+async function saveSettings() {
+  const patch = {};
+  for (const f of SETTING_FIELDS) {
+    const raw = document.getElementById("set-" + f.key).value;
+    if (f.type === "int") patch[f.key] = Number(raw);
+    else if (f.type === "list") patch[f.key] = raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+    else patch[f.key] = raw.trim();
+  }
+  await putj("/settings", patch);
+  document.getElementById("settingsOk").textContent = "saved ✓";
+  setTimeout(() => { document.getElementById("settingsOk").textContent = ""; }, 2500);
+}
+
+document.getElementById("settingsBtn").onclick = async () => {
+  const p = document.getElementById("settingsPanel");
+  p.hidden = !p.hidden;
+  if (!p.hidden) { try { await loadSettings(); } catch (e) { document.getElementById("settingsErr").textContent = e.message; } }
+};
+document.getElementById("saveSettings").onclick = async () => {
+  document.getElementById("settingsErr").textContent = "";
+  try { await saveSettings(); await refreshAll(); }
+  catch (e) { document.getElementById("settingsErr").textContent = e.message; }
+};
 
 refreshAll().catch((e) => { document.getElementById("criterion").textContent = "error: " + e.message; });
 setInterval(() => refreshAll().catch(() => {}), 15000);

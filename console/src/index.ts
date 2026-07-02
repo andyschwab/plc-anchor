@@ -21,6 +21,14 @@ export {
   pdsHostFromOp,
 } from "./pdshost.ts";
 export { type Criterion, parseCriterion } from "./criterion.ts";
+export {
+  type ConsoleSettings,
+  SETTINGS_DEFAULTS,
+  SETTINGS_KEYS,
+  type SettingsBackingStore,
+  SettingsStore,
+  validateSettings,
+} from "./settings.ts";
 export { type CheckOutcome, RefreshService, type StatusChecker } from "./refresh.ts";
 export {
   type AnchorLine,
@@ -56,5 +64,10 @@ export {
   identityFromLog,
   type IdentityResolver,
 } from "./enrich.ts";
-export { createConsoleServer, type ServerConfig, type WorkerActions } from "./server.ts";
+export {
+  createConsoleServer,
+  type ServerConfig,
+  type SettingsPort,
+  type WorkerActions,
+} from "./server.ts";
 export { type Authenticator, type Session, SharedSecretAuth } from "./auth.ts";

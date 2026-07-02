@@ -18,6 +18,7 @@ primary_region = "fra"
 
 [env]
   # Eurosky-MVP: criterion-driven roster (domain-suffix match), enumerate + tail discovery.
+  # These SEED the live settings — once edited in the ⚙ Settings panel, the stored value wins.
   ROSTER_CRITERION = 'pds_domain:eurosky.social'
   PDS_ENDPOINTS = 'https://eurosky.social'
   ACTIVE_DEFAULT = 'false'          # spend gate off at first boot; flip on in the UI

@@ -31,10 +31,22 @@ export interface WorkerActions {
   refresh?: () => Promise<unknown>;
 }
 
+/** The live-settings port (implemented by `SettingsStore`); `patch` throws on invalid input. */
+export interface SettingsPort {
+  get(): unknown;
+  patch(partial: Record<string, unknown>): unknown;
+}
+
 export interface ServerConfig {
   contractAddress: string;
-  /** The deployment's membership criterion, surfaced read-only in the UI/healthz. */
-  criterionLabel?: string;
+  /** The current membership criterion label, surfaced in the UI/healthz. A getter (not a string)
+   * because the criterion is now runtime-editable, so a cached label would go stale. */
+  criterionLabel?: () => string | null;
+  /** Runtime-editable settings (enables `GET/PUT /settings`). */
+  settings?: SettingsPort;
+  /** Boot-only / secret config surfaced read-only alongside `GET /settings` (never secret values —
+   * only presence booleans and non-secret identifiers like the contract address / port). */
+  locked?: () => Record<string, unknown>;
   /** Reported by `/healthz`; set by the worker after each successful refresh. */
   lastRefreshAt?: () => number | null;
   actions?: WorkerActions;
@@ -145,7 +157,7 @@ function routes(): Route[] {
       handle: ({ store, config }) => ({
         ok: true,
         contractAddress: config.contractAddress,
-        criterion: config.criterionLabel ?? null,
+        criterion: config.criterionLabel?.() ?? null,
         writeMode: writeMode(config),
         active: store.getActive(),
         lastRefreshAt: config.lastRefreshAt?.() ?? null,
@@ -245,6 +257,29 @@ function routes(): Route[] {
           } else throw new HttpError(400, "budget must be a non-negative integer or null");
         }
         return { active: store.getActive(), budget: store.getBudget() };
+      },
+    },
+    {
+      // Full live settings + a read-only snapshot of the boot-only / secret config.
+      method: "GET",
+      parts: ["settings"],
+      handle: ({ config }) => {
+        if (config.settings === undefined) throw new HttpError(503, "settings not configured");
+        return { settings: config.settings.get(), locked: config.locked?.() ?? {} };
+      },
+    },
+    {
+      // Patch live settings (validated in the store; bad input → 400). Auth-gated like all writes.
+      method: "PUT",
+      parts: ["settings"],
+      handle: ({ config, body }) => {
+        if (config.settings === undefined) throw new HttpError(503, "settings not configured");
+        if (body === null || typeof body !== "object") throw new HttpError(400, "expected an object body");
+        try {
+          return { settings: config.settings.patch(body as Record<string, unknown>) };
+        } catch (err) {
+          throw new HttpError(400, err instanceof Error ? err.message : "invalid settings");
+        }
       },
     },
     { method: "POST", parts: ["worker", "enumerate"], handle: ({ config }) => runAction(config, "enumerate") },
