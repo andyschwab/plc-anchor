@@ -52,18 +52,16 @@ Goal: stop juggling critical bits. Each secret has **exactly one home** and one 
 ## Phase 0 — Repo readiness (no chain writes)
 
 - [ ] `make ci` green on `main` (the consensus gate is the source of truth for test health).
-- [ ] **Fail-closed fix — console.** `console/src/main.ts:52` falls back to the **Sepolia**
-      address when `ANCHOR_CONTRACT_ADDRESS` is unset. A prod console with a missing/typo'd secret
-      would silently read the *testnet* contract. Change: require the env var (throw at boot if
-      absent) — no network fallback. Keep the Sepolia constant only as an explicit dev default,
-      never as the production path.
-- [ ] **Fail-closed fix — witness.** `witness-ts/src/cli.ts:19` `DEFAULT_CONTRACT` is Sepolia.
-      For mainnet reads the caller must pass `--contract`; make the default explicit (env
-      `WITNESS_CONTRACT`/`ANCHOR_CONTRACT_ADDRESS`) and document that mainnet requires it.
-- [ ] **Prod roster policy decided, not inherited.** `console/fly.toml` seeds
-      `ROSTER_CRITERION=pds_domain:eurosky.social`. Confirm the mainnet criterion, PDS endpoints,
-      and `IMPORT_BUDGET_PER_TICK`, and that `ACTIVE_DEFAULT=false` (spend gate off at boot).
-      These go in the new `console/fly.prod.toml` (Phase 4), not the testnet toml.
+- [x] **Fail-closed fix — console.** `console/src/main.ts` no longer falls back to Sepolia in
+      production: `resolveContractAddress()` throws at boot if `ANCHOR_CONTRACT_ADDRESS` is unset
+      and `NODE_ENV=production` (the Sepolia constant is a dev-only convenience). *(landed)*
+- [x] **Fail-closed fix — witness.** `witness-ts/src/cli.ts` resolves the contract as
+      `--contract` → `$ANCHOR_CONTRACT_ADDRESS` → Sepolia default; mainnet reads require an
+      explicit mainnet address (documented in the CLI header). *(landed)*
+- [x] **Prod roster policy decided, not inherited.** Mainnet's first real target is confirmed:
+      `ROSTER_CRITERION=pds_domain:eurosky.social`, `PDS_ENDPOINTS=https://eurosky.social`,
+      `ACTIVE_DEFAULT=false` (spend gate off at boot). `IMPORT_BUDGET_PER_TICK` to be finalized
+      against the Phase-1 fee measurement. These go in the new `console/fly.prod.toml` (Phase 4).
 - [ ] Toolchain matches `.tool-versions`: Scarb/Cairo 2.18.0, snforge 0.61.0, USC 2.9.0,
       Rust 1.96.0; `sncast --version` == 0.61.0; `flyctl` + `gh` installed and authed locally.
 
