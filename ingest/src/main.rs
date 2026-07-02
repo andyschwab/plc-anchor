@@ -270,8 +270,9 @@ fn single_did_submit(
     eprintln!("ingest: submitting to anchor {:#x}", sink.contract());
     let stats = ingest::onboard_via_import(entries, did, &mut sink, cursor)?;
     print_stats(&stats);
-    // Confirm the on-chain effect.
-    if sink.is_anchored(did)? {
+    // Confirm the on-chain effect. Reads target the latest accepted block; give it a beat to
+    // surface there after acceptance.
+    if sink.wait_anchored(did)? {
         let head = sink.call_byte_array_view("head_cid", did.as_bytes())?;
         eprintln!(
             "ingest: on-chain head_cid = {}",
@@ -279,6 +280,10 @@ fn single_did_submit(
         );
         let root = sink.call_byte_array_view("tentative_root", &[])?;
         eprintln!("ingest: tentative_root = {}", hex::encode(root));
+    } else {
+        eprintln!(
+            "ingest: tx accepted, but {did} not yet visible at the latest block — re-check shortly"
+        );
     }
     Ok(())
 }

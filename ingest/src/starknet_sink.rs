@@ -142,7 +142,11 @@ impl StarknetSink {
                 entry_point_selector: get_selector_from_name(function)?,
                 calldata,
             },
-            BlockId::Tag(BlockTag::PreConfirmed),
+            // Read the latest ACCEPTED block, not pre-confirmed. These are post-acceptance
+            // confirmation reads; a pre-confirmed snapshot on some nodes is internally
+            // inconsistent (a storage `Map` slot updated while the `Vec`-length slot backing
+            // `tentative_root` still reads stale), which surfaced a spurious empty root.
+            BlockId::Tag(BlockTag::Latest),
         ))?;
         byte_array_from_felts(&felts)
     }
@@ -156,9 +160,30 @@ impl StarknetSink {
                 entry_point_selector: get_selector_from_name("is_anchored")?,
                 calldata: byte_array_calldata(did.as_bytes()),
             },
-            BlockId::Tag(BlockTag::PreConfirmed),
+            // Latest accepted block — consistent snapshot (see `call_byte_array_view`).
+            BlockId::Tag(BlockTag::Latest),
         ))?;
         Ok(felts.first().copied().unwrap_or(Felt::ZERO) != Felt::ZERO)
+    }
+
+    /// Poll `is_anchored` at the latest accepted block until a just-submitted tx surfaces there, or
+    /// a short bound elapses. `wait_for_acceptance` returns on a `Succeeded` receipt, which can
+    /// briefly precede the tx appearing at `latest` (the confirmation reads target `latest`, not the
+    /// internally-inconsistent pre-confirmed snapshot). Returns whether it became visible.
+    pub fn wait_anchored(&self, did: &str) -> Result<bool> {
+        let poll = Duration::from_secs(3);
+        let bound = Duration::from_secs(90);
+        let mut waited = Duration::ZERO;
+        loop {
+            if self.is_anchored(did)? {
+                return Ok(true);
+            }
+            if waited >= bound {
+                return Ok(false);
+            }
+            std::thread::sleep(poll);
+            waited += poll;
+        }
     }
 
     async fn submit_and_wait(&self, call: Call, did: &str) -> Result<()> {
