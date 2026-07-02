@@ -114,6 +114,73 @@ test("diverged() returns only anchored+diverged", () => {
   assert.equal(d[0].did, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
 });
 
+test("autoApprove queues a matched candidate (no manual gate)", () => {
+  const s = store();
+  const e = s.autoApprove(DID, "pds:eurosky.social", "eurosky.social");
+  assert.equal(e.state, "approved", "discovery auto-advances candidate → approved");
+  assert.equal(e.source, "pds:eurosky.social");
+  assert.equal(e.pdsHost, "eurosky.social");
+  assert.equal(e.discoveredAt !== null, true, "discovery stamps discoveredAt");
+  // Idempotent: re-running does not disturb an in-flight DID.
+  s.transition(DID, "onboarding");
+  assert.equal(s.autoApprove(DID, "pds:eurosky.social").state, "onboarding");
+});
+
+test("transition to anchored stamps anchoredAt once", () => {
+  const s = store();
+  s.upsertCandidate(DID, "explicit");
+  s.transition(DID, "approved");
+  s.transition(DID, "onboarding");
+  const anchored = s.transition(DID, "anchored");
+  assert.ok(anchored.anchoredAt !== null);
+  const first = anchored.anchoredAt;
+  // A later removed→candidate→…→anchored round must not reset the original stamp.
+  // (anchored can only go to removed; re-anchoring keeps the first timestamp.)
+  assert.equal(s.get(DID)!.anchoredAt, first);
+});
+
+test("setEnrichment records PLC-derived identity context", () => {
+  const s = store();
+  s.upsertCandidate(DID, "explicit");
+  s.setEnrichment(DID, {
+    handle: "alice.eurosky.social",
+    pdsHost: "eurosky.social",
+    keyCount: 2,
+    lastOpAt: 1_700_000_000_000,
+    tombstoned: false,
+  });
+  const e = s.get(DID)!;
+  assert.equal(e.handle, "alice.eurosky.social");
+  assert.equal(e.pdsHost, "eurosky.social");
+  assert.equal(e.keyCount, 2);
+  assert.equal(e.lastOpAt, 1_700_000_000_000);
+  assert.equal(e.tombstoned, false);
+  assert.ok(e.enrichedAt !== null);
+});
+
+test("setAnchorCost stores the tip tx and accumulates the fee", () => {
+  const s = store();
+  s.upsertCandidate(DID, "explicit");
+  s.setAnchorCost(DID, "0xtx1", "1000");
+  s.setAnchorCost(DID, "0xtx2", "500");
+  const e = s.get(DID)!;
+  assert.equal(e.anchorTx, "0xtx2", "tip tx is the latest");
+  assert.equal(e.anchorFee, "1500", "fee accumulates across txs");
+});
+
+test("settings: active + budget persist and default safely", () => {
+  const s = store();
+  assert.equal(s.getActive(), false, "active defaults off (no spend at boot)");
+  assert.equal(s.getBudget(), null, "budget unset falls back to the caller default");
+  s.setActive(true);
+  s.setBudget(5);
+  assert.equal(s.getActive(), true);
+  assert.equal(s.getBudget(), 5);
+  assert.deepEqual(s.getSettings(), { active: true, importBudget: 5 });
+  s.setBudget(null);
+  assert.equal(s.getBudget(), null, "budget can be cleared back to the default");
+});
+
 test("filters CRUD + uniqueness", () => {
   const s = store();
   const f = s.addFilter("pds_host", "pds.example.eu");

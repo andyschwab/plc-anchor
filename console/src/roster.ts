@@ -6,7 +6,48 @@
 //! skip the human approve gate and trigger an on-chain write — the cost guardrail.
 
 import { DatabaseSync } from "node:sqlite";
-import type { Filter, RosterEntry, RosterState, WitnessStatus } from "./types.ts";
+import type {
+  Aggregates,
+  Filter,
+  RosterEntry,
+  RosterQuery,
+  RosterState,
+  Settings,
+  WitnessStatus,
+} from "./types.ts";
+
+/** Whitelisted sort keys → real columns (guards the `ORDER BY` against injection). */
+const SORT_COLUMNS: Readonly<Record<string, string>> = {
+  did: "did",
+  handle: "handle",
+  state: "state",
+  status: "status",
+  pdsHost: "pds_host",
+  pds_host: "pds_host",
+  keyCount: "key_count",
+  key_count: "key_count",
+  lastOpAt: "last_op_at",
+  last_op_at: "last_op_at",
+  anchoredAt: "anchored_at",
+  anchored_at: "anchored_at",
+  anchorFee: "anchor_fee",
+  anchor_fee: "anchor_fee",
+  discoveredAt: "discovered_at",
+  discovered_at: "discovered_at",
+  updatedAt: "updated_at",
+  updated_at: "updated_at",
+};
+
+/** Escape LIKE wildcards in user substrings (paired with `ESCAPE` is overkill here; we simply
+ * neutralize `%` and `_` so a search box can't match everything). */
+function likeEscape(s: string): string {
+  return s.replace(/[\\%_]/g, "\\$&");
+}
+
+function clampInt(v: number | undefined, dflt: number, lo: number, hi: number): number {
+  if (v === undefined || !Number.isFinite(v)) return dflt;
+  return Math.min(hi, Math.max(lo, Math.trunc(v)));
+}
 
 /** Legal lifecycle transitions. A filter match enters at `candidate`; only an operator's
  * approve moves `candidate → approved`, and only then can the *onboarder* write on-chain.
@@ -34,11 +75,24 @@ CREATE TABLE IF NOT EXISTS roster (
   status_checked_at INTEGER,
   head_cid          TEXT,
   error             TEXT,
+  handle            TEXT,
+  key_count         INTEGER,
+  last_op_at        INTEGER,
+  tombstoned        INTEGER,
+  enriched_at       INTEGER,
+  anchored_at       INTEGER,
+  anchor_tx         TEXT,
+  anchor_fee        TEXT,
+  discovered_at     INTEGER,
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS roster_state_idx  ON roster(state);
-CREATE INDEX IF NOT EXISTS roster_status_idx ON roster(status);
+CREATE INDEX IF NOT EXISTS roster_state_idx    ON roster(state);
+CREATE INDEX IF NOT EXISTS roster_status_idx   ON roster(status);
+CREATE INDEX IF NOT EXISTS roster_handle_idx   ON roster(handle);
+CREATE INDEX IF NOT EXISTS roster_pdshost_idx  ON roster(pds_host);
+CREATE INDEX IF NOT EXISTS roster_anchored_idx ON roster(anchored_at);
+CREATE INDEX IF NOT EXISTS roster_enriched_idx ON roster(enriched_at);
 CREATE TABLE IF NOT EXISTS filters (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   type       TEXT NOT NULL,
@@ -53,6 +107,24 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 `;
 
+/** Columns added after the initial schema. Applied idempotently to pre-existing DBs so a
+ * deployed store picks up the enrichment/anchor fields without a manual migration. */
+const ADDED_COLUMNS: ReadonlyArray<[string, string]> = [
+  ["handle", "TEXT"],
+  ["key_count", "INTEGER"],
+  ["last_op_at", "INTEGER"],
+  ["tombstoned", "INTEGER"],
+  ["enriched_at", "INTEGER"],
+  ["anchored_at", "INTEGER"],
+  ["anchor_tx", "TEXT"],
+  ["anchor_fee", "TEXT"],
+  ["discovered_at", "INTEGER"],
+];
+
+// Settings live in the `meta` KV under stable keys.
+const META_ACTIVE = "settings:active";
+const META_BUDGET = "settings:import_budget";
+
 interface RosterRow {
   did: string;
   state: string;
@@ -63,6 +135,15 @@ interface RosterRow {
   status_checked_at: number | null;
   head_cid: string | null;
   error: string | null;
+  handle: string | null;
+  key_count: number | null;
+  last_op_at: number | null;
+  tombstoned: number | null;
+  enriched_at: number | null;
+  anchored_at: number | null;
+  anchor_tx: string | null;
+  anchor_fee: string | null;
+  discovered_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -78,6 +159,15 @@ function toEntry(row: RosterRow): RosterEntry {
     statusCheckedAt: row.status_checked_at,
     headCid: row.head_cid,
     error: row.error,
+    handle: row.handle,
+    keyCount: row.key_count,
+    lastOpAt: row.last_op_at,
+    tombstoned: row.tombstoned === null ? null : row.tombstoned !== 0,
+    enrichedAt: row.enriched_at,
+    anchoredAt: row.anchored_at,
+    anchorTx: row.anchor_tx,
+    anchorFee: row.anchor_fee,
+    discoveredAt: row.discovered_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -118,6 +208,20 @@ export class RosterStore {
     this.#db = db;
     this.#now = now;
     this.#db.exec(SCHEMA);
+    this.#migrate();
+  }
+
+  /** Add any post-initial columns missing from a pre-existing DB (idempotent). `CREATE TABLE IF
+   * NOT EXISTS` never alters an existing table, so a store opened on an old file needs this. */
+  #migrate(): void {
+    const cols = new Set(
+      (this.#db.prepare("PRAGMA table_info(roster)").all() as { name: string }[]).map(
+        (c) => c.name,
+      ),
+    );
+    for (const [name, type] of ADDED_COLUMNS) {
+      if (!cols.has(name)) this.#db.exec(`ALTER TABLE roster ADD COLUMN ${name} ${type}`);
+    }
   }
 
   /** Open a store at `path` (`:memory:` for tests). */
@@ -148,11 +252,104 @@ export class RosterStore {
     return (rows as RosterRow[]).map(toEntry);
   }
 
+  /** Server-side paginated / filtered / sorted query — the roster grid's backend at 20k+ scale.
+   * `q` is a substring over DID + handle; `pdsHost` a substring over the PDS host. Returns the
+   * page plus the unpaginated `total` so the UI can render pagination. */
+  query(opts: RosterQuery = {}): { rows: RosterEntry[]; total: number } {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (opts.state) {
+      where.push("state = ?");
+      params.push(opts.state);
+    }
+    if (opts.status) {
+      where.push("status = ?");
+      params.push(opts.status);
+    }
+    if (opts.pdsHost) {
+      where.push("pds_host LIKE ? ESCAPE '\\'");
+      params.push(`%${likeEscape(opts.pdsHost)}%`);
+    }
+    if (opts.q) {
+      where.push("(did LIKE ? ESCAPE '\\' OR handle LIKE ? ESCAPE '\\')");
+      params.push(`%${likeEscape(opts.q)}%`, `%${likeEscape(opts.q)}%`);
+    }
+    const clause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
+
+    const total = (
+      this.#db.prepare(`SELECT COUNT(*) AS n FROM roster${clause}`).get(...params) as { n: number }
+    ).n;
+
+    const col = SORT_COLUMNS[opts.sort ?? ""] ?? "updated_at";
+    const order = opts.order === "asc" ? "ASC" : "DESC";
+    // Fee is a decimal felt string: order it numerically.
+    const orderExpr = col === "anchor_fee" ? "CAST(anchor_fee AS REAL)" : col;
+    const limit = clampInt(opts.limit, 50, 1, 1000);
+    const offset = clampInt(opts.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+
+    const rows = this.#db
+      .prepare(
+        `SELECT * FROM roster${clause} ORDER BY ${orderExpr} ${order}, did ASC LIMIT ? OFFSET ?`,
+      )
+      .all(...params, limit, offset);
+    return { rows: (rows as RosterRow[]).map(toEntry), total };
+  }
+
+  /** Dashboard rollup: counts by state + status, the approved backlog, anchored count, and the
+   * cumulative + average on-chain fee (BigInt-summed over the raw felt strings). */
+  aggregates(): Aggregates {
+    const byState: Record<string, number> = {};
+    for (const r of this.#db
+      .prepare("SELECT state, COUNT(*) AS n FROM roster GROUP BY state")
+      .all() as { state: string; n: number }[]) {
+      byState[r.state] = r.n;
+    }
+    const byStatus: Record<string, number> = {};
+    for (const r of this.#db
+      .prepare("SELECT status, COUNT(*) AS n FROM roster WHERE status IS NOT NULL GROUP BY status")
+      .all() as { status: string; n: number }[]) {
+      byStatus[r.status] = r.n;
+    }
+    const fees = this.#db
+      .prepare("SELECT anchor_fee FROM roster WHERE anchor_fee IS NOT NULL")
+      .all() as { anchor_fee: string }[];
+    let feeTotal = 0n;
+    for (const f of fees) feeTotal += parseFelt(f.anchor_fee) ?? 0n;
+    const withFee = fees.length;
+
+    const total = Object.values(byState).reduce((a, b) => a + b, 0);
+    return {
+      total,
+      byState,
+      byStatus,
+      backlog: byState.approved ?? 0,
+      anchored: byState.anchored ?? 0,
+      diverged: byStatus.diverged ?? 0,
+      feeTotal: feeTotal.toString(),
+      feeAverage: withFee > 0 ? (feeTotal / BigInt(withFee)).toString() : "0",
+      anchoredWithFee: withFee,
+    };
+  }
+
   /** Every non-`removed` entry — the DIDs the refresher checks against the anchor. */
   listActive(): RosterEntry[] {
     const rows = this.#db
       .prepare("SELECT * FROM roster WHERE state != 'removed' ORDER BY updated_at DESC")
       .all();
+    return (rows as RosterRow[]).map(toEntry);
+  }
+
+  /** DIDs due for enrichment: never enriched, or enriched before `staleBefore` (epoch ms). Skips
+   * `removed` tombstones. Never-enriched first, then oldest, so the backlog drains fairly. */
+  needingEnrichment(staleBefore: number, limit = 50): RosterEntry[] {
+    const rows = this.#db
+      .prepare(
+        `SELECT * FROM roster
+          WHERE state != 'removed' AND (enriched_at IS NULL OR enriched_at < ?)
+          ORDER BY enriched_at IS NOT NULL, enriched_at ASC
+          LIMIT ?`,
+      )
+      .all(staleBefore, limit);
     return (rows as RosterRow[]).map(toEntry);
   }
 
@@ -172,10 +369,10 @@ export class RosterStore {
     if (existing === null) {
       this.#db
         .prepare(
-          `INSERT INTO roster (did, state, source, pds_host, created_at, updated_at)
-           VALUES (?, 'candidate', ?, ?, ?, ?)`,
+          `INSERT INTO roster (did, state, source, pds_host, discovered_at, created_at, updated_at)
+           VALUES (?, 'candidate', ?, ?, ?, ?, ?)`,
         )
-        .run(did, source, pdsHost, now, now);
+        .run(did, source, pdsHost, now, now, now);
       return this.get(did)!;
     }
     if (existing.state === "removed") {
@@ -196,13 +393,67 @@ export class RosterStore {
     }
     // Leaving onboarding/anchored success clears any prior error.
     const clearErr = to === "anchored" || to === "approved";
+    // Stamp the first time a DID becomes anchored (kept across later refreshes).
+    const stampAnchored = to === "anchored" && entry.anchoredAt === null;
     this.#db
       .prepare(
-        `UPDATE roster SET state = ?, updated_at = ?${clearErr ? ", error = NULL" : ""}
+        `UPDATE roster SET state = ?, updated_at = ?${clearErr ? ", error = NULL" : ""}${
+          stampAnchored ? ", anchored_at = ?" : ""
+        } WHERE did = ?`,
+      )
+      .run(...(stampAnchored ? [to, this.#now(), this.#now(), did] : [to, this.#now(), did]));
+    return this.get(did)!;
+  }
+
+  /** Discovery path: propose a DID and immediately advance it to `approved` (queued for the
+   * onboarder). Replaces the manual per-DID approve gate for the criterion-driven deployment —
+   * the Active toggle + per-tick budget are the spend guardrail now. Idempotent; leaves an
+   * already-`approved`/`onboarding`/`anchored` DID in place. Returns the resulting entry. */
+  autoApprove(did: string, source: string, pdsHost: string | null = null): RosterEntry {
+    const entry = this.upsertCandidate(did, source, pdsHost);
+    if (entry.state === "candidate") return this.transition(did, "approved");
+    return entry;
+  }
+
+  /** Record enrichment (PLC-derived identity context) for a DID. No-op for an unknown DID. */
+  setEnrichment(
+    did: string,
+    e: {
+      handle: string | null;
+      pdsHost: string | null;
+      keyCount: number | null;
+      lastOpAt: number | null;
+      tombstoned: boolean | null;
+    },
+  ): void {
+    this.#db
+      .prepare(
+        `UPDATE roster
+           SET handle = ?, pds_host = ?, key_count = ?, last_op_at = ?, tombstoned = ?,
+               enriched_at = ?, updated_at = ?
          WHERE did = ?`,
       )
-      .run(to, this.#now(), did);
-    return this.get(did)!;
+      .run(
+        e.handle,
+        e.pdsHost,
+        e.keyCount,
+        e.lastOpAt,
+        e.tombstoned === null ? null : e.tombstoned ? 1 : 0,
+        this.#now(),
+        this.#now(),
+        did,
+      );
+  }
+
+  /** Record the on-chain cost of anchoring a DID. `fee` is accumulated (a DID may take several
+   * txs — genesis + appends); `tx` is stored as the latest (tip) tx. No-op for an unknown DID. */
+  setAnchorCost(did: string, tx: string | null, fee: string | null): void {
+    const existing = this.get(did);
+    if (existing === null) return;
+    const total = addFelt(existing.anchorFee, fee);
+    this.#db
+      .prepare("UPDATE roster SET anchor_tx = ?, anchor_fee = ?, updated_at = ? WHERE did = ?")
+      .run(tx ?? existing.anchorTx, total, this.#now(), did);
   }
 
   setPdsHost(did: string, host: string | null): void {
@@ -280,11 +531,70 @@ export class RosterStore {
     return row ? row.value : null;
   }
 
+  /** All meta rows whose key starts with `prefix` (e.g. the per-PDS enumerate cursors). */
+  metaWithPrefix(prefix: string): { key: string; value: string }[] {
+    return this.#db
+      .prepare("SELECT key, value FROM meta WHERE key LIKE ? ESCAPE '\\' ORDER BY key")
+      .all(`${prefix.replace(/[\\%_]/g, "\\$&")}%`) as { key: string; value: string }[];
+  }
+
   setMeta(key: string, value: string): void {
     this.#db
       .prepare(
         "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
       )
       .run(key, value, value);
+  }
+
+  // ---- settings (persisted so the toggle/budget survive restarts) ---------
+
+  /** The on-chain spend gate. Defaults to `false` when never set (fail-safe: no spend at boot). */
+  getActive(): boolean {
+    return this.getMeta(META_ACTIVE) === "1";
+  }
+
+  setActive(active: boolean): void {
+    this.setMeta(META_ACTIVE, active ? "1" : "0");
+  }
+
+  /** Seed the boot default only when the operator has never set it (so a restart honours the last
+   * toggle, not the env default). */
+  setActiveDefault(active: boolean): void {
+    if (this.getMeta(META_ACTIVE) === null) this.setActive(active);
+  }
+
+  /** Per-tick import budget override, or `null` to fall back to the env/caller default. */
+  getBudget(): number | null {
+    const raw = this.getMeta(META_BUDGET);
+    if (raw === null) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  }
+
+  setBudget(budget: number | null): void {
+    if (budget === null) this.#db.prepare("DELETE FROM meta WHERE key = ?").run(META_BUDGET);
+    else this.setMeta(META_BUDGET, String(Math.max(0, Math.trunc(budget))));
+  }
+
+  /** The full persisted settings snapshot. */
+  getSettings(): Settings {
+    return { active: this.getActive(), importBudget: this.getBudget() };
+  }
+}
+
+/** Sum two raw decimal felt strings (on-chain fees, STRK wei) as BigInts. Either may be null. */
+function addFelt(a: string | null, b: string | null): string | null {
+  const ba = parseFelt(a);
+  const bb = parseFelt(b);
+  if (ba === null && bb === null) return a ?? b ?? null;
+  return String((ba ?? 0n) + (bb ?? 0n));
+}
+
+function parseFelt(v: string | null): bigint | null {
+  if (v === null || v.trim() === "") return null;
+  try {
+    return BigInt(v);
+  } catch {
+    return null;
   }
 }

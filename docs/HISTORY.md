@@ -161,6 +161,31 @@ Node ≥22, `node:sqlite` (zero deps); `make console-test`.
   = re-import from genesis, the already-proven path) + cost-allocation (paymaster/AA — MVP runs
   one project-funded account) + governance (`REFERENCE.md` §6/§7).
 
+**Eurosky-MVP upgrade (criterion-driven, 20k-scale).** The hand-curated roster + per-DID approve
+gate was re-shaped for the first real customer: **one fixed deploy-time criterion** — accounts on
+the `eurosky.social` PDS (`ROSTER_CRITERION=pds_domain:<base>`, a **domain-suffix** match, not the
+old exact-host filter) — made operable and cost-safe at ~20k. Load-bearing decisions:
+- **The approve gate scaled by config, not clicks.** 20k manual approvals is untenable, so
+  discovery **auto-approves** matches and the spend guardrail moved to an **Active/Inactive toggle
+  + a per-tick import budget** on the onboarder (persisted, default Inactive at boot). The state
+  machine and `ALLOWED_TRANSITIONS` are unchanged; onboarding is a no-op unless Active. The gate's
+  *purpose* (a broad match can never auto-spend) is preserved — it's just enforced by the toggle.
+- **Discovery = enumerate then tail.** `plc.directory` has no "list DIDs on PDS X" API, so the
+  backlog comes from the PDS itself (`com.atproto.sync.listRepos`, `src/pds.ts`) and ongoing
+  changes from a `/export` tail seeded at ~now (not genesis) filtered by the criterion. Per-PDS
+  enumerate cursors + the tail cursor persist, so restarts resume mid-backlog.
+- **Enrichment is display-only and non-consensus.** Handle / PDS host / key-count / last-op /
+  tombstoned come from the directory audit log (cheap, cached via `enrichedAt`, throttled); the
+  authoritative §4 status still comes from the witness `check()`. `listRepos`/enrichment self-
+  reports never ride into anchored bytes — `ingest`'s integrity invariant re-verifies every import.
+- **Cost is measured, not guessed.** `ingest` emits a machine-readable `ANCHORED <did> tx=<hash>`
+  line; the console captures the tip tx and resolves `actual_fee` via `starknet_getTransactionReceipt`
+  (`src/fees.ts`), rolling cumulative + average fee into `/roster/aggregates` so a small budgeted
+  batch extrapolates before scaling.
+- **Table went server-side.** `GET /roster` is paginated/filtered/sorted over indexed columns
+  (`{rows,total}`); the UI is a debounced grid (queries stay in the low-ms at 20k). The `pds_host`
+  filter CRUD was dropped (criterion is config).
+
 ---
 
 ## Open follow-ups (deliberately deferred)

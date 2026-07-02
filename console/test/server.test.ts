@@ -50,19 +50,33 @@ test("healthz reports contract address and counts", async () => {
   assert.equal(json.counts.total, 0);
 });
 
-test("add → list → approve → detail", async () => {
+test("add → list (paged) → approve → detail", async () => {
   const add = await req("POST", "/roster/dids", { did: DID });
   assert.equal(add.status, 200);
   assert.equal(add.json.state, "candidate");
 
   const list = await req("GET", "/roster");
-  assert.equal(list.json.length, 1);
+  assert.equal(list.json.total, 1);
+  assert.equal(list.json.rows.length, 1);
+  assert.equal(list.json.rows[0].did, DID);
 
   const approve = await req("POST", `/roster/dids/${DID}/approve`);
   assert.equal(approve.json.state, "approved");
 
   const detail = await req("GET", `/roster/dids/${DID}`);
   assert.equal(detail.json.did, DID);
+});
+
+test("roster query filters by state and searches DID + handle", async () => {
+  // DID is 'approved' from the prior test. Filter to approved returns it; candidate returns none.
+  const byApproved = await req("GET", "/roster?state=approved");
+  assert.equal(byApproved.json.total, 1);
+  const byCandidate = await req("GET", "/roster?state=candidate");
+  assert.equal(byCandidate.json.total, 0);
+  const bySearch = await req("GET", `/roster?q=${DID.slice(-6)}`);
+  assert.equal(bySearch.json.total, 1);
+  const noMatch = await req("GET", "/roster?q=zzzzzznope");
+  assert.equal(noMatch.json.total, 0);
 });
 
 test("approving a non-candidate is a 400 (illegal transition surfaced)", async () => {
@@ -82,14 +96,36 @@ test("diverged alarm endpoint", async () => {
   assert.equal(json[0].did, DID);
 });
 
-test("filters create/list/delete", async () => {
-  const add = await req("POST", "/roster/filters", { value: "pds.example.eu" });
-  assert.equal(add.json.value, "pds.example.eu");
-  const list = await req("GET", "/roster/filters");
-  assert.equal(list.json.length, 1);
-  const del = await req("DELETE", `/roster/filters/${add.json.id}`);
-  assert.equal(del.json.ok, true);
-  assert.equal((await req("GET", "/roster/filters")).json.length, 0);
+test("settings/active reads and sets the toggle + budget", async () => {
+  const initial = await req("GET", "/settings/active");
+  assert.equal(initial.json.active, false, "defaults off");
+
+  const on = await req("POST", "/settings/active", { active: true, budget: 5 });
+  assert.equal(on.json.active, true);
+  assert.equal(on.json.budget, 5);
+  assert.equal((await req("GET", "/settings/active")).json.active, true);
+
+  // Bad body is a 400.
+  assert.equal((await req("POST", "/settings/active", { budget: 1 })).status, 400);
+
+  // Reset for later tests.
+  await req("POST", "/settings/active", { active: false, budget: null });
+});
+
+test("aggregates rollup exposes counts, fee totals, active, and cursors", async () => {
+  const { status, json } = await req("GET", "/roster/aggregates");
+  assert.equal(status, 200);
+  assert.equal(typeof json.total, "number");
+  assert.equal(typeof json.byState, "object");
+  assert.equal(typeof json.feeTotal, "string");
+  assert.equal(json.active, false);
+  assert.ok(json.cursors);
+});
+
+test("healthz advertises the criterion and active flag", async () => {
+  const { json } = await req("GET", "/healthz");
+  assert.equal(json.active, false);
+  assert.ok("criterion" in json);
 });
 
 test("unknown route → 404, bad body → 400", async () => {
@@ -190,5 +226,5 @@ test("fail-closed default: no auth + no open flag → writes refused, reads open
 test("open-writes escape hatch: writes allowed without a session", async () => {
   // The main test server runs with allowOpenWrites; confirm healthz reports it and writes pass.
   assert.equal((await req("GET", "/healthz")).json.writeMode, "open");
-  assert.equal((await req("POST", "/roster/filters", { value: "open.example" })).status, 200);
+  assert.equal((await req("POST", "/settings/active", { active: false })).status, 200);
 });
