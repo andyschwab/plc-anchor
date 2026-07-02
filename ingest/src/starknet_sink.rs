@@ -24,7 +24,9 @@ use crate::sink::{AnchorSink, Delta};
 
 /// Connection + identity for the live sink, read from the environment so secrets never touch the
 /// repo: `STARKNET_RPC`, `ANCHOR_CONTRACT_ADDRESS`, `STARKNET_ACCOUNT_ADDRESS`,
-/// `STARKNET_ACCOUNT_PRIVATE_KEY`.
+/// `STARKNET_ACCOUNT_PRIVATE_KEY`. Optional tuning (read in `StarknetSink::new`):
+/// `STARKNET_MAX_L2_GAS` — the per-tx L2 gas ceiling the sink keeps requests under
+/// (default 1.2e9; see `DEFAULT_MAX_L2_GAS`).
 pub struct StarknetConfig {
     /// JSON-RPC endpoint (spec 0.10.x).
     pub rpc_url: String,
@@ -58,6 +60,15 @@ fn felt_env(key: &str) -> Result<Felt> {
 
 type Acct = SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet>;
 
+/// The sequencer's per-transaction L2 gas ceiling (Sepolia rejects above ~1.21e9). We keep the
+/// requested max L2 gas under this. A multi-op `import` re-verifies every op's signature
+/// in-contract, so its L2 gas is large; the account crate's default 1.5× estimate margin overshoots
+/// the cap even when the (deterministic) actual usage fits. Override with `STARKNET_MAX_L2_GAS`.
+const DEFAULT_MAX_L2_GAS: u64 = 1_200_000_000;
+/// Margin applied over the fee estimate before clamping at the cap (headroom for estimate/block
+/// drift; execution gas is otherwise deterministic).
+const GAS_ESTIMATE_MARGIN: f64 = 1.3;
+
 /// A live [`AnchorSink`] that submits each delta as a Starknet invoke v3 transaction (STRK fees)
 /// and waits for acceptance.
 pub struct StarknetSink {
@@ -66,6 +77,8 @@ pub struct StarknetSink {
     contract: Felt,
     /// How long to wait for a submitted tx to surface a non-pending receipt.
     receipt_timeout: Duration,
+    /// Per-tx L2 gas ceiling we keep the requested max under (`STARKNET_MAX_L2_GAS`).
+    max_l2_gas: u64,
 }
 
 impl StarknetSink {
@@ -90,11 +103,16 @@ impl StarknetSink {
         );
         // Estimate against the pending block so back-to-back submits see the prior tx's nonce.
         account.set_block_id(BlockId::Tag(BlockTag::PreConfirmed));
+        let max_l2_gas = std::env::var("STARKNET_MAX_L2_GAS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_MAX_L2_GAS);
         Ok(Self {
             runtime,
             account,
             contract: cfg.contract,
             receipt_timeout: Duration::from_secs(300),
+            max_l2_gas,
         })
     }
 
@@ -144,9 +162,33 @@ impl StarknetSink {
     }
 
     async fn submit_and_wait(&self, call: Call, did: &str) -> Result<()> {
-        let result = self
-            .account
-            .execute_v3(vec![call])
+        let exec = self.account.execute_v3(vec![call]);
+
+        // Set explicit v3 resource bounds so the requested max L2 gas stays under the sequencer's
+        // per-tx ceiling. A multi-op `import` re-verifies every op's signature in-contract, so its
+        // L2 gas is large; the crate's default 1.5× estimate margin overshoots the cap even when
+        // the deterministic actual usage would fit. We estimate, apply a smaller margin, and clamp
+        // L2 gas at the cap. Gas *prices* are left unset — `send()` derives them from the block.
+        let est = exec
+            .estimate_fee()
+            .await
+            .map_err(|e| anyhow!("estimate fee for {did}: {e}"))?;
+        if est.l2_gas_consumed > self.max_l2_gas {
+            bail!(
+                "{did}: this transaction needs {} L2 gas, over the per-tx cap {}. If the network's \
+                 real per-tx limit is higher, raise STARKNET_MAX_L2_GAS. Otherwise the chain is \
+                 too long to `import` in one transaction — a batched settled-import entrypoint \
+                 (import_append) would be needed; see the follow-up in docs/HISTORY.md.",
+                est.l2_gas_consumed,
+                self.max_l2_gas
+            );
+        }
+        let bump = |g: u64| ((g as f64) * GAS_ESTIMATE_MARGIN) as u64;
+        let l2_gas = bump(est.l2_gas_consumed).min(self.max_l2_gas);
+        let result = exec
+            .l1_gas(bump(est.l1_gas_consumed))
+            .l2_gas(l2_gas)
+            .l1_data_gas(bump(est.l1_data_gas_consumed))
             .send()
             .await
             .map_err(|e| anyhow!("submit tx for {did}: {e}"))?;

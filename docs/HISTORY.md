@@ -225,6 +225,13 @@ The roster starts empty; re-import DIDs from genesis (the already-proven path).
   MVP itself has landed (above).
 - **Generalization seam** (`REFERENCE.md` §5a) — the `merkle` leaf is separator-less, sound only
   because did:plc is fixed-width; add a length prefix *before* admitting variable-width subjects.
+- **Batched settled import for long chains** — `import` re-verifies every op's signature in one
+  transaction, so a long history (roughly ≥5–6 ops) can exceed the sequencer's per-tx L2 gas cap
+  (~1.21e9 on Sepolia; the ingest sink clamps the request under it and errors clearly past it).
+  Most did:plc chains are short and import fine. A robust fix for the long tail is an
+  `import_append(did, signed)` entrypoint that appends a **settled** op (same provenance as
+  `import`, so the 4a guard holds) across several transactions — a contract change, hence a
+  redeploy. Deferred until a real chain hits the ceiling.
 - **Trustless root reads (SECURITY-TODO 4c)** — the witness reads the anchor root via
   `starknet_call`, which trusts the RPC; a fully trustless read verifies a **Starknet storage
   proof against the L1-settled state root** (read the Starknet core contract on Ethereum +
