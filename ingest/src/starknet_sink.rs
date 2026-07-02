@@ -203,6 +203,20 @@ impl AnchorSink for StarknetSink {
                     calldata,
                 }
             }
+            Delta::Import { ops, .. } => {
+                // `import(chain: Array<ByteArray>)` — calldata is the array length followed by each
+                // op's ByteArray serialization, in order (genesis first). Marks the whole chain
+                // settled on-chain (SECURITY-TODO 4a).
+                let mut calldata = vec![Felt::from(ops.len())];
+                for op in ops {
+                    calldata.extend(byte_array_calldata(op));
+                }
+                Call {
+                    to: self.contract,
+                    selector: get_selector_from_name("import")?,
+                    calldata,
+                }
+            }
         };
         self.runtime
             .block_on(self.submit_and_wait(call, delta.did()))

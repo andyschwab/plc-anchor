@@ -54,14 +54,18 @@ decision — all differential-green against `@did-plc/lib`.
   cross-check with a CI drift gate. (`REFERENCE.md` §3, §5a.)
 - **Roots are read-time views** (`now`-parameterized), recomputed over the roster — writes stay
   cheap; an incremental on-chain tree is a later optimization if root reads get hot.
-- **Storage = per-DID `Vec<StoredOp>`** (signed bytes + `created_at` + signer index); CID /
-  rotation keys / tombstone all rederive from the bytes.
+- **Storage = per-DID `Vec<StoredOp>`** (signed bytes + `created_at` + signer index + provenance);
+  CID / rotation keys / tombstone all rederive from the bytes.
 - **`createdAt` is not in the signed op** (directory-assigned metadata, absent from the op bytes
   and CID — confirmed against the corpus). The contract uses **Starknet block time** as the
   pragmatic `createdAt` the 72h window measures against; imported ops use the import block time.
-  A freshly imported chain is therefore tentative until observed for 72h — sound (it only
-  re-exposes the recovery window, never lets a non-key-holder mutate a DID). (`REFERENCE.md`
-  §1, §4, §5.)
+  A freshly imported chain is therefore tentative until observed for 72h. **Correction (see the
+  4a fix below):** an earlier note here claimed this was "sound" because it "only re-exposes the
+  recovery window." That was wrong. Re-exposing the recovery window on *backfilled* history is
+  precisely the hazard: an op authored years ago but stamped at import time looks fresh, so a
+  *rotated-out* higher-priority rotation key — no longer the DID's controller — could fork below
+  it within 72h of import and capture the DID. Fixed by marking imported ops **settled** (a
+  recovery may not nullify them); see the 4a entry below. (`REFERENCE.md` §1, §4, §5.)
 
 ## Item 4 — Sync indexer (`ingest/`)
 
@@ -160,6 +164,49 @@ Node ≥22, `node:sqlite` (zero deps); `make console-test`.
 - **Remaining for item 6:** the live Fly bring-up + a fresh **mainnet** contract deploy (migration
   = re-import from genesis, the already-proven path) + cost-allocation (paymaster/AA — MVP runs
   one project-funded account) + governance (`REFERENCE.md` §6/§7).
+
+## Security fix 4a — imported history is settled (recovery-window capture)
+
+The import path stamped every backfilled op with the import block time and measured the 72h
+recovery window against it, so for 72h after onboarding the *entire* history looked freshly
+authored. Because a PLC recovery is authorized by any *strictly-higher-priority* rotation key,
+a key that was higher-priority at a historical fork point but had since been **rotated away**
+(the canonical custodial→self-hosted migration leaves exactly such a key) could fork below the
+real history within that window and nullify it — capturing the DID on-chain. The anchor would
+then harden the forged head to `confirmed` and read `diverged` against an *honest* directory:
+the anchor manufacturing the one alarm the §0 invariant exists to prevent. (This inverts the
+earlier "re-exposing the recovery window is sound" claim in item 3, now corrected.)
+
+**Fix — provenance, in two layers:**
+- **Contract (`state`/`anchor`).** Each op carries an `imported` flag: `true` via
+  `import`/`import_genesis` (settled backfill), `false` via `submit_op` (observed live).
+  `apply_op` refuses a recovery that would nullify an imported op (`recovery-of-imported`).
+  The 72h window is thus honored only for live-observed ops, whose block-time stamp
+  approximates their real authored time. The guard is a *strictly conservative* refinement of
+  `classify_next_op` (it only ever rejects) layered in `state`, so it leaves the
+  differential-green PLC validation (`recovery`/`op_verify`) untouched — no vector regeneration.
+  Regression test: `recovery_cannot_nullify_imported_history` (import `[genesis, opA]`, then the
+  index-0 key's fork at genesis is rejected), contrasted with `recovery_through_contract` where
+  the *live*-submitted opA is still recoverable.
+- **Ingest (`onboard_via_import`).** Onboarding now imports a DID's whole resolved history as one
+  settled `import` chain, instead of `import_genesis` + op-by-op `submit_op` (which would
+  live-stamp historical successors and defeat the contract guard). `submit_op` is reserved for
+  genuinely-new ops observed ~live while tailing.
+
+**Residual (documented, tolerable direction).** A DID onboarded while its real tail op is still
+inside its 72h window imports that tail as settled, so a *legitimate* recovery of it (at the
+directory) can't be mirrored on-chain → a benign, operator-recoverable `diverged` on that one
+DID (re-import to resolve). This is the §0-safe direction: it degrades to the status quo, never
+to capture. The alternative (live-stamping the tail to keep it recoverable) re-opens a bounded
+capture window — the unsafe direction — so it was rejected. The firehose/roster path is for
+*tailing* already-onboarded DIDs from a recent cursor; using it to backfill ancient history
+would live-stamp it and is a documented operational foot-gun, not the sanctioned onboarding path.
+
+**Status:** contract + tests + ingest landed and Rust-green (`cargo test -p ingest`, clippy
+`-D warnings`). The Cairo suite (`make cairo-test`) must be run on a Scarb-equipped box / CI —
+it could not be executed in the authoring sandbox (no Scarb; the network policy blocks its
+installer). Verify before the fresh **mainnet** deploy (the storage-layout change — `StoredOp`
+gains `imported` — is fine on a fresh deploy; migration = re-import from genesis).
 
 ---
 

@@ -2,12 +2,64 @@
 
 Findings from the June 2026 internal security audit. Ordered by priority; items 1–2 are the
 only ones that meaningfully affect security properties. Items 3–6 are resilience/quality
-improvements.
+improvements. Finding **4a** (below) is a later, higher-severity finding from the July 2026
+design review — a write-path capture, not a read-path suppression like item 1.
 
-**Status (2026-07-02):** **all items are done.** Items 2–6 landed on
-`claude/security-updates-review-4ejk28`; item 1 (HIGH) landed on
-`claude/final-security-todo-m6xhy7` — the witness now re-derives `nullified` locally from op
-contents, differential-green against `@did-plc/lib`.
+**Status (2026-07-02):** items 1–6 done (item 1 HIGH — the witness re-derives `nullified`
+locally, differential-green vs `@did-plc/lib`). **Finding 4a (CRITICAL, below): fix landed on
+`claude/project-analysis-risk-oudg4u`** — imported history is now marked *settled* on-chain
+(a recovery may not nullify it) and ingest onboards via the settled `import` chain. Rust-green;
+the Cairo suite must be run on CI / a Scarb box before the mainnet deploy.
+
+---
+
+## 4a. Imported history must be settled — recovery-window capture — CRITICAL  *(done)*
+
+**Files:** `cairo/packages/plc_core/src/state.cairo`, `src/anchor.cairo`,
+`cairo/packages/plc_core/tests/anchor.cairo`, `ingest/src/{pipeline,sink,starknet_sink,main}.rs`
+
+`import`/`import_genesis` stamp every backfilled op with the import block time, and the 72h
+recovery window (`recovery::classify_next_op`) is measured against that stamp. So for 72h after
+onboarding, the *entire* history reads as freshly authored. A PLC recovery is authorized by any
+**strictly-higher-priority** rotation key; a key that was higher-priority at a historical fork
+point but has since been **rotated away** (the custodial→self-hosted migration leaves exactly
+such a key, no longer the DID's controller) could fork below the real history *within that
+window* and nullify it — capturing the anchored DID. The anchor would then harden the forged
+head to `confirmed` and read `diverged` against an **honest** directory: the anchor manufacturing
+the very false-`diverged` the §0 governing invariant exists to prevent. The earlier claim
+(HISTORY.md item 3) that re-exposing the window was "sound because it never lets a *non*-key-holder
+mutate a DID" missed that a *former* key-holder is not the current controller.
+
+**Root cause.** The 72h window is a *live-observation* mechanism; the anchor has no authored
+timestamp (it's not in the signed op, §1/§5), so it cannot soundly adjudicate the window for
+history it never observed live. Backfilled ops must not be given a (block-time) window at all.
+
+**Fix (two layers):**
+- [x] **Contract — provenance + guard.** `OpRecord`/`StoredOp` carry `imported: bool`
+  (`true` for `import`/`import_genesis`, `false` for `submit_op`). `state::apply_op` rejects a
+  recovery whose first-nullified op is imported (`recovery-of-imported`); imported ops always
+  form the chain prefix, so checking the first nullified op suffices. The guard is a *strictly
+  conservative* refinement of `classify_next_op` (only ever rejects), layered in `state`, so the
+  differential-green PLC validation (`recovery`/`op_verify`) is untouched — **no vector
+  regeneration**. Test: `recovery_cannot_nullify_imported_history` vs. the still-passing
+  `recovery_through_contract` (live opA remains recoverable).
+- [x] **Ingest — onboard via the settled chain.** `onboard_via_import` imports a DID's whole
+  resolved history as one settled `import` call (new `Delta::Import` → the `import` entrypoint),
+  replacing the old `import_genesis` + per-successor `submit_op` onboarding that would live-stamp
+  historical ops and defeat the guard. `submit_op` is reserved for genuinely-live tail ops.
+
+**Guardrail:** consensus-critical Cairo — run `make cairo-test` on CI / a Scarb-equipped box
+before merge/deploy (not runnable in the authoring sandbox: no Scarb, installer host blocked by
+the network policy). The `StoredOp` layout change is safe on the fresh mainnet deploy (migration
+= re-import from genesis).
+
+**Residual (documented, §0-safe direction).** A DID onboarded while its real tail op is still
+in-window imports that tail as settled, so a *legitimate* recovery of it can't be mirrored
+on-chain → a benign, operator-recoverable `diverged` on that one DID. This degrades to the status
+quo, never to capture; live-stamping the tail to avoid it would re-open a bounded capture window
+(the unsafe direction) and was rejected. Follow-up: the firehose/roster path can still live-stamp
+ancient history if pointed at old data — an operational foot-gun to fence off (onboard via
+`--did`/`import`; tail from a recent cursor).
 
 ---
 

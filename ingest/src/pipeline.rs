@@ -75,7 +75,10 @@ pub fn process_batch(
     Ok(stats)
 }
 
-fn submit_entry(entry: &ExportEntry, sink: &mut dyn AnchorSink, stats: &mut Stats) -> Result<()> {
+/// Re-encode an op to canonical DRISL and assert it hashes to the directory's published CID — the
+/// integrity gate (REFERENCE.md §3): we never anchor bytes that disagree with the directory.
+/// Returns the canonical signed bytes.
+fn signed_checked(entry: &ExportEntry) -> Result<Vec<u8>> {
     let signed = signed_op_bytes(&entry.operation)?;
     let cid = op_cid(&signed);
     if cid != entry.cid {
@@ -85,6 +88,11 @@ fn submit_entry(entry: &ExportEntry, sink: &mut dyn AnchorSink, stats: &mut Stat
             entry.did
         );
     }
+    Ok(signed)
+}
+
+fn submit_entry(entry: &ExportEntry, sink: &mut dyn AnchorSink, stats: &mut Stats) -> Result<()> {
+    let signed = signed_checked(entry)?;
 
     let delta = if is_genesis(&entry.operation) {
         stats.genesis += 1;
@@ -100,6 +108,57 @@ fn submit_entry(entry: &ExportEntry, sink: &mut dyn AnchorSink, stats: &mut Stat
         }
     };
     sink.apply(&delta)
+}
+
+/// Onboard a DID's existing history as one **settled** `import` chain (SECURITY-TODO 4a).
+///
+/// This is the onboarding path (single-DID mode). It filters `entries` to `did`'s resolved live
+/// chain — dropping directory-nullified branches, so what remains links genesis → … → head as pure
+/// appends — CID-checks every op (the integrity gate), and emits a single [`Delta::Import`]. The
+/// cursor advances past every entry examined.
+///
+/// Onboarding via `import` rather than op-by-op `submit_op` is what marks the backfilled history
+/// **settled** on-chain. The contract stamps imported ops with the import block time and forbids a
+/// recovery from nullifying them, so a *rotated-out* higher-priority key cannot re-open a
+/// long-closed 72h recovery window and capture the DID (SECURITY-TODO 4a). `submit_op` is reserved
+/// for genuinely-new ops observed ~live while tailing an already-onboarded DID, whose block-time
+/// stamp approximates their real authored time.
+pub fn onboard_via_import(
+    entries: &[ExportEntry],
+    did: &str,
+    sink: &mut dyn AnchorSink,
+    cursor: &mut Cursor,
+) -> Result<Stats> {
+    let mut stats = Stats::default();
+    let mut ops: Vec<Vec<u8>> = Vec::new();
+    for entry in entries {
+        stats.scanned += 1;
+        if entry.did == did {
+            stats.matched += 1;
+            if entry.nullified {
+                stats.skipped_nullified += 1;
+            } else {
+                if ops.is_empty() && !is_genesis(&entry.operation) {
+                    bail!(
+                        "first live op for {did} is not a genesis — refusing to import a partial \
+                         or forked history"
+                    );
+                }
+                ops.push(signed_checked(entry)?);
+            }
+        }
+        cursor.advance(&entry.created_at);
+    }
+    if ops.is_empty() {
+        bail!("no live ops for {did} — nothing to import");
+    }
+    stats.genesis = 1;
+    stats.appends = ops.len() - 1;
+    sink.apply(&Delta::Import {
+        did: did.to_string(),
+        ops,
+    })?;
+    Ok(stats)
 }
 
 /// A driver tying a source, an anchor set, and a sink together with a resumable cursor.
@@ -270,6 +329,80 @@ mod tests {
         assert!(sink.applied.is_empty());
         // stopped at the offending op — cursor did not advance past it
         assert_eq!(cursor.after, None);
+    }
+
+    // ── Onboarding via `import` (settled history — SECURITY-TODO 4a) ──
+
+    #[test]
+    fn onboard_via_import_emits_one_settled_chain() {
+        // The DID's whole resolved history goes in as a SINGLE Import delta (not op-by-op
+        // Genesis/Append), so the contract marks every op settled and a rotated-out key can't
+        // recover-nullify it (SECURITY-TODO 4a). Contrast `anchors_only_matched_dids_*`, which
+        // exercises the firehose per-op path.
+        let entries = corpus_entries();
+        let did = chain_did(&entries);
+        let mut sink = DryRunSink::new();
+        let mut cursor = Cursor::genesis();
+
+        let stats = onboard_via_import(&entries, &did, &mut sink, &mut cursor).unwrap();
+
+        assert_eq!(stats.scanned, entries.len());
+        assert_eq!(
+            stats.matched, 3,
+            "genesis + update + tombstone for the chain DID"
+        );
+        assert_eq!(stats.genesis, 1);
+        assert_eq!(stats.appends, 2);
+        // Exactly one delta: the whole chain, imported as settled.
+        assert_eq!(sink.applied.len(), 1);
+        match &sink.applied[0] {
+            Delta::Import { did: d, ops } => {
+                assert_eq!(d, &did);
+                assert_eq!(ops.len(), 3, "genesis + 2 successors");
+            }
+            other => panic!("expected a single Import delta, got {other:?}"),
+        }
+        // cursor advanced past the whole batch
+        assert_eq!(
+            cursor.after.as_deref(),
+            Some(entries.last().unwrap().created_at.as_str())
+        );
+    }
+
+    #[test]
+    fn onboard_via_import_drops_nullified_branches() {
+        // A directory-nullified entry is not part of the resolved live chain, so it never enters
+        // the import. (The chain DID's ops are all live; nullify the update to prove the filter.)
+        let mut entries = corpus_entries();
+        let did = chain_did(&entries);
+        // entry index 4 is the chain DID's update op.
+        let update_idx = entries
+            .iter()
+            .position(|e| e.did == did && !is_genesis(&e.operation));
+        entries[update_idx.unwrap()].nullified = true;
+        let mut sink = DryRunSink::new();
+        let mut cursor = Cursor::genesis();
+
+        let stats = onboard_via_import(&entries, &did, &mut sink, &mut cursor).unwrap();
+
+        assert_eq!(stats.skipped_nullified, 1);
+        match &sink.applied[0] {
+            Delta::Import { ops, .. } => assert_eq!(ops.len(), 2, "the nullified op is excluded"),
+            other => panic!("expected Import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn onboard_via_import_rejects_cid_mismatch() {
+        let mut entries = corpus_entries();
+        let did = chain_did(&entries);
+        entries[0].cid = "bafyreiThisIsNotTheRealCid".to_string();
+        let mut sink = DryRunSink::new();
+        let mut cursor = Cursor::genesis();
+
+        let err = onboard_via_import(&entries, &did, &mut sink, &mut cursor).unwrap_err();
+        assert!(err.to_string().contains("refusing to submit"), "got: {err}");
+        assert!(sink.applied.is_empty());
     }
 
     #[test]

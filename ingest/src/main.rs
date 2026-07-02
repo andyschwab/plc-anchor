@@ -187,6 +187,9 @@ fn main() -> Result<()> {
             let (kind, did) = match delta {
                 ingest::Delta::Genesis { did, .. } => ("import_genesis", did),
                 ingest::Delta::Append { did, .. } => ("submit_op", did),
+                // The firehose/roster path emits per-op deltas; onboarding via `import` is the
+                // single-DID path (`onboard_via_import`), so `Import` does not arise here.
+                ingest::Delta::Import { did, .. } => ("import", did),
             };
             println!("would {kind}: {did}");
         }
@@ -224,9 +227,11 @@ fn submit_run(
     )
 }
 
-/// Single-DID mode: fetch one DID's `/<did>/log/audit` and onboard it through the same pipeline
-/// (genesis → `import_genesis`, each canonical successor → `submit_op`; directory-nullified ops
-/// skipped; each op CID-checked before submit), dry-run or on-chain.
+/// Single-DID mode: fetch one DID's `/<did>/log/audit` and onboard it as one **settled** `import`
+/// chain (SECURITY-TODO 4a) — its resolved history (directory-nullified branches dropped, each op
+/// CID-checked) imported in a single call, rather than op-by-op `submit_op`. Onboarding via
+/// `import` keeps backfilled history settled on-chain, so a rotated-out key can't re-open a
+/// long-closed recovery window. Dry-run or on-chain.
 fn run_single_did(did: &str, source: &str, submit: bool) -> Result<()> {
     let entries = ingest::fetch_audit_log(source, did)?;
     eprintln!(
@@ -237,20 +242,17 @@ fn run_single_did(did: &str, source: &str, submit: bool) -> Result<()> {
     if entries.is_empty() {
         anyhow::bail!("no ops returned for {did} — is the DID correct and known to {source}?");
     }
-    let anchor_set = AnchorSet::from_iter_dids([did.to_string()]);
     let mut cursor = Cursor::genesis();
 
     if submit {
-        single_did_submit(did, &entries, &anchor_set, &mut cursor)
+        single_did_submit(did, &entries, &mut cursor)
     } else {
         let mut sink = DryRunSink::new();
-        let stats = ingest::process_batch(&entries, &anchor_set, &mut sink, &mut cursor)?;
+        let stats = ingest::onboard_via_import(&entries, did, &mut sink, &mut cursor)?;
         for delta in &sink.applied {
-            let (kind, d) = match delta {
-                ingest::Delta::Genesis { did, .. } => ("import_genesis", did),
-                ingest::Delta::Append { did, .. } => ("submit_op", did),
-            };
-            println!("would {kind}: {d}");
+            if let ingest::Delta::Import { did, ops } = delta {
+                println!("would import: {did} ({} ops, settled)", ops.len());
+            }
         }
         print_stats(&stats);
         Ok(())
@@ -261,13 +263,12 @@ fn run_single_did(did: &str, source: &str, submit: bool) -> Result<()> {
 fn single_did_submit(
     did: &str,
     entries: &[ingest::ExportEntry],
-    anchor_set: &AnchorSet,
     cursor: &mut Cursor,
 ) -> Result<()> {
     use ingest::{StarknetConfig, StarknetSink};
     let mut sink = StarknetSink::new(StarknetConfig::from_env()?)?;
     eprintln!("ingest: submitting to anchor {:#x}", sink.contract());
-    let stats = ingest::process_batch(entries, anchor_set, &mut sink, cursor)?;
+    let stats = ingest::onboard_via_import(entries, did, &mut sink, cursor)?;
     print_stats(&stats);
     // Confirm the on-chain effect.
     if sink.is_anchored(did)? {
@@ -286,7 +287,6 @@ fn single_did_submit(
 fn single_did_submit(
     _did: &str,
     _entries: &[ingest::ExportEntry],
-    _anchor_set: &AnchorSet,
     _cursor: &mut Cursor,
 ) -> Result<()> {
     anyhow::bail!(

@@ -223,11 +223,18 @@ everything else.
   the op bytes and the CID (confirmed against the corpus). The contract has no authored
   timestamp to read; it uses **Starknet block time** (× 1000 ms) as the pragmatic
   `createdAt` the 72h window measures against, and imported ops are stamped with the import
-  block time. *Window-edge recovery is the delicate witness corner:* the anchor's clock is
-  strictly later than the directory's, so near the 72h edge the anchor can accept a
-  higher-priority-key nullification the directory rejected as too-late (conservative — it
-  only re-exposes the recovery window, never lets a non-key-holder mutate a DID), producing a
-  `diverged` (§4) from clock skew alone. Pin the exact rule when building the checker (item 5).
+  block time. **Imported ops are therefore treated as _settled_: a recovery may not nullify
+  one (`state::apply_op` → `recovery-of-imported`).** The block-time stamp approximates real
+  authored time only for *live-observed* ops; for backfilled history it is meaningless (an op
+  authored years ago is stamped now), and honoring a recovery against it would re-open a
+  window that closed years ago and let a *rotated-out* higher-priority key capture the DID —
+  the 4a hazard (docs/HISTORY.md, docs/SECURITY-TODO.md). So the 72h window is honored only for
+  live-observed ops. *Window-edge recovery is the remaining delicate corner:* the anchor's
+  clock is strictly later than the directory's, so near the 72h edge the anchor can accept a
+  higher-priority-key nullification of a *live* op the directory rejected as too-late
+  (conservative — it only re-exposes the window for a live-observed op, never mutates settled
+  history), producing a `diverged` (§4) from clock skew alone. Pin the exact rule when building
+  the checker (item 5).
 - **Constraints:** max 10 verificationMethods/DID; max op size 7500 bytes (dCBOR-encoded).
 - **Op sizes (context):** legacy `create` ~330 B; modern `plc_operation` ~1.4–2.0 KB.
 
