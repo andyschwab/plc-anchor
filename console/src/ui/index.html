@@ -55,6 +55,12 @@
   <h1>DIDMARC · PLC anchor console</h1>
   <span class="meta" id="meta">loading…</span>
   <span class="meta toolbar" style="margin-left:auto">
+    <span id="authBox" class="row" hidden>
+      <input id="secret" type="password" placeholder="admin secret" style="min-width:160px" />
+      <button class="primary" id="unlock">Unlock</button>
+      <button id="lock" hidden>Lock</button>
+      <span class="err" id="authErr"></span>
+    </span>
     <button id="discover">Discover</button>
     <button id="onboard">Onboard approved</button>
     <button id="refresh">Refresh status</button>
@@ -95,18 +101,41 @@
 </main>
 
 <script>
-const api = (path, opts) => fetch(path, opts).then(async (r) => {
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
-  return body;
-});
+const TOKEN_KEY = "didmarc_token";
+const token = () => sessionStorage.getItem(TOKEN_KEY);
+const api = (path, opts = {}) => {
+  const headers = { ...(opts.headers || {}) };
+  const t = token();
+  if (t) headers["authorization"] = "Bearer " + t;
+  return fetch(path, { ...opts, headers }).then(async (r) => {
+    const body = await r.json().catch(() => ({}));
+    if (r.status === 401) { sessionStorage.removeItem(TOKEN_KEY); renderAuth("gated"); }
+    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    return body;
+  });
+};
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const cell = (v) => v == null || v === "" ? '<span class="muted">—</span>' : esc(v);
+
+let writeMode = "open";
+function renderAuth(mode) {
+  if (mode !== undefined) writeMode = mode;
+  const gated = writeMode === "gated";
+  const closed = writeMode === "closed";
+  const unlocked = gated && !!token();
+  document.getElementById("authBox").hidden = !(gated || closed);
+  document.getElementById("secret").hidden = !gated || unlocked;
+  document.getElementById("unlock").hidden = !gated || unlocked;
+  document.getElementById("lock").hidden = !(gated && unlocked);
+  document.getElementById("authErr").textContent = closed
+    ? "writes disabled — set CONSOLE_ADMIN_TOKEN to make changes" : "";
+}
 
 async function refreshView() {
   const [health, roster, filters] = await Promise.all([
     api("/healthz"), api("/roster"), api("/roster/filters"),
   ]);
+  renderAuth(health.writeMode);
   const c = health.counts;
   document.getElementById("meta").textContent =
     `anchor ${health.contractAddress.slice(0, 10)}…  ·  ${c.total} DIDs · ${c.anchored} anchored · ${c.diverged} diverged`;
@@ -168,6 +197,20 @@ document.body.addEventListener("click", (ev) => {
 for (const [id, path] of [["discover", "/worker/discover"], ["onboard", "/worker/onboard"], ["refresh", "/worker/refresh"]]) {
   document.getElementById(id).onclick = () => guard(() => api(path, { method: "POST" }));
 }
+
+document.getElementById("unlock").onclick = () => guard(async () => {
+  const secret = document.getElementById("secret").value;
+  if (!secret) throw new Error("enter the admin secret");
+  const r = await api("/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ secret }) });
+  sessionStorage.setItem(TOKEN_KEY, r.token);
+  document.getElementById("secret").value = "";
+  renderAuth();
+}, document.getElementById("authErr"));
+
+document.getElementById("lock").onclick = () => {
+  sessionStorage.removeItem(TOKEN_KEY);
+  renderAuth();
+};
 
 refreshView().catch((e) => { document.getElementById("meta").textContent = "error: " + e.message; });
 setInterval(() => refreshView().catch(() => {}), 15000);

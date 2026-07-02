@@ -16,7 +16,12 @@
 //!   DISCOVER_INTERVAL_MS       filter discover-scan cadence (default 0 = disabled)
 //!   INGEST_COMMAND             ingest argv for onboarding (e.g. "ingest" or
 //!                              "cargo run --features live --bin ingest --"); enables onboarding
+//!   CONSOLE_ADMIN_TOKEN        operator secret; when set, writes require a login session
+//!   CONSOLE_SESSION_TTL_MS     session lifetime after login (default 3600000)
+//!   CONSOLE_ALLOW_OPEN_WRITES  "1"/"true" to run with writes OPEN when no admin token is set;
+//!                              otherwise writes are refused (fail-closed default)
 
+import { SharedSecretAuth, type Authenticator } from "./auth.ts";
 import { DiscoverService, ExportClient } from "./discover.ts";
 import { Onboarder, SpawnRunner } from "./onboard.ts";
 import { RefreshService } from "./refresh.ts";
@@ -85,5 +90,25 @@ if (ingestCommand) {
   console.error("[onboard] disabled (set INGEST_COMMAND to enable on-chain writes)");
 }
 
-const server = createConsoleServer(store, { contractAddress, lastRefreshAt: () => lastRefreshAt, actions });
+// --- Auth gate (Layer-2 access control): fail-closed unless a secret is configured. ----
+const adminSecret = process.env.CONSOLE_ADMIN_TOKEN?.trim();
+const sessionTtlMs = Number(process.env.CONSOLE_SESSION_TTL_MS ?? 3_600_000);
+const openWrites = /^(1|true)$/i.test(process.env.CONSOLE_ALLOW_OPEN_WRITES?.trim() ?? "");
+let auth: Authenticator | undefined;
+if (adminSecret) {
+  auth = new SharedSecretAuth(adminSecret, sessionTtlMs);
+} else if (openWrites) {
+  console.error("[auth] DISABLED — writes are OPEN (CONSOLE_ALLOW_OPEN_WRITES set)");
+} else {
+  console.error("[auth] writes CLOSED — set CONSOLE_ADMIN_TOKEN to enable changes " +
+    "(or CONSOLE_ALLOW_OPEN_WRITES=1 to run open)");
+}
+
+const server = createConsoleServer(store, {
+  contractAddress,
+  lastRefreshAt: () => lastRefreshAt,
+  actions,
+  auth,
+  allowOpenWrites: openWrites,
+});
 server.listen(port, () => console.error(`console listening on :${port} (anchor ${contractAddress})`));
