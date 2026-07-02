@@ -3,8 +3,8 @@
 //! Genesis deltas call `import_genesis(signed)`, appends call `submit_op(did, signed)`
 //! (REFERENCE.md §3). The signing key here authorizes only the *Starknet transaction* (it pays
 //! gas); it is NOT the PLC authorization — that is the op's embedded signature, verified
-//! in-contract against the DID's rotation keys (REFERENCE.md §2). So the fee payer may be anyone:
-//! the permissionless property.
+//! read-side by the witness against the DID's rotation keys (verify-on-read; REFERENCE.md §2).
+//! So the fee payer may be anyone: the permissionless property.
 //!
 //! Gated behind the `live` cargo feature so the default build and the offline consensus tests
 //! pull no async runtime / Starknet client. `apply` blocks on a current-thread tokio runtime and
@@ -61,9 +61,10 @@ fn felt_env(key: &str) -> Result<Felt> {
 type Acct = SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet>;
 
 /// The sequencer's per-transaction L2 gas ceiling (Sepolia rejects above ~1.21e9). We keep the
-/// requested max L2 gas under this. A multi-op `import` re-verifies every op's signature
-/// in-contract, so its L2 gas is large; the account crate's default 1.5× estimate margin overshoots
-/// the cap even when the (deterministic) actual usage fits. Override with `STARKNET_MAX_L2_GAS`.
+/// requested max L2 gas under this. Under verify-on-read `import` only stores bytes (no
+/// in-contract EC verification), so per-op L2 gas is small and this ceiling is rarely a concern;
+/// the clamp remains a safety rail against the account crate's estimate margin. Override with
+/// `STARKNET_MAX_L2_GAS`.
 const DEFAULT_MAX_L2_GAS: u64 = 1_200_000_000;
 /// Margin applied over the fee estimate before clamping at the cap (headroom for estimate/block
 /// drift; execution gas is otherwise deterministic).
@@ -127,8 +128,24 @@ impl StarknetSink {
         self.contract
     }
 
-    /// Read a `ByteArray`-returning view (e.g. `head_cid`, `tentative_root`) as raw bytes.
-    /// Exposed for the E2E harness to assert on-chain effects.
+    /// Read the `chain(did)` view — the DID's full stored op log (verify-on-read: the contract
+    /// exposes raw bytes, the reader validates). Returns each op's signed bytes + block-time stamp
+    /// + provenance, in order. Exposed for the E2E harness to assert on-chain effects.
+    pub fn call_chain(&self, did: &str) -> Result<Vec<StoredOpView>> {
+        use starknet::core::types::FunctionCall;
+        let felts = self.runtime.block_on(self.account.provider().call(
+            FunctionCall {
+                contract_address: self.contract,
+                entry_point_selector: get_selector_from_name("chain")?,
+                calldata: byte_array_calldata(did.as_bytes()),
+            },
+            BlockId::Tag(BlockTag::Latest),
+        ))?;
+        decode_chain(&felts)
+    }
+
+    /// Read a `ByteArray`-returning view as raw bytes. A generic helper for any single-`ByteArray`
+    /// view; exposed for the E2E harness to assert on-chain effects.
     pub fn call_byte_array_view(&self, function: &str, args: &[u8]) -> Result<Vec<u8>> {
         use starknet::core::types::FunctionCall;
         let calldata = if args.is_empty() {
@@ -190,10 +207,10 @@ impl StarknetSink {
         let exec = self.account.execute_v3(vec![call]);
 
         // Set explicit v3 resource bounds so the requested max L2 gas stays under the sequencer's
-        // per-tx ceiling. A multi-op `import` re-verifies every op's signature in-contract, so its
-        // L2 gas is large; the crate's default 1.5× estimate margin overshoots the cap even when
-        // the deterministic actual usage would fit. We estimate, apply a smaller margin, and clamp
-        // L2 gas at the cap. Gas *prices* are left unset — `send()` derives them from the block.
+        // per-tx ceiling. Under verify-on-read a store-only `import` is cheap, but we still clamp:
+        // the crate's default 1.5× estimate margin can overshoot the cap, so we estimate, apply a
+        // smaller margin, and clamp L2 gas at the cap. Gas *prices* are left unset — `send()`
+        // derives them from the block.
         let est = exec
             .estimate_fee()
             .await
@@ -309,6 +326,68 @@ fn byte_array_calldata(bytes: &[u8]) -> Vec<Felt> {
     out.push(Felt::from_bytes_be_slice(&bytes[full * 31..]));
     out.push(Felt::from(rem));
     out
+}
+
+/// One stored op as returned by the `chain` view (mirrors `anchor.cairo`'s `OpEntry`).
+#[derive(Debug)]
+pub struct StoredOpView {
+    /// The op's signed DRISL bytes, verbatim.
+    pub signed: Vec<u8>,
+    /// Starknet block time (ms) it was stored at (the read-side 72h window's independent clock).
+    pub created_at: u64,
+    /// `true` if stored settled via `import`/`import_genesis`, `false` if live via `submit_op`.
+    pub imported: bool,
+}
+
+/// Decode a Cairo `Array<OpEntry>` felt return: a length felt, then each
+/// `OpEntry { signed: ByteArray, created_at: u64, imported: bool }` in serde order.
+fn decode_chain(felts: &[Felt]) -> Result<Vec<StoredOpView>> {
+    let len: usize = felts
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("chain return empty"))?
+        .try_into()
+        .map_err(|_| anyhow!("chain length overflow"))?;
+    let mut o = 1usize;
+    let mut out = Vec::with_capacity(len);
+    for _ in 0..len {
+        let (signed, consumed) = byte_array_at(felts, o)?;
+        o += consumed;
+        let created_at: u64 = felts
+            .get(o)
+            .copied()
+            .ok_or_else(|| anyhow!("chain: missing created_at"))?
+            .try_into()
+            .map_err(|_| anyhow!("created_at overflow"))?;
+        o += 1;
+        let imported = *felts
+            .get(o)
+            .ok_or_else(|| anyhow!("chain: missing imported"))?
+            != Felt::ZERO;
+        o += 1;
+        out.push(StoredOpView {
+            signed,
+            created_at,
+            imported,
+        });
+    }
+    Ok(out)
+}
+
+/// Decode one `ByteArray` at `offset`; returns its bytes and how many felts it consumed
+/// (`num_full_words + 3`).
+fn byte_array_at(felts: &[Felt], offset: usize) -> Result<(Vec<u8>, usize)> {
+    let full: usize = felts
+        .get(offset)
+        .copied()
+        .ok_or_else(|| anyhow!("byte array: missing header"))?
+        .try_into()
+        .map_err(|_| anyhow!("byte array word count overflow"))?;
+    let total = full + 3;
+    let slice = felts
+        .get(offset..offset + total)
+        .ok_or_else(|| anyhow!("byte array: truncated ({full} words)"))?;
+    Ok((byte_array_from_felts(slice)?, total))
 }
 
 /// Inverse of [`byte_array_calldata`] for view returns.

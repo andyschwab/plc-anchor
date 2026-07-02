@@ -1,10 +1,19 @@
 # On-chain rearchitecture plan — verify-on-read (RFC)
 
-**Status:** proposal, not adopted. This deliberately **reopens a `REFERENCE.md`-settled
-decision** ("verification runs as a Starknet contract"; "crypto is a corelib library call" —
-REFERENCE.md §1/§2/§8, echoed in `CLAUDE.md` *Do NOT relitigate*). The driver is new **measured
-mainnet cost evidence** (below). Adopting it requires a `REFERENCE.md` amendment and sign-off —
-do not silently implement.
+**Status: ADOPTED (2026-07-02) — implemented, offline-green, pending v2 Sepolia→mainnet deploy.**
+This deliberately **reopened a `REFERENCE.md`-settled decision** ("verification runs as a Starknet
+contract"; "crypto is a corelib library call" — REFERENCE.md §1/§2/§8, echoed in `CLAUDE.md` *Do
+NOT relitigate*), driven by the measured mainnet cost evidence below. `REFERENCE.md` and `CLAUDE.md`
+carry the amendment banners; this file is the rationale of record.
+
+**As-built deltas from this proposal (see §7):** (1) the reader validates the anchor chain by
+**content-addressed cross-reference** against op bodies it already fetches (no new on-chain DRISL
+decoder — reuses `deriveLiveChain`); (2) the on-chain **Merkle root/proofs are dropped** (the
+reader validates the whole per-DID chain, so per-DID inclusion proofs are redundant); (3) the
+contract keeps a **cheap `sha256` DID derivation** (not EC crypto — negligible cost) so the
+`import`/`submit_op` signatures and the `ingest` sink are unchanged; (4) the Cairo
+`op_verify`/`recovery`/`state`/`merkle` modules are **retained as the differential-green PLC
+reference** the read side mirrors (deleting them is a follow-up, not this change).
 
 **Author context:** written 2026-07-02, immediately after the V1 mainnet bring-up (Phases 1–3 of
 [`MAINNET-CHECKLIST.md`] live: contract `0x04db…d9aa`, one canary DID anchored & witnessed).
@@ -129,3 +138,37 @@ The current mainnet contract stays live and correct in the meantime; this is a v
 against the adversarial suite; (2) measure a "store-only" import on a testnet v2 to confirm the
 10–50× cut; (3) amend REFERENCE.md; (4) v2 contract + re-import. None of this blocks leaving the
 current V1 witness running as-is.
+
+## 7. As-built (2026-07-02)
+
+Implemented on `claude/rearchitecture-rfc-review-3ra7en`, **offline-green** (`witness-test`,
+`console-test`, `rust-test`, `adversarial`); the Cairo contract + tests are written but need a
+`make cairo-test` on a Scarb-equipped box (the sandbox has no toolchain), then the v2 deploy.
+
+**§5.1 crux (read-side recovery adjudication) — resolved the cheap way.** The reader *already*
+re-derives PLC recovery for the directory (`deriveLiveChain`, differential-green vs `@did-plc/lib`).
+So the anchor chain runs through the **same** validator: `deriveLiveChain` gained an inert
+`imported` guard (the read-side mirror of `state::apply_op`'s `recovery-of-imported`) and now
+returns its live ops; `deriveAnchorHeads` (`status.ts`) feeds it the on-chain ops — bodies
+cross-referenced content-addressed, `createdAt` = the anchor's block time — and derives the
+confirmed head (latest live op past the 72h window). No new consensus module. Pinned in
+`witness-ts/test/nullified.test.ts` (real signed chains, incl. the read-side recovery-of-imported).
+
+**What shipped, by file:**
+- `cairo/packages/plc_core/src/anchor.cairo` — store-only: `import_genesis`/`import`/`submit_op`
+  push bytes (block-time + `imported`); new `chain(did)` view; dropped head/root/proof views + all
+  EC verification. `tests/anchor.cairo` rewritten to the storage contract.
+- `witness-ts` — `directory.ts` (generalized `deriveLiveChain` + `imported` guard + live ops);
+  `status.ts` (`deriveAnchorHeads`, chain-based `AnchorView`, `deriveAnchor` seam); `starknet.ts`
+  (`chain(did)` read via `decodeChain`, proof/root reads removed); `merkle.ts` deleted; `index.ts`.
+- `ingest` — `starknet_sink.rs` gains `call_chain`/`StoredOpView`; sink calldata unchanged;
+  `gen_selectors` → `{is_anchored, chain}`; `live_e2e.rs` asserts byte-identical storage.
+- `adversarial` + `conformance/src/gen-adversarial-scenarios.mjs` — de-Merkled; read scenarios use
+  the `deriveAnchor` seam; write scenarios reframed (defender = read-side re-derivation);
+  `anchor-self-fault` reframed (corrupt on-chain log ⇒ no confirmed head ⇒ tentative-consistent).
+
+**Open follow-ups (non-blocking):** delete the now-off-path Cairo `merkle`/`op_verify`/… modules +
+their `gen-merkle-vectors` once v2 is proven live (kept for now as the differential reference);
+optional storage-spam mitigation on the permissionless write path (operator-gating / fee friction —
+readers already reject junk); the future trustless-root read (finding 4c) becomes a Starknet
+storage proof over the op storage directly.

@@ -1,128 +1,115 @@
-//! Anchor contract gate (REFERENCE.md §2, §3 component 3).
+//! Anchor contract gate — verify-on-read (REFERENCE.md §1/§2; docs/ONCHAIN-REARCH-PLAN.md).
 //!
-//! Exercises the contract entrypoints directly via contract_state_for_testing (no deploy):
-//! import a genesis, append its real successor ops, read the head back, and confirm the
-//! permissionless invariants (re-import rejected, unknown DID rejected). Corpus indices:
-//! 0 = alice genesis, 4 = alice update, 5 = alice tombstone (same DID).
+//! The v2 contract is a store-only, block-timestamped, append-only op log: it runs NO signature
+//! or CID verification and adjudicates NO forks — the witness re-derives all of that read-side
+//! (`witness-ts`; the read-side recovery/imported-guard tests live in
+//! witness-ts/test/nullified.test.ts). So these tests assert the storage contract: bytes are
+//! kept verbatim (non-equivocation), stamped with block time + provenance, and exposed via
+//! `chain`; unverified/garbage ops are STORED (not rejected — that is the read side's job); and
+//! the only reverts are the structural ones (empty chain, re-anchor, unknown DID).
+//! Corpus indices: 0 = alice genesis, 4 = alice update, 5 = alice tombstone (same DID).
 
-use drisl::cid::{CODEC_DAGCBOR, derive_cid_string};
+use plc_core::anchor::OpEntry;
 use plc_core::anchor::anchor::{AnchorImpl, contract_state_for_testing};
-use plc_core::merkle::{
-    empty_root, leaf_hash, merkle_proof, merkle_root, sorted_leaves, verify_proof,
-};
 use starknet::testing::set_block_timestamp;
 use super::common::from_hex;
 use super::op_verify_vectors_generated::op_verify_vectors;
-use super::recovery_vectors_generated::recovery_scenario;
 
 const ALICE_GENESIS: usize = 0;
 const ALICE_UPDATE: usize = 4;
 const ALICE_TOMBSTONE: usize = 5;
 
+/// Byte-equality helper for a stored op's `signed` field against expected bytes.
+fn stored_signed_eq(entry: @OpEntry, expected: @ByteArray) -> bool {
+    entry.signed.clone() == expected.clone()
+}
+
 #[test]
-fn import_then_append_chain() {
+fn import_genesis_stores_bytes_verbatim() {
     let vectors = op_verify_vectors();
     let genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
-    let update = from_hex(vectors.at(ALICE_UPDATE).signed_drisl_hex);
-    let tombstone = from_hex(vectors.at(ALICE_TOMBSTONE).signed_drisl_hex);
     let expected_did = vectors.at(ALICE_GENESIS).did.clone();
 
     let mut state = contract_state_for_testing();
-
-    // Import genesis → did, anchored, head == genesis cid.
+    set_block_timestamp(1234); // seconds; the contract stamps ms (× 1000)
     let did = AnchorImpl::import_genesis(ref state, genesis.clone());
-    assert!(did == expected_did, "imported did mismatch");
-    assert!(AnchorImpl::is_anchored(@state, did.clone()), "should be anchored after import");
-    // The genesis head cid == the update's prev (the update links to the genesis).
-    assert!(
-        AnchorImpl::head_cid(@state, did.clone()) == vectors.at(ALICE_UPDATE).prev.clone(),
-        "genesis head cid should equal update.prev",
-    );
+    assert!(did == expected_did, "derived did mismatch");
+    assert!(AnchorImpl::is_anchored(@state, did.clone()), "anchored after import_genesis");
 
-    // Append update → head advances to the update's cid.
+    let chain = AnchorImpl::chain(@state, did.clone());
+    assert!(chain.len() == 1, "one op stored");
+    assert!(stored_signed_eq(chain.at(0), @genesis), "genesis bytes stored byte-identical");
+    assert!(*chain.at(0).imported, "genesis is settled (imported)");
+    assert!(*chain.at(0).created_at == 1234 * 1000, "block-time stamp is ms");
+}
+
+#[test]
+fn submit_op_appends_live_ops() {
+    let vectors = op_verify_vectors();
+    let genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
+    let update = from_hex(vectors.at(ALICE_UPDATE).signed_drisl_hex);
+
+    let mut state = contract_state_for_testing();
+    let did = AnchorImpl::import_genesis(ref state, genesis.clone());
     AnchorImpl::submit_op(ref state, did.clone(), update.clone());
-    assert!(
-        AnchorImpl::head_cid(@state, did.clone()) == vectors.at(ALICE_TOMBSTONE).prev.clone(),
-        "head should be the update cid (== tombstone.prev)",
-    );
 
-    // Append tombstone → head advances; the update's prev was the genesis cid.
-    AnchorImpl::submit_op(ref state, did.clone(), tombstone.clone());
-    assert!(AnchorImpl::is_anchored(@state, did.clone()), "still anchored after tombstone");
+    let chain = AnchorImpl::chain(@state, did.clone());
+    assert!(chain.len() == 2, "genesis + appended op");
+    assert!(stored_signed_eq(chain.at(1), @update), "appended bytes stored verbatim");
+    // Provenance: genesis/import are settled; submit_op is observed live.
+    assert!(*chain.at(0).imported, "genesis imported");
+    assert!(!*chain.at(1).imported, "submit_op is live (not imported)");
 }
 
 #[test]
-fn recovery_through_contract() {
-    // Import genesis, append opA (index-1 key), then recover with the index-0 key within the
-    // window. The head must become the recovery op and the chain re-link to genesis.
-    let s = recovery_scenario();
-    let genesis = from_hex(@s.genesis_hex);
-    let op_a = from_hex(@s.op_a_hex);
-    let recovery_k0 = from_hex(@s.recovery_k0_hex);
+fn import_stores_the_whole_chain_settled() {
+    let vectors = op_verify_vectors();
+    let expected_did = vectors.at(ALICE_GENESIS).did.clone();
+    let chain_in = array![
+        from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex),
+        from_hex(vectors.at(ALICE_UPDATE).signed_drisl_hex),
+        from_hex(vectors.at(ALICE_TOMBSTONE).signed_drisl_hex),
+    ];
 
     let mut state = contract_state_for_testing();
+    let did = AnchorImpl::import(ref state, chain_in);
+    assert!(did == expected_did, "derived did mismatch");
 
-    set_block_timestamp(1000);
-    let did = AnchorImpl::import_genesis(ref state, genesis);
-    assert!(did == s.did.clone(), "did mismatch");
-
-    set_block_timestamp(1001); // opA anchored ~1s after genesis
-    AnchorImpl::submit_op(ref state, did.clone(), op_a.clone());
-
-    // Recover well within the 72h window (a few seconds later).
-    set_block_timestamp(1100);
-    AnchorImpl::submit_op(ref state, did.clone(), recovery_k0.clone());
-    assert!(
-        AnchorImpl::head_cid(@state, did.clone()) == derive_cid_string(CODEC_DAGCBOR, @recovery_k0),
-        "head should be the recovery op after recovery",
-    );
-
-    // Far in the future, every op's window has closed → confirmed head == the tip.
-    set_block_timestamp(1000000);
-    assert!(
-        AnchorImpl::confirmed_head(
-            @state, did.clone(),
-        ) == derive_cid_string(CODEC_DAGCBOR, @recovery_k0),
-        "confirmed head should be the recovery op once its window closes",
-    );
+    let stored = AnchorImpl::chain(@state, did.clone());
+    assert!(stored.len() == 3, "all three ops stored");
+    let mut i = 0;
+    while i < stored.len() {
+        assert!(*stored.at(i).imported, "every imported op is settled");
+        i += 1;
+    }
 }
 
 #[test]
-#[should_panic(expected: 'recovery-of-imported')]
-fn recovery_cannot_nullify_imported_history() {
-    // SECURITY-TODO 4a. When a DID's history is *imported* (settled backfill), every op is
-    // stamped with the import block time — not its real authored time (`createdAt` is not in the
-    // signed op, §1/§5). If the recovery window were measured against that import time, then for
-    // 72h after import a *rotated-out* higher-priority key could fork below an ancient op — whose
-    // real 72h window closed years ago — and nullify the entire real history, capturing the DID.
-    //
-    // Here `import([genesis, opA])` marks both ops imported; the index-0 recovery key then tries
-    // to fork at genesis and nullify opA. That is a valid recovery *by key priority and by the
-    // import-time clock*, so the pre-fix contract would have ACCEPTED it. The provenance guard
-    // rejects it: a recovery may not nullify imported history. Contrast `recovery_through_contract`
-    // above, where opA is observed *live* via `submit_op` and the same recovery is honored.
-    let s = recovery_scenario();
-    let genesis = from_hex(@s.genesis_hex);
-    let op_a = from_hex(@s.op_a_hex);
-    let recovery_k0 = from_hex(@s.recovery_k0_hex);
+fn store_only_accepts_unverified_bytes() {
+    // The defining v2 behavior: the contract does NOT validate. An op that would fail signature /
+    // linkage checks is still STORED (the witness rejects it read-side; it never becomes a live
+    // head). Here a genuine genesis is anchored, then arbitrary non-op bytes are appended — no
+    // revert, and they land in the log verbatim.
+    let vectors = op_verify_vectors();
+    let genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
+    let garbage: ByteArray = "not-a-valid-plc-op";
 
     let mut state = contract_state_for_testing();
-    set_block_timestamp(1000);
-    // Import the resolved history [genesis, opA] in one call → both ops are settled/imported.
-    let did = AnchorImpl::import(ref state, array![genesis, op_a]);
-    assert!(did == s.did.clone(), "did mismatch");
+    let did = AnchorImpl::import_genesis(ref state, genesis.clone());
+    AnchorImpl::submit_op(ref state, did.clone(), garbage.clone());
 
-    // A few seconds later — well inside 72h of the import stamp — the index-0 key attempts to
-    // fork at genesis, nullifying the imported opA. Must revert with `recovery-of-imported`.
-    set_block_timestamp(1100);
-    AnchorImpl::submit_op(ref state, did, recovery_k0);
+    let chain = AnchorImpl::chain(@state, did.clone());
+    assert!(chain.len() == 2, "unverified op is stored, not rejected");
+    assert!(stored_signed_eq(chain.at(1), @garbage), "garbage bytes stored verbatim");
 }
 
 #[test]
-fn unknown_did_is_not_anchored() {
+fn unknown_did_reads_empty() {
     let state = contract_state_for_testing();
     assert!(!AnchorImpl::is_anchored(@state, "did:plc:doesnotexist000000000"), "not anchored");
-    assert!(AnchorImpl::head_cid(@state, "did:plc:doesnotexist000000000") == "", "empty head");
+    assert!(
+        AnchorImpl::chain(@state, "did:plc:doesnotexist000000000").len() == 0, "empty chain",
+    );
 }
 
 #[test]
@@ -132,223 +119,7 @@ fn reimport_is_rejected() {
     let genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
     let mut state = contract_state_for_testing();
     let _ = AnchorImpl::import_genesis(ref state, genesis.clone());
-    // Second import of the same genesis must revert.
     let _ = AnchorImpl::import_genesis(ref state, genesis.clone());
-}
-
-#[test]
-fn empty_commitment_is_sha256_empty() {
-    // No DIDs anchored → both roots are the empty-map commitment sha256("").
-    let state = contract_state_for_testing();
-    assert!(AnchorImpl::tentative_root(@state) == empty_root(), "empty tentative root");
-    assert!(AnchorImpl::confirmed_root(@state) == empty_root(), "empty confirmed root");
-}
-
-#[test]
-fn tentative_root_tracks_the_head_and_proves_inclusion() {
-    let vectors = op_verify_vectors();
-    let genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
-    let update = from_hex(vectors.at(ALICE_UPDATE).signed_drisl_hex);
-    let mut state = contract_state_for_testing();
-
-    let did = AnchorImpl::import_genesis(ref state, genesis.clone());
-
-    // One DID → the root is exactly its leaf (single-leaf tree). The head is the genesis cid.
-    let genesis_head = derive_cid_string(CODEC_DAGCBOR, @genesis);
-    let root1 = AnchorImpl::tentative_root(@state);
-    assert!(root1 == leaf_hash(@did, @genesis_head), "root != single leaf for one DID");
-
-    // After an append the root follows the new tip.
-    AnchorImpl::submit_op(ref state, did.clone(), update.clone());
-    let update_head = derive_cid_string(CODEC_DAGCBOR, @update);
-    let root2 = AnchorImpl::tentative_root(@state);
-    assert!(root2 == leaf_hash(@did, @update_head), "root did not follow the new head");
-    assert!(root2 != root1, "root unchanged after the head advanced");
-
-    // An inclusion proof for this DID verifies against the contract's root.
-    let mut entries: Array<(ByteArray, ByteArray)> = array![];
-    entries.append((did.clone(), update_head.clone()));
-    let leaves = sorted_leaves(entries);
-    let proof = merkle_proof(@leaves, 0);
-    assert!(
-        verify_proof(leaves.at(0), @proof, @root2), "inclusion proof failed against contract root",
-    );
-}
-
-#[test]
-fn confirmed_root_lags_then_matches_tentative() {
-    // Before any window closes the confirmed map is empty; once it closes the confirmed root
-    // equals the tentative root (the head is now immutable).
-    let vectors = op_verify_vectors();
-    let genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
-    let mut state = contract_state_for_testing();
-
-    set_block_timestamp(1000); // genesis createdAt = 1_000_000 ms
-    let _did = AnchorImpl::import_genesis(ref state, genesis.clone());
-
-    // Still inside the window → nothing confirmed yet.
-    set_block_timestamp(1001);
-    assert!(
-        AnchorImpl::confirmed_root(@state) == empty_root(), "confirmed must be empty in-window",
-    );
-
-    // Far past the 72h window → the head is confirmed; roots agree.
-    set_block_timestamp(1000000);
-    assert!(
-        AnchorImpl::confirmed_root(@state) == AnchorImpl::tentative_root(@state),
-        "confirmed root should equal tentative once the window closes",
-    );
-}
-
-#[test]
-fn commitment_root_spans_multiple_dids() {
-    // Two independent DIDs → the root is the 2-leaf tree over both heads, order-independent.
-    let vectors = op_verify_vectors();
-    let alice_genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
-    // A second, distinct genesis from the corpus (different DID).
-    let mut bob_idx = 0;
-    let mut j = 0;
-    while j < vectors.len() {
-        let v = vectors.at(j);
-        if *v.is_genesis && v.did != vectors.at(ALICE_GENESIS).did {
-            bob_idx = j;
-            break;
-        }
-        j += 1;
-    }
-    let bob_genesis = from_hex(vectors.at(bob_idx).signed_drisl_hex);
-
-    let mut state = contract_state_for_testing();
-    let alice = AnchorImpl::import_genesis(ref state, alice_genesis.clone());
-    let bob = AnchorImpl::import_genesis(ref state, bob_genesis.clone());
-
-    let mut entries: Array<(ByteArray, ByteArray)> = array![];
-    entries.append((alice.clone(), derive_cid_string(CODEC_DAGCBOR, @alice_genesis)));
-    entries.append((bob.clone(), derive_cid_string(CODEC_DAGCBOR, @bob_genesis)));
-    let expected = merkle_root(@sorted_leaves(entries));
-    assert!(AnchorImpl::tentative_root(@state) == expected, "two-DID root mismatch");
-}
-
-/// The contract's `tentative_proof` view returns an inclusion path that reconstructs the
-/// contract's own `tentative_root` — the exact check a resolver runs (the proof server stays
-/// untrusted; the root is fetched independently). Two DIDs so the path has a real step, not a
-/// degenerate single-leaf tree.
-#[test]
-fn tentative_proof_view_verifies_against_root() {
-    let vectors = op_verify_vectors();
-    let alice_genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
-    let mut bob_idx = 0;
-    let mut j = 0;
-    while j < vectors.len() {
-        let v = vectors.at(j);
-        if *v.is_genesis && v.did != vectors.at(ALICE_GENESIS).did {
-            bob_idx = j;
-            break;
-        }
-        j += 1;
-    }
-    let bob_genesis = from_hex(vectors.at(bob_idx).signed_drisl_hex);
-
-    let mut state = contract_state_for_testing();
-    let alice = AnchorImpl::import_genesis(ref state, alice_genesis.clone());
-    let _bob = AnchorImpl::import_genesis(ref state, bob_genesis.clone());
-
-    // The view returns alice's head + her inclusion path; the head is her genesis CID.
-    let (head, proof) = AnchorImpl::tentative_proof(@state, alice.clone());
-    assert!(head == derive_cid_string(CODEC_DAGCBOR, @alice_genesis), "proof head != alice head");
-    assert!(proof.len() == 1, "two-leaf tree should yield a one-step path");
-
-    // Rebuild the leaf and walk the path to the contract's own root — what a resolver does.
-    let leaf = leaf_hash(@alice, @head);
-    let root = AnchorImpl::tentative_root(@state);
-    assert!(verify_proof(@leaf, @proof, @root), "contract proof did not verify against root");
-}
-
-/// The proof views return the empty `("", [])` sentinel rather than a bogus path when there
-/// is nothing to prove: an unanchored DID (tentative), and an anchored DID still inside the
-/// 72h window (confirmed). Once the window closes, the confirmed proof verifies.
-#[test]
-fn proof_views_empty_when_absent_or_unconfirmed() {
-    let vectors = op_verify_vectors();
-    let genesis = from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex);
-    let mut state = contract_state_for_testing();
-    set_block_timestamp(1000); // genesis createdAt = 1_000_000 ms
-    let did = AnchorImpl::import_genesis(ref state, genesis.clone());
-
-    // Unanchored DID → empty.
-    let (h0, p0) = AnchorImpl::tentative_proof(@state, "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz");
-    assert!(h0.len() == 0 && p0.len() == 0, "absent DID must yield empty proof");
-
-    // Anchored but still in-window → no confirmed head yet.
-    set_block_timestamp(1001);
-    let (h1, p1) = AnchorImpl::confirmed_proof(@state, did.clone());
-    assert!(h1.len() == 0 && p1.len() == 0, "in-window DID must yield empty confirmed proof");
-
-    // Past the window → the confirmed head exists and its proof verifies against the
-    // confirmed root (single-leaf tree → empty path, root == leaf).
-    set_block_timestamp(1000000);
-    let (h2, p2) = AnchorImpl::confirmed_proof(@state, did.clone());
-    assert!(h2.len() != 0, "confirmed head should exist past the window");
-    let leaf = leaf_hash(@did, @h2);
-    assert!(
-        verify_proof(@leaf, @p2, @AnchorImpl::confirmed_root(@state)), "confirmed proof failed",
-    );
-}
-
-#[test]
-#[should_panic(expected: 'did-not-anchored')]
-fn submit_to_unknown_did_is_rejected() {
-    let vectors = op_verify_vectors();
-    let update = from_hex(vectors.at(ALICE_UPDATE).signed_drisl_hex);
-    let mut state = contract_state_for_testing();
-    AnchorImpl::submit_op(ref state, "did:plc:doesnotexist000000000", update);
-}
-
-// ── P3.4: multi-op genesis import
-// ────────────────────────────────────────────────────
-
-/// Build alice's full corpus chain [genesis, update, tombstone] as signed bytes.
-fn alice_chain() -> Array<ByteArray> {
-    let vectors = op_verify_vectors();
-    array![
-        from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex),
-        from_hex(vectors.at(ALICE_UPDATE).signed_drisl_hex),
-        from_hex(vectors.at(ALICE_TOMBSTONE).signed_drisl_hex),
-    ]
-}
-
-#[test]
-fn import_replays_full_chain() {
-    let vectors = op_verify_vectors();
-    let expected_did = vectors.at(ALICE_GENESIS).did.clone();
-    let tombstone = from_hex(vectors.at(ALICE_TOMBSTONE).signed_drisl_hex);
-
-    let mut state = contract_state_for_testing();
-    let did = AnchorImpl::import(ref state, alice_chain());
-
-    assert!(did == expected_did, "import derived did mismatch");
-    assert!(AnchorImpl::is_anchored(@state, did.clone()), "anchored after import");
-    // The head is the last op (the tombstone).
-    assert!(
-        AnchorImpl::head_cid(@state, did.clone()) == derive_cid_string(CODEC_DAGCBOR, @tombstone),
-        "head should be the imported chain's last op",
-    );
-}
-
-#[test]
-fn import_commits_the_resolved_head() {
-    // After a bulk import the commitment reflects exactly the chain's last op — the same
-    // head the incremental import_then_append_chain test lands on (so the two paths agree).
-    // One DID → the tentative root is just its leaf over (did, tombstone head).
-    let tombstone = from_hex(op_verify_vectors().at(ALICE_TOMBSTONE).signed_drisl_hex);
-    let mut state = contract_state_for_testing();
-    let did = AnchorImpl::import(ref state, alice_chain());
-
-    let head = derive_cid_string(CODEC_DAGCBOR, @tombstone);
-    assert!(
-        AnchorImpl::tentative_root(@state) == leaf_hash(@did, @head),
-        "import did not commit the resolved head",
-    );
 }
 
 #[test]
@@ -359,33 +130,10 @@ fn import_rejects_empty_chain() {
 }
 
 #[test]
-#[should_panic(expected: 'already-anchored')]
-fn import_rejects_already_anchored() {
-    let mut state = contract_state_for_testing();
-    let _ = AnchorImpl::import(ref state, alice_chain());
-    // Re-importing the same DID's chain must revert.
-    let _ = AnchorImpl::import(ref state, alice_chain());
-}
-
-#[test]
-#[should_panic(expected: 'prev-not-in-chain')]
-fn import_rejects_broken_linkage() {
-    // [genesis, tombstone] skips the update, so the tombstone's prev (the update CID) is not
-    // in the replayed chain.
+#[should_panic(expected: 'did-not-anchored')]
+fn submit_to_unknown_did_is_rejected() {
     let vectors = op_verify_vectors();
-    let broken = array![
-        from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex),
-        from_hex(vectors.at(ALICE_TOMBSTONE).signed_drisl_hex),
-    ];
+    let update = from_hex(vectors.at(ALICE_UPDATE).signed_drisl_hex);
     let mut state = contract_state_for_testing();
-    let _ = AnchorImpl::import(ref state, broken);
-}
-
-#[test]
-#[should_panic(expected: 'not-genesis')]
-fn import_rejects_non_genesis_first() {
-    // A chain whose first op has a prev is not a genesis.
-    let update = from_hex(op_verify_vectors().at(ALICE_UPDATE).signed_drisl_hex);
-    let mut state = contract_state_for_testing();
-    let _ = AnchorImpl::import(ref state, array![update]);
+    AnchorImpl::submit_op(ref state, "did:plc:doesnotexist000000000", update);
 }

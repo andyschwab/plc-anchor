@@ -8,21 +8,20 @@
 //! The witness only ever **reads** (`starknet_call`); it never builds a transaction. The pure
 //! codec (encode/decode) is separated from the network so it can be unit-tested offline.
 //!
-//! ## Trust boundary — the root is RPC-trusted (finding 4c)
+//! ## Trust boundary — the op log is RPC-trusted (finding 4c)
 //!
 //! `starknet_call` at `block latest` returns whatever state the queried node *claims*; it is NOT
-//! accompanied by a proof against the L1-settled Starknet state root. The anchor's Merkle
-//! inclusion proof (verified in `merkle.ts`) proves *head ∈ root* — but the **root value itself
-//! comes from this RPC**, so a witness pointed at a single untrusted RPC trusts that RPC for the
-//! root. Non-equivocation is real at the settlement layer (Starknet has one canonical state,
-//! settled to Ethereum); exposing it *trustlessly* to a resolver would require verifying a
-//! Starknet **storage proof** against the L1 state root — deferred, Mode-2-adjacent infra. Until
-//! then: **run your own full node, or trust your RPC.** The "untrusted proof server" property
-//! (fetch the proof from anywhere) holds only once the *root* comes from a trusted/independent
-//! source; via one public RPC, root and proof share a trust domain. (REFERENCE.md §1; SECURITY-TODO 4c.)
+//! accompanied by a proof against the L1-settled Starknet state root. Under verify-on-read the
+//! witness reads the DID's raw op log (`chain`) and re-derives everything from those bytes
+//! (`status.ts` → `deriveLiveChain`), so the op *contents* are content-addressed and trustless
+//! from any source — but **whether this is the DID's true/complete log comes from this RPC**. A
+//! witness pointed at a single untrusted RPC trusts that RPC for the log. Non-equivocation is real
+//! at the settlement layer (Starknet has one canonical state, settled to Ethereum); exposing it
+//! *trustlessly* to a resolver would require verifying a Starknet **storage proof** against the L1
+//! state root — deferred, Mode-2-adjacent infra. Until then: **run your own full node, or trust
+//! your RPC.** (REFERENCE.md §1; SECURITY-TODO 4c.)
 
 import { SELECTORS, type ViewName } from "./selectors.ts";
-import type { ProofStep } from "./merkle.ts";
 
 // ---- felt helpers -----------------------------------------------------------
 
@@ -88,21 +87,32 @@ export function decodeByteArray(felts: string[], offset: number): { bytes: Uint8
   return { bytes, next: offset + full + 3 };
 }
 
-/** Decode a `(ByteArray head, Array<ProofStep>)` tuple — the proof views' return shape. */
-export function decodeProof(felts: string[], offset = 0): { head: string; proof: ProofStep[] } {
-  const head = decodeByteArray(felts, offset);
-  let o = head.next;
+/** One stored op as returned by the anchor's `chain` view: the raw signed DRISL bytes, the
+ * Starknet block time (ms) it was stored at (the independent clock the 72h window uses), and its
+ * provenance (settled `import` vs live `submit_op`). Mirrors `anchor.cairo`'s `OpEntry`. */
+export interface AnchorOp {
+  signed: Uint8Array;
+  createdAt: number;
+  imported: boolean;
+}
+
+/** Decode a Cairo `Array<OpEntry>` (the `chain` view return): a length felt, then each
+ * `OpEntry { signed: ByteArray, created_at: u64, imported: bool }` in serde order. */
+export function decodeChain(felts: string[], offset = 0): AnchorOp[] {
+  let o = offset;
   const len = feltToNumber(felts[o]);
   o += 1;
-  const proof: ProofStep[] = [];
+  const out: AnchorOp[] = [];
   for (let i = 0; i < len; i += 1) {
-    const sibling = decodeByteArray(felts, o);
-    o = sibling.next;
-    const siblingIsLeft = BigInt(felts[o]) !== 0n;
+    const signed = decodeByteArray(felts, o);
+    o = signed.next;
+    const createdAt = Number(BigInt(felts[o]));
     o += 1;
-    proof.push({ sibling: sibling.bytes, siblingIsLeft });
+    const imported = BigInt(felts[o]) !== 0n;
+    o += 1;
+    out.push({ signed: signed.bytes, createdAt, imported });
   }
-  return { head: new TextDecoder().decode(head.bytes), proof };
+  return out;
 }
 
 // ---- RPC transport ----------------------------------------------------------
@@ -164,35 +174,10 @@ export class AnchorReader {
     return BigInt(felts[0] ?? "0x0") !== 0n;
   }
 
-  /** Tentative-tip head CID string, or "" if not anchored. */
-  async headCid(did: string): Promise<string> {
-    const felts = await this.#read("head_cid", encodeString(did));
-    return new TextDecoder().decode(decodeByteArray(felts, 0).bytes);
-  }
-
-  /** Confirmed head CID string (past the 72h window), or "" if none yet. */
-  async confirmedHead(did: string): Promise<string> {
-    const felts = await this.#read("confirmed_head", encodeString(did));
-    return new TextDecoder().decode(decodeByteArray(felts, 0).bytes);
-  }
-
-  /** 32-byte tentative commitment root. */
-  async tentativeRoot(): Promise<Uint8Array> {
-    return decodeByteArray(await this.#read("tentative_root"), 0).bytes;
-  }
-
-  /** 32-byte confirmed commitment root. */
-  async confirmedRoot(): Promise<Uint8Array> {
-    return decodeByteArray(await this.#read("confirmed_root"), 0).bytes;
-  }
-
-  /** Inclusion proof of `did`'s tentative head against `tentativeRoot()`. `head` is "" if absent. */
-  async tentativeProof(did: string): Promise<{ head: string; proof: ProofStep[] }> {
-    return decodeProof(await this.#read("tentative_proof", encodeString(did)));
-  }
-
-  /** Inclusion proof of `did`'s confirmed head against `confirmedRoot()`. `head` is "" if unconfirmed. */
-  async confirmedProof(did: string): Promise<{ head: string; proof: ProofStep[] }> {
-    return decodeProof(await this.#read("confirmed_proof", encodeString(did)));
+  /** The DID's full stored op log (oldest-first, including superseded ops), each with its
+   * block-time stamp + provenance. `[]` if not anchored. The witness re-derives the live/confirmed
+   * head from this (`status.ts`); no on-chain head/root is trusted. */
+  async chain(did: string): Promise<AnchorOp[]> {
+    return decodeChain(await this.#read("chain", encodeString(did)), 0);
   }
 }

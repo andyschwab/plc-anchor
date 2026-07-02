@@ -61,7 +61,6 @@ export function formatResult(did: string, r: CheckResult): string {
     `  directory head:         ${r.evidence.directoryHead ?? "(none)"}`,
     `  anchor confirmed head:  ${r.evidence.anchorConfirmedHead || "(none)"}`,
     `  anchor tentative head:  ${r.evidence.anchorTentativeHead || "(none)"}`,
-    `  confirmed proof valid:  ${r.evidence.confirmedProofVerified}`,
   ];
   return lines.join("\n");
 }

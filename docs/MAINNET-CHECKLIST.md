@@ -12,28 +12,53 @@ every phase ends in a **✅ confirm gate** you must satisfy before moving on.
 
 ---
 
-## Progress (2026-07-02) — PAUSED at Phase 4 pending rearchitecture decision
+## Progress (2026-07-02) — RESUMING: verify-on-read v2 cutover, then Phases 4–8
 
-The protocol is **live on Starknet mainnet** end-to-end. Phases 0–3 done; console
-productionization (4–8) deliberately **not started** — see why below.
+The protocol reached mainnet end-to-end on the pre-rearchitecture (in-contract-verifying) contract
+(Phases 1–3 below). Fee measurement then showed **per-DID import ≈ 6.9 STRK/op, ~100% in-contract
+EC verification** — not storage/DA (~free) — so the full 18 991-DID roster would cost six figures
+to verify on-chain, for a backup witness. The **verify-on-read rearchitecture**
+([`ONCHAIN-REARCH-PLAN.md`](ONCHAIN-REARCH-PLAN.md)) is now **adopted and implemented** (store-only
+contract; the witness re-derives validity read-side). Before Phases 4–8 we deploy the **v2**
+contract (a new class/address — same migration path as any redeploy) via **Phase R** below.
 
 - **Phase 1 ✅** — `plc-mainnet` operator wallet live & funded (deployed tx `0x5d92f3e2…`).
-- **Phase 2 ✅** — `anchor` deployed: `0x04db57b605f64e9ffac02c423d864dfe37d8c40c8f18203a55a6c402cfc1d9aa`
-  (class `0x19a28cac…`), empty-root verified, `deployments/mainnet.json` committed (`0055484`).
-- **Phase 3 ✅** — canary `did:plc:rzeldxi4pe24uahas3z65wnp` anchored (tx `0x78e8fc85…`);
-  `witness check` → `tentative-consistent`; `make adversarial-live` green. **72h clock started
-  ~2026-07-02 17:20 UTC** → confirmed head ~2026-07-05 (Phase 8 validation).
+- **Phase 2 ✅ (v1, superseded)** — pre-rearch `anchor` deployed:
+  `0x04db57b605f64e9ffac02c423d864dfe37d8c40c8f18203a55a6c402cfc1d9aa`. Stays live/correct until v2
+  cutover; superseded by the store-only v2 (Phase R).
+- **Phase 3 ✅ (v1)** — canary `did:plc:rzeldxi4pe24uahas3z65wnp` anchored & witnessed
+  `tentative-consistent`. Re-run against v2 in Phase R.
 - **Secrets:** single local source of truth in `secrets/mainnet.env` (gitignored); operator key
   stays only in the sncast accounts file. RPC = keyed Alchemy mainnet 0.10.x (verified `SN_MAIN`).
 
-**Why paused:** measuring real fees on-chain (receipt gas decomposition) showed **per-DID import
-cost ≈ 6.9 STRK/op and is ~100% Cairo *execution* gas — the in-contract signature verification —
-not storage/DA (which is ~free).** The full 18 991-DID roster would cost hundreds of thousands of
-STRK to *verify on-chain*, disproportionate for a backup witness. Before standing up the prod
-console + flipping `Active` on the full roster (Phases 4/7), we are evaluating a
-**verify-on-read rearchitecture** ([`ONCHAIN-REARCH-PLAN.md`](ONCHAIN-REARCH-PLAN.md)) that moves
-verification off the expensive on-chain path. The current mainnet contract stays live and correct
-meanwhile.
+---
+
+## Phase R — verify-on-read v2 cutover (do before Phase 4)
+
+The v2 contract is **store-only** (`import`/`submit_op`/`chain`, no in-contract crypto). It is a
+new class/address with an empty roster — the standard redeploy migration; re-import from genesis
+(now *much* cheaper). The witness/ingest/console code already targets v2.
+
+- [ ] On a Scarb-equipped box: `make ci` green (esp. `cairo-build` + `cairo-test` — the sandbox
+      that wrote this change has no Cairo toolchain, so this is the first real compile of the v2
+      contract + rewritten `tests/anchor.cairo`).
+- [ ] **Sepolia first.** `NETWORK=sepolia scripts/deploy.sh` → new v2 class/address; write
+      `deployments/sepolia.json`; commit. Re-import the corpus canary
+      (`cargo run -p ingest --features live -- --did <canary> --submit`).
+- [ ] Sepolia validation: `cargo test -p ingest --features live --test live_e2e -- --ignored`
+      (asserts byte-identical on-chain storage via `chain`); `witness check <canary>` →
+      `tentative-consistent`; `WITNESS_LIVE_RPC=<sepolia> make adversarial-live` behaves.
+- [ ] **Confirm cost.** Read the import `actual_fee` on Sepolia v2 and verify the ~10–50× drop vs
+      the pre-rearch numbers (the whole point). Record it.
+- [ ] **Mainnet.** `NETWORK=mainnet … scripts/deploy.sh` → v2 class/address; update
+      `deployments/mainnet.json` + `secrets/mainnet.env` `ANCHOR_CONTRACT_ADDRESS`; commit.
+- [ ] Re-run Phase 3's canary onboarding + witness/adversarial-live against the mainnet v2 address;
+      restart the 72h confirmed-head clock. Point `witness-ts`/`console`/CLI defaults at the v2
+      address.
+
+**✅ Gate:** v2 store-only contract live on Sepolia **and** mainnet; canary reads back
+byte-identical + `tentative-consistent`; import fee confirms the drop; deployment JSONs committed.
+Then proceed to Phase 4 with the v2 mainnet address.
 
 ---
 

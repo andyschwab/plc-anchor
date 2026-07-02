@@ -44,7 +44,6 @@ test("formatResult: renders status, reason, and evidence", () => {
       directoryHead: "bafyHEAD",
       anchorConfirmedHead: "bafyHEAD",
       anchorTentativeHead: "bafyHEAD",
-      confirmedProofVerified: true,
     },
   };
   const out = formatResult("did:plc:abc", r);

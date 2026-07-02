@@ -262,6 +262,49 @@ The roster starts empty; re-import DIDs from genesis (the already-proven path).
 
 ---
 
+## Rearchitecture — verify-on-read (2026-07-02)
+
+After the mainnet bring-up, receipt gas decomposition showed per-DID `import` cost was **~100%
+in-contract EC verification** (secp256k1/r1), with storage/DA effectively free — six figures of STRK
+to re-run crypto the op log already self-certifies, for a backup witness. So **verification moved
+from write-time (the contract) to read-time (the witness)**. RFC + evidence + as-built:
+[`ONCHAIN-REARCH-PLAN.md`](ONCHAIN-REARCH-PLAN.md); `REFERENCE.md`/`CLAUDE.md` carry amendment
+banners.
+
+**What changed**
+- **Contract → store-only** (`anchor.cairo`). `import_genesis`/`import`/`submit_op` push raw op
+  bytes (block-time stamp + `imported` flag); no `secp256k1`/`secp256r1`, no `op_decode`/`recovery`,
+  no fork adjudication, no Merkle root/proof. New `chain(did)` view returns the raw log. Only the
+  cheap `sha256` DID derivation remains (keys storage; not verification). Signatures of
+  `import`/`submit_op` are unchanged, so the `ingest` sink is untouched.
+- **Witness → verify-on-read** (`witness-ts`). The reader already re-derived PLC recovery for the
+  *directory* (`deriveLiveChain`, differential-green vs `@did-plc/lib`); the anchor chain now runs
+  through the **same** validator. `deriveLiveChain` gained an inert `imported` guard (read-side
+  mirror of `state::apply_op`'s `recovery-of-imported`) and returns its live ops; `deriveAnchorHeads`
+  (`status.ts`) builds entries from the on-chain ops — bodies cross-referenced **content-addressed**
+  (recomputed CID → op body the witness already fetches; a body whose hash ≠ the on-chain CID can't
+  be substituted), `createdAt` = the anchor's block time — and derives the confirmed head (latest
+  live op past the 72h window). No new consensus module; `merkle.ts` deleted. Pinned in
+  `nullified.test.ts` on real signed chains (incl. read-side recovery-of-imported).
+- **Adversarial/conformance** de-Merkled; read scenarios drive the `deriveAnchor` seam; write
+  scenarios reframed (the malicious op can be *stored* permissionlessly but is inert — the read-side
+  re-derivation drops it); `anchor-self-fault` reframed (a corrupt on-chain log ⇒ no confirmed head
+  ⇒ `tentative-consistent`, never a false `diverged`).
+
+**Preserved:** non-equivocation (identical bytes on the public chain), trustlessness (reader
+re-derives everything), the independent **block-time** confirmed head, and "never a false
+`diverged`". **Load-bearing decisions:** (1) content-addressed cross-reference instead of a new
+on-chain DRISL decoder — reuses the existing validator, adds no consensus surface; (2) drop the
+on-chain Merkle root — the reader validates the whole per-DID chain, so per-DID proofs are
+redundant (the future trustless-root read, finding 4c, becomes a storage proof over the op
+storage); (3) keep the Cairo `op_verify`/`recovery`/`state`/`merkle` modules as the
+differential-green PLC **reference** the read side mirrors (deletion deferred).
+
+**Status:** offline-green (`witness-test`/`console-test`/`rust-test`/`adversarial`, incl. `ingest
+--features live` compile). The Cairo contract + rewritten `tests/anchor.cairo` need `make cairo-test`
+on a Scarb box (the implementing sandbox had no toolchain), then the v2 Sepolia→mainnet deploy
+(`MAINNET-CHECKLIST.md` Phase R).
+
 ## Open follow-ups (deliberately deferred)
 
 - **Off-chain prover service** (roster-scale memoization of the inclusion proofs the contract
