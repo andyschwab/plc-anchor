@@ -44,7 +44,8 @@ a human must approve before the onboarder writes on-chain. Transitions are valid
 
 | Method | Path | Does |
 |---|---|---|
-| GET | `/healthz` | liveness, contract address, counts (incl. diverged) |
+| GET | `/healthz` | liveness, contract address, `authRequired`, counts (incl. diverged) |
+| POST | `/auth/login` | exchange `{secret}` for a short-lived session `{token, expiresAt}` |
 | GET | `/roster` | list all entries |
 | GET | `/roster/diverged` | the alarm list |
 | POST | `/roster/dids` | add an explicit DID (`{did}`) → `candidate` |
@@ -60,6 +61,25 @@ a human must approve before the onboarder writes on-chain. Transitions are valid
 The read-only loops (discover, refresh) run on timers; **onboarding never does** — it spends
 on-chain, so it is operator-triggered only (`POST /worker/onboard`), reinforcing the approve
 gate.
+
+## Auth (write gate)
+
+This is **Layer-2 access control** — who may curate the roster / trigger the on-chain spend — and
+is deliberately separate from contract authorization, which stays the op's embedded signature (the
+fee payer is irrelevant; REFERENCE.md §2). Gating the admin UI does not touch that property.
+
+Set `CONSOLE_ADMIN_TOKEN` to a shared operator secret and **all mutating routes** (every non-`GET`
+except `/auth/login`) require a session; **reads stay open**. Clients `POST /auth/login {secret}`
+to get a short-lived HMAC-signed bearer token (`CONSOLE_SESSION_TTL_MS`, default 1h), then send it
+as `Authorization: Bearer <token>`. The token is stateless (an HMAC over its expiry), so there is
+no session store; a leaked request expires and the long-lived secret never rides on every call.
+The bundled UI shows an **Unlock** box when `authRequired` is set and keeps the token in
+`sessionStorage`. **Leaving `CONSOLE_ADMIN_TOKEN` unset leaves writes open** (backward-compatible
+default) — the server logs `[auth] disabled` on boot.
+
+Auth is a pluggable seam (`src/auth.ts`, `Authenticator`): the shared-secret MVP can be swapped for
+wallet-signature ("sign-in with Starknet") verification without touching the routes — only
+`login`/`verify` change. Behind Fly's TLS the bearer token never travels in cleartext.
 
 ### Status reflects on-chain reality
 
@@ -83,8 +103,9 @@ STARKNET_RPC=https://<sepolia-rpc> node --experimental-sqlite src/main.ts
 Env: `PORT` (8787), `ROSTER_DB` (`./roster.db`), `STARKNET_RPC` (enables the refresh loop),
 `ANCHOR_CONTRACT_ADDRESS` (default = the Sepolia deployment), `PLC_DIRECTORY_URL`
 (`https://plc.directory`), `REFRESH_INTERVAL_MS` (300000; 0 disables), `INGEST_COMMAND` (enables
-onboarding; set to `/usr/local/bin/ingest` in the Docker image), plus the ingest fee-payer
-secrets (`STARKNET_ACCOUNT_ADDRESS`, `STARKNET_ACCOUNT_PRIVATE_KEY`).
+onboarding; set to `/usr/local/bin/ingest` in the Docker image), `CONSOLE_ADMIN_TOKEN` (gates
+writes; unset = open), `CONSOLE_SESSION_TTL_MS` (session lifetime, default 3600000), plus the
+ingest fee-payer secrets (`STARKNET_ACCOUNT_ADDRESS`, `STARKNET_ACCOUNT_PRIVATE_KEY`).
 
 ## Deploy (Fly)
 
@@ -94,7 +115,7 @@ stage 2 is the Node runtime with the console + `witness-ts`. Build context is th
 
 ```sh
 fly deploy --config console/fly.toml --dockerfile console/Dockerfile   # from repo root
-fly --config console/fly.toml secrets set STARKNET_RPC=… \
+fly --config console/fly.toml secrets set STARKNET_RPC=… CONSOLE_ADMIN_TOKEN=… \
     STARKNET_ACCOUNT_ADDRESS=0x… STARKNET_ACCOUNT_PRIVATE_KEY=0x…
 ```
 

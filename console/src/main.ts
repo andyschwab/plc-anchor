@@ -16,7 +16,10 @@
 //!   DISCOVER_INTERVAL_MS       filter discover-scan cadence (default 0 = disabled)
 //!   INGEST_COMMAND             ingest argv for onboarding (e.g. "ingest" or
 //!                              "cargo run --features live --bin ingest --"); enables onboarding
+//!   CONSOLE_ADMIN_TOKEN        operator secret; when set, writes require a login session
+//!   CONSOLE_SESSION_TTL_MS     session lifetime after login (default 3600000)
 
+import { SharedSecretAuth, type Authenticator } from "./auth.ts";
 import { DiscoverService, ExportClient } from "./discover.ts";
 import { Onboarder, SpawnRunner } from "./onboard.ts";
 import { RefreshService } from "./refresh.ts";
@@ -85,5 +88,15 @@ if (ingestCommand) {
   console.error("[onboard] disabled (set INGEST_COMMAND to enable on-chain writes)");
 }
 
-const server = createConsoleServer(store, { contractAddress, lastRefreshAt: () => lastRefreshAt, actions });
+// --- Auth gate (Layer-2 access control): only when an admin secret is configured. ----
+const adminSecret = process.env.CONSOLE_ADMIN_TOKEN?.trim();
+const sessionTtlMs = Number(process.env.CONSOLE_SESSION_TTL_MS ?? 3_600_000);
+let auth: Authenticator | undefined;
+if (adminSecret) {
+  auth = new SharedSecretAuth(adminSecret, sessionTtlMs);
+} else {
+  console.error("[auth] disabled — writes are OPEN (set CONSOLE_ADMIN_TOKEN to gate them)");
+}
+
+const server = createConsoleServer(store, { contractAddress, lastRefreshAt: () => lastRefreshAt, actions, auth });
 server.listen(port, () => console.error(`console listening on :${port} (anchor ${contractAddress})`));

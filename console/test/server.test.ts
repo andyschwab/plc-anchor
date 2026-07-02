@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
+import { SharedSecretAuth } from "../src/auth.ts";
 import { createConsoleServer } from "../src/server.ts";
 import { RosterStore } from "../src/roster.ts";
 
@@ -112,4 +113,58 @@ test("worker trigger runs a configured action", async () => {
   const res = await fetch(`http://127.0.0.1:${port}/worker/refresh`, { method: "POST" });
   assert.equal((await res.json()).diverged, 3);
   wired.close();
+});
+
+// --- Auth gate: with an Authenticator wired, writes require a session; reads stay open. ---
+test("auth gate: reads open, writes 401 without a session, 200 with one", async () => {
+  const gated = createConsoleServer(RosterStore.open(), {
+    contractAddress: "0xg",
+    auth: new SharedSecretAuth("s3cret"),
+    actions: { refresh: async () => ({ diverged: 0 }) },
+  });
+  await new Promise<void>((r) => gated.listen(0, "127.0.0.1", r));
+  const gbase = `http://127.0.0.1:${(gated.address() as AddressInfo).port}`;
+  const call = (method: string, path: string, opts: { body?: unknown; token?: string } = {}) =>
+    fetch(`${gbase}${path}`, {
+      method,
+      headers: {
+        ...(opts.body ? { "content-type": "application/json" } : {}),
+        ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+      },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+
+  // healthz advertises that auth is required, and reads work unauthenticated.
+  assert.equal((await (await call("GET", "/healthz")).json()).authRequired, true);
+  assert.equal((await call("GET", "/roster")).status, 200);
+
+  // A write with no session is rejected.
+  const denied = await call("POST", "/roster/dids", { body: { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa" } });
+  assert.equal(denied.status, 401);
+  assert.match((await denied.json()).error, /unauthorized/);
+
+  // Worker triggers are gated too.
+  assert.equal((await call("POST", "/worker/refresh")).status, 401);
+
+  // Bad login is 401; good login mints a token.
+  assert.equal((await call("POST", "/auth/login", { body: { secret: "wrong" } })).status, 401);
+  const login = await call("POST", "/auth/login", { body: { secret: "s3cret" } });
+  assert.equal(login.status, 200);
+  const { token } = await login.json();
+  assert.ok(token);
+
+  // The same writes now succeed with the bearer token.
+  const ok = await call("POST", "/roster/dids", { body: { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa" }, token });
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).state, "candidate");
+  assert.equal((await call("POST", "/worker/refresh", { token })).status, 200);
+
+  gated.close();
+});
+
+test("auth disabled: /auth/login is a no-op and writes stay open", async () => {
+  // The default (no `auth`) server is already exercised above; confirm the login route is inert.
+  const { status, json } = await req("POST", "/auth/login", { secret: "anything" });
+  assert.equal(status, 200);
+  assert.equal(json.authRequired, false);
 });

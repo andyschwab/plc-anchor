@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
+import type { Authenticator } from "./auth.ts";
 import type { RosterStore } from "./roster.ts";
 
 /** The bundled single-page UI, read once at startup (sibling `ui/index.html`). */
@@ -33,6 +34,9 @@ export interface ServerConfig {
   /** Reported by `/healthz`; set by the worker after each successful refresh. */
   lastRefreshAt?: () => number | null;
   actions?: WorkerActions;
+  /** When set, mutating routes (all non-GET except `/auth/login`) require a valid session; reads
+   * stay open. Absent = the console is ungated (backward-compatible default). */
+  auth?: Authenticator;
 }
 
 interface Route {
@@ -47,6 +51,11 @@ interface Ctx {
   body: unknown;
   store: RosterStore;
   config: ServerConfig;
+}
+
+/** True for the login route, which is the one mutating route exempt from the auth gate. */
+function isLoginRoute(parts: string[]): boolean {
+  return parts.length === 2 && parts[0] === "auth" && parts[1] === "login";
 }
 
 class HttpError extends Error {
@@ -93,6 +102,7 @@ function routes(): Route[] {
       handle: ({ store, config }) => ({
         ok: true,
         contractAddress: config.contractAddress,
+        authRequired: config.auth !== undefined,
         lastRefreshAt: config.lastRefreshAt?.() ?? null,
         counts: {
           total: store.list().length,
@@ -100,6 +110,16 @@ function routes(): Route[] {
           diverged: store.diverged().length,
         },
       }),
+    },
+    {
+      method: "POST",
+      parts: ["auth", "login"],
+      handle: ({ body, config }) => {
+        if (config.auth === undefined) return { ok: true, authRequired: false };
+        const session = config.auth.login(body);
+        if (session === null) throw new HttpError(401, "invalid credentials");
+        return { ok: true, ...session };
+      },
     },
     {
       method: "GET",
@@ -208,6 +228,11 @@ export function createConsoleServer(store: RosterStore, config: ServerConfig): S
           if (route.method !== method) continue;
           const params = match(route, parts);
           if (params === null) continue;
+          // Gate mutating routes behind auth; login is exempt and reads (GET) stay open.
+          if (config.auth !== undefined && method !== "GET" && !isLoginRoute(parts) && !config.auth.verify(req)) {
+            send(res, 401, { error: "unauthorized" });
+            return;
+          }
           const body = method === "POST" || method === "PUT" ? await readBody(req) : null;
           const result = await route.handle({ params, body, store, config });
           send(res, 200, result);

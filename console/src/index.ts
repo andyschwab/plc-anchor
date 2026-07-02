@@ -27,3 +27,4 @@ export {
   type ScanResult,
 } from "./discover.ts";
 export { createConsoleServer, type ServerConfig, type WorkerActions } from "./server.ts";
+export { type Authenticator, type Session, SharedSecretAuth } from "./auth.ts";
