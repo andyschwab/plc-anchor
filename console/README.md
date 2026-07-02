@@ -22,7 +22,10 @@ on-chain spend with one switch and a cap.
 - **Criterion** = `ROSTER_CRITERION=pds_domain:eurosky.social` — a **domain-suffix** match
   (`eurosky.social` and any `*.eurosky.social`). Deploy-time config, not user-editable.
 - **Discovery = enumerate then tail.** *Enumerate* pages the PDS's `com.atproto.sync.listRepos`
-  to seed the backlog (cheap and complete — `plc.directory` has no "list DIDs on PDS X" API).
+  to seed the backlog (cheap and complete — `plc.directory` has no "list DIDs on PDS X" API). It's
+  a **trickle**: one small page (`enumeratePageSize`, default 50) per tick (`enumerateIntervalMs`,
+  default 60s) rather than one big drain, so a slow PDS can't drop a long-lived paginated call. The
+  per-PDS cursor persists, so the backlog still drains fully across ticks, then idles when done.
   *Tail* polls `/export` from ~now for identity changes matching the criterion.
 - **Enrichment** attaches PLC-derivable context (handle, PDS host, rotation-key count, last-op
   time, tombstoned) so 20k bare DIDs are legible. Throttled + cached; display-only.
@@ -123,7 +126,7 @@ degrades to count-only. Fees are stored as raw decimal felt strings (STRK wei) a
 
 Non-secret config is **runtime-editable** — no redeploy. **All** config lives in **one unified
 Settings panel** (the ⚙ button), grouped into *Spend* (`active`, `importBudget`), *Discovery*
-(`criterion`, `pdsEndpoints`, `mirrorUrl`), *Identity & enrichment* (`directoryUrl`, `enrichBatch`,
+(`criterion`, `pdsEndpoints`, `enumeratePageSize`, `mirrorUrl`), *Identity & enrichment* (`directoryUrl`, `enrichBatch`,
 `enrichDelayMs`), *Cadence* (the four `*IntervalMs`, with a live `= 1h · 0 disables` hint), and a
 read-only *Environment* group (the boot-only snapshot). The whole form saves through **one**
 `PUT /settings` with one **Save changes** button — `active`/`importBudget` are no longer a separate
@@ -206,9 +209,10 @@ Env (criterion-driven additions in **bold**):
 |---|---|---|
 | **`ROSTER_CRITERION`** | membership rule, e.g. `pds_domain:eurosky.social` (enables the tail) | (unset → tail off) |
 | **`PDS_ENDPOINTS`** | comma-sep PDS base URLs to enumerate | `https://eurosky.social` |
+| **`ENUMERATE_PAGE_SIZE`** | `listRepos` repos per enumerate tick (the trickle batch) | `50` |
 | **`IMPORT_BUDGET_PER_TICK`** | max on-chain imports per onboard tick | `25` |
 | **`ACTIVE_DEFAULT`** | `1`/`true` to boot Active (spend on) | `false` |
-| **`ENUMERATE_INTERVAL_MS`** / **`TAIL_INTERVAL_MS`** / **`ENRICH_INTERVAL_MS`** | loop cadences (`0` disables) | `3600000` / `60000` / `30000` |
+| **`ENUMERATE_INTERVAL_MS`** / **`TAIL_INTERVAL_MS`** / **`ENRICH_INTERVAL_MS`** | loop cadences (`0` disables) | `60000` / `60000` / `30000` |
 | `STARKNET_RPC` | JSON-RPC (enables refresh + fee lookups) | (unset → refresh off) |
 | `ANCHOR_CONTRACT_ADDRESS` | anchor contract | the Sepolia deployment |
 | `PLC_DIRECTORY_URL` / `PLC_MIRROR_URL` | directory base / `/export` source | `https://plc.directory` |

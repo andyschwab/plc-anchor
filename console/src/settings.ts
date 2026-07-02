@@ -24,6 +24,10 @@ export interface ConsoleSettings {
   active: boolean;
   /** Max on-chain imports per onboard tick. */
   importBudget: number;
+  /** Repos requested per `listRepos` page — one page is enumerated per tick, so this is also the
+   * per-tick batch. A small, frequent trickle (e.g. 50/min) rather than one big hourly drain, so a
+   * slow PDS can't drop a long-lived paginated call mid-flight. */
+  enumeratePageSize: number;
   enumerateIntervalMs: number;
   tailIntervalMs: number;
   enrichIntervalMs: number;
@@ -44,7 +48,8 @@ export const SETTINGS_DEFAULTS: ConsoleSettings = {
   pdsEndpoints: ["https://eurosky.social"],
   active: false,
   importBudget: 25,
-  enumerateIntervalMs: 3_600_000,
+  enumeratePageSize: 50,
+  enumerateIntervalMs: 60_000,
   tailIntervalMs: 60_000,
   enrichIntervalMs: 30_000,
   refreshIntervalMs: 300_000,
@@ -104,6 +109,7 @@ export function validateSettings(s: ConsoleSettings): ConsoleSettings {
     if (!isInt(s[k], 0)) throw new Error(`${k} must be an integer ≥ 0`);
   }
   if (!isInt(s.enrichBatch, 1)) throw new Error("enrichBatch must be an integer ≥ 1");
+  if (!isInt(s.enumeratePageSize, 1)) throw new Error("enumeratePageSize must be an integer ≥ 1");
   if (!validUrl(s.directoryUrl)) throw new Error("directoryUrl must be a valid URL");
   if (!validUrl(s.mirrorUrl)) throw new Error("mirrorUrl must be a valid URL");
 

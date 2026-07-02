@@ -14,6 +14,7 @@
 //!   ROSTER_CRITERION / PDS_ENDPOINTS          seed the criterion / enumeration targets
 //!   IMPORT_BUDGET_PER_TICK / ACTIVE_DEFAULT   seed the budget / boot Active state
 //!   {ENUMERATE,TAIL,ENRICH,REFRESH}_INTERVAL_MS   seed loop cadences (0 disables)
+//!   ENUMERATE_PAGE_SIZE                       seed listRepos page size (repos per enumerate tick)
 //!   ENRICH_BATCH / ENRICH_DELAY_MS            seed enrich batch size / inter-request ms
 //!   PLC_DIRECTORY_URL / PLC_MIRROR_URL        seed the directory / mirror bases
 //!   SETTINGS_DEFAULTS_FILE                    optional JSON file of default settings (below env)
@@ -71,6 +72,7 @@ function settingsDefaults(): ConsoleSettings {
   if (eps) d.pdsEndpoints = eps;
   if (e.IMPORT_BUDGET_PER_TICK !== undefined) d.importBudget = num(e.IMPORT_BUDGET_PER_TICK, d.importBudget);
   if (e.ACTIVE_DEFAULT !== undefined) d.active = bool(e.ACTIVE_DEFAULT);
+  if (e.ENUMERATE_PAGE_SIZE !== undefined) d.enumeratePageSize = num(e.ENUMERATE_PAGE_SIZE, d.enumeratePageSize);
   if (e.ENUMERATE_INTERVAL_MS !== undefined) d.enumerateIntervalMs = num(e.ENUMERATE_INTERVAL_MS, d.enumerateIntervalMs);
   if (e.TAIL_INTERVAL_MS !== undefined) d.tailIntervalMs = num(e.TAIL_INTERVAL_MS, d.tailIntervalMs);
   if (e.ENRICH_INTERVAL_MS !== undefined) d.enrichIntervalMs = num(e.ENRICH_INTERVAL_MS, d.enrichIntervalMs);
@@ -195,10 +197,14 @@ function loop(getIntervalMs: () => number, fn: () => Promise<unknown>): void {
 }
 
 // --- Enumerate (backlog): page each configured PDS's listRepos → auto-approved candidates. ---
+// One small page per PDS per tick — a steady trickle (e.g. 50/min) rather than one big hourly
+// drain, so a slow PDS can't drop a long-lived paginated call mid-flight (UND_ERR_SOCKET). The
+// per-PDS cursor persists, so the backlog still drains fully across ticks, then idles when done.
 actions.enumerate = instrument("enumerate", async () => {
+  const s = settings.get();
   const results = [];
-  for (const url of settings.get().pdsEndpoints) {
-    results.push({ pds: url, ...(await new EnumerationService(store, new PdsClient(url)).enumerateBacklog()) });
+  for (const url of s.pdsEndpoints) {
+    results.push({ pds: url, ...(await new EnumerationService(store, new PdsClient(url)).enumerateOnce(s.enumeratePageSize)) });
   }
   return { results };
 });

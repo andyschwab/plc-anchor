@@ -419,6 +419,7 @@ const SETTINGS_SCHEMA = [
   { group: "Discovery", fields: [
     { key: "criterion", type: "text", label: "Criterion", ph: "pds_domain:eurosky.social", help: "Membership rule for the tail. Empty disables the tail." },
     { key: "pdsEndpoints", type: "list", label: "PDS endpoints", ph: "https://eurosky.social", help: "Comma/newline separated. Enumerated via listRepos." },
+    { key: "enumeratePageSize", type: "int", min: 1, label: "Enumerate page size (repos / tick)", help: "listRepos page per tick — a small, frequent trickle beats one big drain." },
     { key: "mirrorUrl", type: "text", label: "/export mirror URL", help: "Source for the criterion tail." },
   ]},
   { group: "Identity & enrichment", fields: [
