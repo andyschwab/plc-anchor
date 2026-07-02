@@ -165,7 +165,11 @@ fn apply_op_rejects_unknown_prev() {
 
 fn record(cid: ByteArray, created_at: u64) -> OpRecord {
     OpRecord {
-        cid, rotation_keys: array![], created_at, signer_index: 0, tombstone: false,
+        cid,
+        rotation_keys: array![],
+        created_at,
+        signer_index: 0,
+        tombstone: false,
         imported: false,
     }
 }

@@ -45,7 +45,8 @@ pub trait IAnchor<TContractState> {
     /// Append or recover onto `did`. The op is observed **live** (not settled): its block-time
     /// stamp approximates its real authored time, so the 72h recovery window applies to it.
     /// Reverts on unknown DID, bad linkage/signature, a tombstoned fork point, an invalid/late
-    /// recovery, or a recovery that would nullify imported/settled history (`recovery-of-imported`).
+    /// recovery, or a recovery that would nullify imported/settled history
+    /// (`recovery-of-imported`).
     fn submit_op(ref self: TContractState, did: ByteArray, proposed_signed: ByteArray);
     /// The current head (tentative tip) CID string for `did`, or "" if not anchored.
     fn head_cid(self: @TContractState, did: ByteArray) -> ByteArray;
@@ -69,7 +70,8 @@ pub trait IAnchor<TContractState> {
     /// a trusted/independent source** (finding 4c: the proof shows head ∈ root, not root = true
     /// state; via a single `starknet_call` RPC, root and proof share one trust domain — a
     /// trustless read needs a storage proof against the L1-settled state root). Returns
-    /// `("", [])` if `did` is not anchored. Root-specific — use this against the tentative root only.
+    /// `("", [])` if `did` is not anchored. Root-specific — use this against the tentative root
+    /// only.
     fn tentative_proof(self: @TContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>);
     /// Inclusion proof for `did`'s **confirmed** head against `confirmed_root()`. Returns
     /// `("", [])` if `did` has no confirmed head yet (all ops still within the 72h window).
