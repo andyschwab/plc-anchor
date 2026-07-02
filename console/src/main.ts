@@ -33,7 +33,7 @@ import { PdsClient } from "./pds.ts";
 import { RefreshService } from "./refresh.ts";
 import { RosterStore } from "./roster.ts";
 import { SETTINGS_DEFAULTS, SettingsStore, validateSettings, type ConsoleSettings } from "./settings.ts";
-import { createConsoleServer, type WorkerActions } from "./server.ts";
+import { createConsoleServer, type SettingsPort, type WorkerActions } from "./server.ts";
 import { DirectoryResolver, WitnessChecker } from "./witness.ts";
 
 // Post-4a redeploy (the "imported ops are settled" fix); overridable via ANCHOR_CONTRACT_ADDRESS.
@@ -289,10 +289,30 @@ const locked = () => ({
   ingestConfigured: Boolean(ingestCommand),
 });
 
+/** Settings port for the API, wrapping the store so flipping **Active** on (false→true) kicks an
+ * onboard cycle immediately. Otherwise the spend wouldn't start until the next onboard tick (up to
+ * a refresh interval later), which reads as "onboard needs a manual click after Active". Fires the
+ * existing worker action (a no-op when onboarding isn't configured); the console's `PUT /settings`
+ * is the path the Settings panel uses to toggle Active, so this covers the UI and API alike. */
+const settingsPort: SettingsPort = {
+  get: () => settings.get(),
+  patch: (partial) => {
+    const wasActive = settings.get().active;
+    const next = settings.patch(partial);
+    if (!wasActive && settings.get().active && actions.onboard) {
+      console.error("[onboard] Active turned on — kicking an onboard cycle");
+      void actions.onboard().catch((err) =>
+        console.error("[onboard] kick failed:", err instanceof Error ? err.message : err),
+      );
+    }
+    return next;
+  },
+};
+
 const server = createConsoleServer(store, {
   contractAddress,
   criterionLabel,
-  settings,
+  settings: settingsPort,
   locked,
   lastRefreshAt: () => lastRefreshAt,
   actions,

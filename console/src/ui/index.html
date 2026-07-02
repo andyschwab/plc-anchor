@@ -251,6 +251,7 @@ function errorHint(msg) {
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(m)) return "DNS: host not found — check the URL and outbound network access.";
   if (/ECONNREFUSED/i.test(m)) return "Connection refused — the service is down or the port is wrong.";
   if (/ETIMEDOUT|CONNECT_TIMEOUT|timed? ?out/i.test(m)) return "Timed out — host slow or unreachable (egress blocked?).";
+  if (/UND_ERR_SOCKET|other side closed|socket hang ?up|ECONNRESET|EPIPE/i.test(m)) return "Remote closed the connection mid-request — the PDS or a proxy dropped it (often long pagination or an idle timeout). Usually transient; it resumes from the saved cursor next tick.";
   if (/HTTP 40[13]/.test(m)) return "Rejected by the remote (auth/permission).";
   if (/HTTP 404/.test(m)) return "Endpoint not found — wrong URL or unsupported host.";
   if (/HTTP 429/.test(m)) return "Rate-limited by the remote — raise the delay or lower the batch.";
@@ -572,9 +573,11 @@ $("saveSettings").onclick = async () => {
   } catch (e) { $("settingsErr").textContent = e.message; }
 };
 
-// Initial load + periodic refresh.
+// Initial load + periodic refresh. This runs even with the Settings panel open (it only touches
+// the header/stats/workers/grid, never the settings form) so the Workers panel keeps updating
+// while you toggle Active.
 refreshAll().catch((e) => showTopBanner("Console load failed: " + e.message));
-setInterval(() => { if ($("settingsPanel").hidden) refreshAll().catch(() => {}); }, 15000);
+setInterval(() => refreshAll().catch(() => {}), 15000);
 </script>
 </body>
 </html>
