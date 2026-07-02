@@ -9,6 +9,7 @@
 //! `witness.ts`) so enrichment is offline-testable with a fixture audit log. The worker is
 //! throttled and cached (`enrichedAt`) so a full 20k pass stays gentle on `plc.directory`.
 
+import type { Criterion } from "./criterion.ts";
 import { hostOf, pdsHostFromOp } from "./pdshost.ts";
 import type { RosterStore } from "./roster.ts";
 
@@ -85,6 +86,9 @@ export function identityFromLog(log: readonly AuditEntry[]): Identity | null {
 export interface EnrichConfig {
   /** Re-enrich an entry once its `enrichedAt` is older than this (default 24h). */
   reEnrichMs?: number;
+  /** When set, enrichment flags entries whose authoritative PDS host no longer satisfies the
+   * criterion (the migration-straggler view). Flag-only — nothing is auto-removed. */
+  criterion?: Criterion | null;
   /** Injectable clock for deterministic tests. */
   now?: () => number;
   /** Injectable delay between requests (rate-limit); default a real timer. */
@@ -103,6 +107,7 @@ export class EnrichmentService {
   readonly #store: RosterStore;
   readonly #resolver: IdentityResolver;
   readonly #reEnrichMs: number;
+  readonly #criterion: Criterion | null;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
 
@@ -110,6 +115,7 @@ export class EnrichmentService {
     this.#store = store;
     this.#resolver = resolver;
     this.#reEnrichMs = config.reEnrichMs ?? DAY_MS;
+    this.#criterion = config.criterion ?? null;
     this.#now = config.now ?? Date.now;
     this.#sleep = config.sleep ?? defaultSleep;
   }
@@ -124,7 +130,10 @@ export class EnrichmentService {
         this.#store.setError(did, "enrich: no live op in audit log");
         return false;
       }
-      this.#store.setEnrichment(did, id);
+      // Re-check the DID's *authoritative* PDS host against the criterion (enumeration is
+      // criterion-blind and trusts the PDS list; this catches migration stragglers). Flag-only.
+      const offCriterion = this.#criterion ? !this.#criterion.matchesHost(id.pdsHost) : null;
+      this.#store.setEnrichment(did, { ...id, offCriterion });
       return true;
     } catch (err) {
       this.#store.setError(did, `enrich: ${err instanceof Error ? err.message : String(err)}`);

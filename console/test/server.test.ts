@@ -141,7 +141,7 @@ test("PUT /settings patches live fields and rejects bad input", async () => {
   assert.equal(badCrit.status, 400);
 });
 
-test("aggregates rollup exposes counts, fee totals, active, and cursors", async () => {
+test("aggregates rollup exposes counts, fees, active, cursors, workers, and enrichment", async () => {
   const { status, json } = await req("GET", "/roster/aggregates");
   assert.equal(status, 200);
   assert.equal(typeof json.total, "number");
@@ -149,6 +149,9 @@ test("aggregates rollup exposes counts, fee totals, active, and cursors", async 
   assert.equal(typeof json.feeTotal, "string");
   assert.equal(json.active, false);
   assert.ok(json.cursors);
+  assert.ok(json.workers, "worker statuses present");
+  assert.equal(typeof json.enrichment.enriched, "number");
+  assert.equal(typeof json.offCriterion, "number");
 });
 
 test("healthz advertises the criterion and active flag", async () => {

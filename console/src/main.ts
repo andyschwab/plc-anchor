@@ -92,6 +92,56 @@ const feeResolver: FeeResolver | null = rpc ? starknetFeeResolver(rpc) : null;
 const actions: WorkerActions = {};
 let lastRefreshAt: number | null = null;
 
+/** Short human summary of a worker result for the status panel (defensive — never throws). */
+function summarize(name: string, result: unknown): string {
+  const r = (result ?? {}) as Record<string, unknown>;
+  try {
+    switch (name) {
+      case "enumerate": {
+        const rows = (r.results as { queued?: number; done?: boolean }[]) ?? [];
+        const queued = rows.reduce((a, x) => a + (x.queued ?? 0), 0);
+        const done = rows.length > 0 && rows.every((x) => x.done);
+        return `queued ${queued} · ${done ? "complete" : "paging"}`;
+      }
+      case "tail":
+        return "skipped" in r ? String(r.skipped) : `${r.matched ?? 0} matched / ${r.scanned ?? 0} scanned`;
+      case "enrich":
+        return `${r.enriched ?? 0} enriched · ${r.failed ?? 0} failed`;
+      case "onboard":
+        return r.active ? `${r.anchored ?? 0}/${r.attempted ?? 0} anchored (budget ${r.budget})` : "inactive";
+      case "refresh":
+        return `${r.diverged ?? 0} diverged`;
+      default:
+        return JSON.stringify(result).slice(0, 80);
+    }
+  } catch {
+    return "ok";
+  }
+}
+
+/** Wrap a worker action so every run (timer *or* manual `/worker/*`) persists its status — start,
+ * duration, result summary, and any error — making the otherwise-invisible loops observable. */
+function instrument(name: string, fn: () => Promise<unknown>): () => Promise<unknown> {
+  return async () => {
+    store.setWorkerStatus(name, { running: true, startedAt: Date.now() });
+    const t0 = Date.now();
+    try {
+      const result = await fn();
+      store.setWorkerStatus(name, {
+        running: false, lastRunAt: Date.now(), durationMs: Date.now() - t0,
+        ok: true, summary: summarize(name, result), error: null,
+      });
+      return result;
+    } catch (err) {
+      store.setWorkerStatus(name, {
+        running: false, lastRunAt: Date.now(), durationMs: Date.now() - t0,
+        ok: false, error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
+}
+
 /** Run `fn` on a self-rescheduling timer whose period is re-read from `getIntervalMs` each cycle,
  * so cadence changes (and enable/disable at 0) apply live. While disabled it polls every 30s to
  * notice a re-enable. Unref'd so it never holds the process open. */
@@ -113,41 +163,42 @@ function loop(getIntervalMs: () => number, fn: () => Promise<unknown>): void {
 }
 
 // --- Enumerate (backlog): page each configured PDS's listRepos → auto-approved candidates. ---
-actions.enumerate = async () => {
+actions.enumerate = instrument("enumerate", async () => {
   const results = [];
   for (const url of settings.get().pdsEndpoints) {
     results.push({ pds: url, ...(await new EnumerationService(store, new PdsClient(url)).enumerateBacklog()) });
   }
   return { results };
-};
+});
 loop(() => settings.get().enumerateIntervalMs, actions.enumerate);
 
 // --- Tail (ongoing): /export from ~now, criterion-filtered → auto-approved candidates. ---
-actions.tail = async () => {
+actions.tail = instrument("tail", async () => {
   const s = settings.get();
   if (!s.criterion) return { skipped: "no criterion set" };
   const tail = new TailService(store, new ExportClient(s.mirrorUrl), parseCriterion(s.criterion));
   return tail.scanOnce();
-};
+});
 loop(() => settings.get().tailIntervalMs, actions.tail);
 
-// --- Enrich: throttled identity metadata over the directory (always cheap/off-chain). ---
-actions.enrich = async () => {
+// --- Enrich: throttled identity metadata + criterion re-check (always cheap/off-chain). ---
+actions.enrich = instrument("enrich", async () => {
   const s = settings.get();
-  const enricher = new EnrichmentService(store, new DirectoryResolver(s.directoryUrl));
+  const criterion = s.criterion ? parseCriterion(s.criterion) : null;
+  const enricher = new EnrichmentService(store, new DirectoryResolver(s.directoryUrl), { criterion });
   return enricher.enrichStale(s.enrichBatch, s.enrichDelayMs);
-};
+});
 loop(() => settings.get().enrichIntervalMs, actions.enrich);
 
 // --- Refresh (read side): §4 status + the diverged alarm. Needs an RPC. ---
 if (rpc) {
-  actions.refresh = async () => {
+  actions.refresh = instrument("refresh", async () => {
     const refresher = new RefreshService(store, new WitnessChecker(rpc, contractAddress, settings.get().directoryUrl));
     const diverged = await refresher.refreshAll();
     lastRefreshAt = Date.now();
     if (diverged > 0) console.error(`[refresh] ${diverged} DID(s) DIVERGED`);
     return { diverged, lastRefreshAt };
-  };
+  });
   loop(() => settings.get().refreshIntervalMs, actions.refresh);
 } else {
   console.error("[refresh] disabled (set STARKNET_RPC)");
@@ -156,7 +207,7 @@ if (rpc) {
 // --- Onboard: the spend. Only when a live ingest is configured; gated on Active + budget. ---
 if (ingestCommand) {
   const argv = ingestCommand.split(/\s+/);
-  actions.onboard = async () => {
+  actions.onboard = instrument("onboard", async () => {
     const s = settings.get();
     const onboarder = new Onboarder(
       store,
@@ -165,7 +216,7 @@ if (ingestCommand) {
       feeResolver,
     );
     return onboarder.onboardApproved();
-  };
+  });
   loop(() => settings.get().refreshIntervalMs, actions.onboard);
 } else {
   console.error("[onboard] disabled (set INGEST_COMMAND to enable on-chain writes)");

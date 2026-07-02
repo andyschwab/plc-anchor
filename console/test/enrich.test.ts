@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { parseCriterion } from "../src/criterion.ts";
 import { EnrichmentService, identityFromLog, type AuditEntry } from "../src/enrich.ts";
 import { RosterStore } from "../src/roster.ts";
 
@@ -62,6 +63,38 @@ test("enrichOne records identity and stamps enrichedAt", async () => {
   assert.equal(e.handle, "alice.eurosky.social");
   assert.equal(e.keyCount, 2);
   assert.ok(e.enrichedAt !== null);
+});
+
+test("enrichOne flags off-criterion when the authoritative host no longer matches", async () => {
+  const s = RosterStore.open();
+  const criterion = parseCriterion("pds_domain:eurosky.social");
+  // Two DIDs enumerated as eurosky members, but PLC says one migrated to bsky.
+  s.upsertCandidate("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "pds:eurosky.social");
+  s.upsertCandidate("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb", "pds:eurosky.social");
+  const svc = new EnrichmentService(
+    s,
+    {
+      auditLog: async (did) =>
+        did.endsWith("bbbb")
+          ? [entry(modernOp("moved.bsky.social", "x.host.bsky.network", 1), "2022-01-01T00:00:00Z")]
+          : [entry(modernOp("stay.eurosky.social", "eurosky.social", 1), "2022-01-01T00:00:00Z")],
+    },
+    { criterion },
+  );
+  await svc.enrichOne("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+  await svc.enrichOne("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
+  assert.equal(s.get("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa")!.offCriterion, false, "still on eurosky");
+  assert.equal(s.get("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb")!.offCriterion, true, "migrated → flagged");
+  // Nothing is removed — flag-only.
+  assert.equal(s.get("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb")!.state, "candidate");
+});
+
+test("enrichOne leaves off-criterion null when no criterion is configured", async () => {
+  const s = RosterStore.open();
+  s.upsertCandidate("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "pds:eurosky.social");
+  const svc = new EnrichmentService(s, { auditLog: async () => [entry(modernOp("h", "x.host.bsky.network", 1), "2022-01-01T00:00:00Z")] });
+  await svc.enrichOne("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+  assert.equal(s.get("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa")!.offCriterion, null);
 });
 
 test("enrichOne records the error without stamping enrichedAt on failure (retries later)", async () => {

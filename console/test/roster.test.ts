@@ -168,6 +168,55 @@ test("setAnchorCost stores the tip tx and accumulates the fee", () => {
   assert.equal(e.anchorFee, "1500", "fee accumulates across txs");
 });
 
+test("setEnrichment records the off-criterion flag; aggregates + query surface it", () => {
+  const s = store();
+  for (const d of ["did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb"]) {
+    s.upsertCandidate(d, "pds:eurosky.social");
+  }
+  s.setEnrichment("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", {
+    handle: "a.eurosky.social", pdsHost: "eurosky.social", keyCount: 1, lastOpAt: 1, tombstoned: false, offCriterion: false,
+  });
+  s.setEnrichment("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb", {
+    handle: "b.bsky.social", pdsHost: "x.host.bsky.network", keyCount: 1, lastOpAt: 1, tombstoned: false, offCriterion: true,
+  });
+  assert.equal(s.get("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb")!.offCriterion, true);
+  assert.equal(s.get("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa")!.offCriterion, false);
+
+  const agg = s.aggregates();
+  assert.equal(agg.offCriterion, 1);
+  assert.equal(agg.enrichment.enriched, 2);
+  assert.equal(agg.enrichment.pending, 0);
+
+  const flagged = s.query({ offCriterion: true });
+  assert.equal(flagged.total, 1);
+  assert.equal(flagged.rows[0].did, "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
+});
+
+test("enrichment pending count tracks un-enriched, non-removed entries", () => {
+  const s = store();
+  s.upsertCandidate("did:plc:cccccccccccccccccccccccc", "explicit");
+  s.upsertCandidate("did:plc:dddddddddddddddddddddddd", "explicit");
+  s.transition("did:plc:dddddddddddddddddddddddd", "removed");
+  const agg = s.aggregates();
+  assert.equal(agg.enrichment.enriched, 0);
+  assert.equal(agg.enrichment.pending, 1, "removed entries are not counted as pending");
+});
+
+test("worker status merges partial updates and lists by name", () => {
+  const s = store();
+  s.setWorkerStatus("enumerate", { running: true, startedAt: 100 });
+  s.setWorkerStatus("enumerate", { running: false, lastRunAt: 200, durationMs: 100, ok: true, summary: "queued 3004 · complete", error: null });
+  const all = s.workerStatuses();
+  assert.equal(all.enumerate.running, false);
+  assert.equal(all.enumerate.startedAt, 100, "prior fields are preserved across a merge");
+  assert.equal(all.enumerate.summary, "queued 3004 · complete");
+  assert.equal(all.enumerate.ok, true);
+  // A second worker is tracked independently.
+  s.setWorkerStatus("refresh", { running: false, lastRunAt: 5, ok: false, error: "rpc down" });
+  assert.equal(s.workerStatuses().refresh.error, "rpc down");
+  assert.equal(Object.keys(s.workerStatuses()).length, 2);
+});
+
 test("settings: active + budget persist and default safely", () => {
   const s = store();
   assert.equal(s.getActive(), false, "active defaults off (no spend at boot)");

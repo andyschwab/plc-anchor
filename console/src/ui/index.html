@@ -59,6 +59,15 @@
   .stat { background: #11141c; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
   .stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
   .stat .v { font-size: 18px; font-weight: 600; margin-top: 2px; }
+  .stat.clickable { cursor: pointer; }
+  .stat.clickable:hover { border-color: var(--accent); }
+  .stat.on { border-color: var(--accent); }
+  /* Worker status */
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+    margin-right: 7px; animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  td.werr { color: var(--bad); font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    max-width: 480px; overflow: hidden; text-overflow: ellipsis; }
   .filters { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
   /* Settings panel */
@@ -103,6 +112,14 @@
       <button id="w-onboard">Onboard</button>
       <button id="w-refresh">Refresh</button>
     </div>
+  </section>
+
+  <section class="panel">
+    <h2>Workers — last run</h2>
+    <table>
+      <thead><tr><th>Worker</th><th>When</th><th>Result</th><th>Error</th></tr></thead>
+      <tbody id="workersBody"></tbody>
+    </table>
   </section>
 
   <section class="panel" id="settingsPanel" hidden>
@@ -169,6 +186,13 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 const cell = (v) => v == null || v === "" ? '<span class="muted">—</span>' : esc(v);
 const short = (d) => d && d.length > 24 ? d.slice(0, 16) + "…" + d.slice(-6) : d;
 const day = (ms) => ms == null ? null : new Date(ms).toISOString().slice(0, 10);
+function ago(ms) {
+  if (ms == null) return "never";
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return s + "s ago";
+  const m = Math.round(s / 60);
+  return m < 60 ? m + "m ago" : Math.round(m / 60) + "h ago";
+}
 function fmtStrk(wei) {
   if (wei == null) return null;
   let b; try { b = BigInt(wei); } catch { return null; }
@@ -204,7 +228,8 @@ const COLUMNS = [
   { key: "anchoredAt", label: "Anchored", sort: "anchoredAt" },
   { key: "anchorFee", label: "Fee", sort: "anchorFee" },
 ];
-const grid = { q: "", state: "", status: "", pdsHost: "", sort: "updated_at", order: "desc", limit: 50, offset: 0 };
+const grid = { q: "", state: "", status: "", pdsHost: "", offCriterion: false, sort: "updated_at", order: "desc", limit: 50, offset: 0 };
+const WORKER_ORDER = ["enumerate", "tail", "enrich", "onboard", "refresh"];
 
 function renderHead() {
   document.getElementById("head").innerHTML = COLUMNS.map((c) => {
@@ -231,6 +256,7 @@ function renderRow(e) {
 function query() {
   const p = new URLSearchParams();
   for (const k of ["q", "state", "status", "pdsHost", "sort", "order"]) if (grid[k]) p.set(k, grid[k]);
+  if (grid.offCriterion) p.set("offCriterion", "1");
   p.set("limit", grid.limit); p.set("offset", grid.offset);
   return p.toString();
 }
@@ -261,14 +287,32 @@ async function renderHeader() {
   if (document.activeElement !== budgetEl) budgetEl.value = agg.budget ?? "";
   budgetEl.placeholder = agg.budget == null ? "25" : "";
 
-  document.getElementById("stats").innerHTML = [
+  const enr = agg.enrichment || { enriched: 0, pending: 0 };
+  const tiles = [
     ["Anchored", agg.anchored],
     ["Pending", agg.backlog],
     ["Diverged", `<span class="${agg.diverged ? "status-diverged" : ""}">${agg.diverged}</span>`],
+    ["Enriched", `${enr.enriched}/${enr.enriched + enr.pending}`],
+    ["Off-criterion", agg.offCriterion ?? 0, "offcrit"],
     ["Total", agg.total],
     ["Cumulative fee", fmtStrk(agg.feeTotal) ?? "—"],
     ["Avg fee / DID", fmtStrk(agg.feeAverage) ?? "—"],
-  ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  ];
+  document.getElementById("stats").innerHTML = tiles.map(([k, v, f]) => {
+    const cls = f ? ` clickable${grid.offCriterion && f === "offcrit" ? " on" : ""}` : "";
+    return `<div class="stat${cls}"${f ? ` data-statfilter="${f}"` : ""}><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  }).join("");
+
+  // Workers panel — surfaces the periodic runs (and their errors) that otherwise only hit the log.
+  document.getElementById("workersBody").innerHTML = WORKER_ORDER.map((name) => {
+    const w = (agg.workers || {})[name];
+    if (!w) return `<tr><td>${name}</td><td class="muted">—</td><td class="muted">not run yet</td><td></td></tr>`;
+    const dot = w.running ? '<span class="dot"></span>' : "";
+    const when = w.running ? "running…" : ago(w.lastRunAt) + (w.durationMs != null ? ` · ${w.durationMs}ms` : "");
+    const result = w.summary ? esc(w.summary) : '<span class="muted">—</span>';
+    return `<tr><td>${dot}${name}</td><td class="muted">${when}</td><td>${result}</td>
+      <td class="werr" title="${w.error ? esc(w.error) : ""}">${w.error ? esc(w.error) : ""}</td></tr>`;
+  }).join("");
 
   const diverged = await api("/roster/diverged");
   const alarm = document.getElementById("alarmPanel");
@@ -302,6 +346,14 @@ document.getElementById("f-state").addEventListener("change", (e) => { grid.stat
 document.getElementById("f-status").addEventListener("change", (e) => { grid.status = e.target.value; grid.offset = 0; renderGrid().catch(() => {}); });
 document.getElementById("prev").onclick = () => { grid.offset = Math.max(0, grid.offset - grid.limit); renderGrid().catch(() => {}); };
 document.getElementById("next").onclick = () => { grid.offset += grid.limit; renderGrid().catch(() => {}); };
+// Click the "Off-criterion" tile to filter the grid to the migration stragglers (toggle).
+document.getElementById("stats").addEventListener("click", (ev) => {
+  const tile = ev.target.closest("[data-statfilter='offcrit']");
+  if (!tile) return;
+  grid.offCriterion = !grid.offCriterion;
+  grid.offset = 0;
+  refreshAll().catch(() => {});
+});
 
 document.getElementById("toggle").onclick = () => guard(() => post("/settings/active", { active: !active }));
 document.getElementById("budget").onchange = (e) => guard(() => {

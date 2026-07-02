@@ -72,7 +72,7 @@ on-chain" however it got there. Transitions are validated (`ALLOWED_TRANSITIONS`
 | GET | `/healthz` | liveness, contract, `criterion`, `writeMode`, `active`, counts |
 | POST | `/auth/login` | exchange `{secret}` for a short-lived session `{token, expiresAt}` |
 | GET | `/roster` | **paginated/filtered/sorted** grid → `{rows, total}` (see below) |
-| GET | `/roster/aggregates` | counts by state+status, backlog, anchored, fee total/avg, active, cursors |
+| GET | `/roster/aggregates` | counts by state+status, backlog, anchored, fee total/avg, active, cursors, **worker last-run status**, enrichment progress, off-criterion count |
 | GET | `/roster/diverged` | the alarm list |
 | POST | `/roster/dids` | add an explicit DID (`{did}`) → `candidate` |
 | GET | `/roster/dids/:did` | one entry |
@@ -83,8 +83,28 @@ on-chain" however it got there. Transitions are validated (`ALLOWED_TRANSITIONS`
 | POST | `/worker/{enumerate,tail,enrich,onboard,refresh}` | kick a worker cycle now |
 
 `GET /roster` query params: `state`, `status`, `q` (substring over DID + handle), `pdsHost`,
-`sort` (a column alias), `order` (`asc`/`desc`), `limit` (≤1000), `offset`. All loops run on
-timers; **onboarding is a no-op unless Active** (the spend gate), independent of its cadence.
+`offCriterion` (`1` = only the migration stragglers), `sort` (a column alias), `order`
+(`asc`/`desc`), `limit` (≤1000), `offset`. All loops run on timers; **onboarding is a no-op unless
+Active** (the spend gate), independent of its cadence.
+
+## Observability
+
+Fly's logs are thin, so the periodic worker runs are made visible in-app. Every worker run (timer
+*or* manual `/worker/*`) persists a last-run record — `{ running, lastRunAt, durationMs, ok,
+summary, error }` — to the store, surfaced in `/roster/aggregates.workers` and rendered as the UI's
+**Workers** panel (last run, duration, a live "running…" dot, a result summary like `queued 3004 ·
+complete`, and **the last error in red**). This is the main way to catch a worker that's failing —
+e.g. a refresh RPC error — without SSHing in.
+
+The dashboard also shows **enrichment progress** (`enrichment.{enriched,pending}`) and an
+**off-criterion** count: enrichment re-checks each DID's *authoritative* PDS host against the
+criterion (enumeration is criterion-blind and trusts the PDS's `listRepos`), and **flags** — never
+removes — DIDs whose host no longer matches (migration stragglers). Clicking the Off-criterion tile
+filters the grid to them (`GET /roster?offCriterion=1`). Handling them (remove, or re-scope the
+criterion) stays a manual, operator decision.
+
+To watch enumeration drain without the UI: `curl -s $HOST/roster/aggregates | jq
+'{workers:.workers.enumerate, enumerate:.cursors.enumerate}'`.
 
 ## Cost tracking
 

@@ -13,6 +13,7 @@ export type {
   RosterState,
   Settings,
   WitnessStatus,
+  WorkerStatus,
 } from "./types.ts";
 export {
   hostOf,

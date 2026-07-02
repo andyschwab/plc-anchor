@@ -185,6 +185,13 @@ old exact-host filter) — made operable and cost-safe at ~20k. Load-bearing dec
 - **Table went server-side.** `GET /roster` is paginated/filtered/sorted over indexed columns
   (`{rows,total}`); the UI is a debounced grid (queries stay in the low-ms at 20k). The `pds_host`
   filter CRUD was dropped (criterion is config).
+- **Observability** (Fly logs are thin): each worker run (timer or manual) persists a last-run
+  record — running/lastRunAt/durationMs/ok/summary/**error** — surfaced in `/roster/aggregates`
+  and a UI Workers panel, so a failing loop (e.g. a refresh RPC error) is visible without SSH. The
+  dashboard also shows enrichment progress and an **off-criterion** count: enrichment re-checks the
+  DID's authoritative PDS host against the criterion and **flags** (never removes) migration
+  stragglers — enumeration is criterion-blind (trusts `listRepos`), so this closes the loop as a
+  visible count + a one-click grid filter, leaving disposition a manual decision.
 - **Non-secret config is live-editable** (`src/settings.ts`, `GET/PUT /settings`, the ⚙ panel).
   A store-backed facade composes over the existing `active`/`budget` accessors; workers re-read
   config each tick and cadence changes reschedule live (self-scheduling timer), so the criterion,

@@ -14,7 +14,10 @@ import type {
   RosterState,
   Settings,
   WitnessStatus,
+  WorkerStatus,
 } from "./types.ts";
+
+const WORKER_STATUS_PREFIX = "worker_status:";
 
 /** Whitelisted sort keys → real columns (guards the `ORDER BY` against injection). */
 const SORT_COLUMNS: Readonly<Record<string, string>> = {
@@ -84,6 +87,7 @@ CREATE TABLE IF NOT EXISTS roster (
   anchor_tx         TEXT,
   anchor_fee        TEXT,
   discovered_at     INTEGER,
+  off_criterion     INTEGER,
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL
 );
@@ -111,6 +115,7 @@ CREATE INDEX IF NOT EXISTS roster_handle_idx   ON roster(handle);
 CREATE INDEX IF NOT EXISTS roster_pdshost_idx  ON roster(pds_host);
 CREATE INDEX IF NOT EXISTS roster_anchored_idx ON roster(anchored_at);
 CREATE INDEX IF NOT EXISTS roster_enriched_idx ON roster(enriched_at);
+CREATE INDEX IF NOT EXISTS roster_offcrit_idx  ON roster(off_criterion);
 `;
 
 /** Columns added after the initial schema. Applied idempotently to pre-existing DBs so a
@@ -125,6 +130,7 @@ const ADDED_COLUMNS: ReadonlyArray<[string, string]> = [
   ["anchor_tx", "TEXT"],
   ["anchor_fee", "TEXT"],
   ["discovered_at", "INTEGER"],
+  ["off_criterion", "INTEGER"],
 ];
 
 // Settings live in the `meta` KV under stable keys.
@@ -150,6 +156,7 @@ interface RosterRow {
   anchor_tx: string | null;
   anchor_fee: string | null;
   discovered_at: number | null;
+  off_criterion: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -174,6 +181,7 @@ function toEntry(row: RosterRow): RosterEntry {
     anchorTx: row.anchor_tx,
     anchorFee: row.anchor_fee,
     discoveredAt: row.discovered_at,
+    offCriterion: row.off_criterion === null ? null : row.off_criterion !== 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -283,6 +291,7 @@ export class RosterStore {
       where.push("(did LIKE ? ESCAPE '\\' OR handle LIKE ? ESCAPE '\\')");
       params.push(`%${likeEscape(opts.q)}%`, `%${likeEscape(opts.q)}%`);
     }
+    if (opts.offCriterion) where.push("off_criterion = 1");
     const clause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
 
     const total = (
@@ -327,6 +336,14 @@ export class RosterStore {
     const withFee = fees.length;
 
     const total = Object.values(byState).reduce((a, b) => a + b, 0);
+    const scalar = (sql: string): number =>
+      (this.#db.prepare(sql).get() as { n: number }).n;
+    const enriched = scalar("SELECT COUNT(*) AS n FROM roster WHERE enriched_at IS NOT NULL");
+    const pending = scalar(
+      "SELECT COUNT(*) AS n FROM roster WHERE state != 'removed' AND enriched_at IS NULL",
+    );
+    const offCriterion = scalar("SELECT COUNT(*) AS n FROM roster WHERE off_criterion = 1");
+
     return {
       total,
       byState,
@@ -337,6 +354,8 @@ export class RosterStore {
       feeTotal: feeTotal.toString(),
       feeAverage: withFee > 0 ? (feeTotal / BigInt(withFee)).toString() : "0",
       anchoredWithFee: withFee,
+      enrichment: { enriched, pending },
+      offCriterion,
     };
   }
 
@@ -424,7 +443,9 @@ export class RosterStore {
     return entry;
   }
 
-  /** Record enrichment (PLC-derived identity context) for a DID. No-op for an unknown DID. */
+  /** Record enrichment (PLC-derived identity context) for a DID. No-op for an unknown DID.
+   * `offCriterion` (optional) flags that the DID's authoritative PDS host no longer satisfies the
+   * criterion — computed by the enrich worker, which knows the current criterion. */
   setEnrichment(
     did: string,
     e: {
@@ -433,13 +454,14 @@ export class RosterStore {
       keyCount: number | null;
       lastOpAt: number | null;
       tombstoned: boolean | null;
+      offCriterion?: boolean | null;
     },
   ): void {
     this.#db
       .prepare(
         `UPDATE roster
            SET handle = ?, pds_host = ?, key_count = ?, last_op_at = ?, tombstoned = ?,
-               enriched_at = ?, updated_at = ?
+               off_criterion = ?, enriched_at = ?, updated_at = ?
          WHERE did = ?`,
       )
       .run(
@@ -448,6 +470,7 @@ export class RosterStore {
         e.keyCount,
         e.lastOpAt,
         e.tombstoned === null ? null : e.tombstoned ? 1 : 0,
+        e.offCriterion === undefined || e.offCriterion === null ? null : e.offCriterion ? 1 : 0,
         this.#now(),
         this.#now(),
         did,
@@ -553,6 +576,37 @@ export class RosterStore {
         "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
       )
       .run(key, value, value);
+  }
+
+  // ---- worker status (persist each loop's last run so it's visible in the UI) ----
+
+  /** Merge a partial status update into `worker`'s record. Persisting here (not just logging)
+   * makes the periodic runs — and any errors, which otherwise only hit the process log — visible. */
+  setWorkerStatus(worker: string, partial: Partial<WorkerStatus>): void {
+    const key = WORKER_STATUS_PREFIX + worker;
+    let current: Partial<WorkerStatus> = {};
+    const raw = this.getMeta(key);
+    if (raw !== null) {
+      try {
+        current = JSON.parse(raw) as Partial<WorkerStatus>;
+      } catch {
+        current = {};
+      }
+    }
+    this.setMeta(key, JSON.stringify({ ...current, ...partial }));
+  }
+
+  /** All persisted worker records, keyed by worker name. */
+  workerStatuses(): Record<string, WorkerStatus> {
+    const out: Record<string, WorkerStatus> = {};
+    for (const { key, value } of this.metaWithPrefix(WORKER_STATUS_PREFIX)) {
+      try {
+        out[key.slice(WORKER_STATUS_PREFIX.length)] = JSON.parse(value) as WorkerStatus;
+      } catch {
+        /* skip a corrupt record */
+      }
+    }
+    return out;
   }
 
   // ---- settings (persisted so the toggle/budget survive restarts) ---------

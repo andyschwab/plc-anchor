@@ -49,6 +49,9 @@ export interface RosterEntry {
   tombstoned: boolean | null;
   /** Epoch ms of the last successful enrichment (drives the throttled re-enrich cadence). */
   enrichedAt: number | null;
+  /** Set at enrichment: the DID's authoritative PDS host no longer satisfies the criterion
+   * (e.g. a migration straggler). Flag-only — never auto-removed. `null` until first enriched. */
+  offCriterion: boolean | null;
 
   // --- Anchoring provenance + cost (§MVP stage 5). ---
   /** Epoch ms the DID was first observed/marked anchored on-chain. */
@@ -72,6 +75,8 @@ export interface RosterQuery {
   q?: string;
   /** Substring over the PDS host. */
   pdsHost?: string;
+  /** Only entries flagged off-criterion (`true`) — the migration stragglers view. */
+  offCriterion?: boolean;
   /** Sort key (a whitelisted column alias); defaults to most-recently-updated. */
   sort?: string;
   order?: "asc" | "desc";
@@ -94,6 +99,29 @@ export interface Aggregates {
   feeAverage: string;
   /** How many anchored DIDs carry a recorded fee (the average's denominator). */
   anchoredWithFee: number;
+  /** Enrichment backlog: how many entries are enriched vs still pending. */
+  enrichment: { enriched: number; pending: number };
+  /** Entries whose authoritative PDS host no longer matches the criterion (flag-only). */
+  offCriterion: number;
+}
+
+/** A worker's last-run record, persisted so the periodic runs (and their errors) are visible in
+ * the UI rather than only in the process log. */
+export interface WorkerStatus {
+  /** True between a run's start and its finish. */
+  running: boolean;
+  /** Epoch ms the current run started (set while `running`). */
+  startedAt: number | null;
+  /** Epoch ms the last run finished. */
+  lastRunAt: number | null;
+  /** Duration of the last completed run, ms. */
+  durationMs: number | null;
+  /** Whether the last completed run succeeded. */
+  ok: boolean | null;
+  /** Short human summary of the last result (e.g. `queued 3004 · complete`). */
+  summary: string | null;
+  /** Last error message, if the most recent run threw (else `null`). */
+  error: string | null;
 }
 
 /** Deployment-wide settings, persisted in the store so they survive restarts. */

@@ -188,6 +188,7 @@ function routes(): Route[] {
           status: qp(query, "status") as never,
           q: qp(query, "q"),
           pdsHost: qp(query, "pdsHost"),
+          offCriterion: qp(query, "offCriterion") === "1" ? true : undefined,
           sort: qp(query, "sort"),
           order: qp(query, "order") === "asc" ? "asc" : "desc",
           limit: qpInt(query, "limit"),
@@ -202,6 +203,7 @@ function routes(): Route[] {
         active: store.getActive(),
         budget: store.getBudget(),
         cursors: cursorProgress(store),
+        workers: store.workerStatuses(),
       }),
     },
     {
