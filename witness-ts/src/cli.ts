@@ -4,7 +4,8 @@
 //! The adoption surface (Phase 5 plan §5): the one-command demonstration that the whole stack
 //! resolves end-to-end. Reads the directory audit log + the anchor views, runs the §4 ladder,
 //! and prints the status with its evidence. Exit code: 0 for confirmed/tentative-consistent/
-//! absent, 2 for `diverged` (so it composes into monitoring).
+//! absent, 2 for `diverged`, 1 for `error` (an unverifiable input — so it composes into
+//! monitoring, distinguishing "contradicted" from "couldn't be checked").
 //!
 //!   node src/cli.ts <did:plc:...> [--rpc URL] [--contract ADDR] [--directory URL]
 //!
@@ -61,8 +62,10 @@ export function formatResult(did: string, r: CheckResult): string {
   return lines.join("\n");
 }
 
-/** Exit code by status: `diverged` is the only failure (2); everything else is 0. */
-export const exitCodeFor = (status: CheckResult["status"]): number => (status === "diverged" ? 2 : 0);
+/** Exit code by status: `diverged` → 2 (contradicted), `error` → 1 (unverifiable input),
+ * everything else → 0. */
+export const exitCodeFor = (status: CheckResult["status"]): number =>
+  status === "diverged" ? 2 : status === "error" ? 1 : 0;
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

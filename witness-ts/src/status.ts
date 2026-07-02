@@ -19,7 +19,12 @@
 import { leafHash, verifyProof, type ProofStep } from "./merkle.ts";
 import { directoryHead, type AuditEntry } from "./directory.ts";
 
-export type Status = "confirmed" | "tentative-consistent" | "diverged" | "absent";
+// The four graduated statuses, plus `error`: an *unverifiable* input (e.g. the directory
+// served a head with an unparseable `createdAt`), distinct from any of the four honest
+// verdicts. It never asserts divergence, but it must not be silently absorbed into a
+// non-alarming verdict — a malicious directory could otherwise use malformed data to suppress
+// `diverged` indefinitely (SECURITY-TODO item 4).
+export type Status = "confirmed" | "tentative-consistent" | "diverged" | "absent" | "error";
 
 export interface CheckResult {
   status: Status;
@@ -135,9 +140,22 @@ export async function check(
   // recovery the directory rejected, committing to a head the directory never served. We cannot
   // measure the exact skew, so: if the directory's head is recent (within the horizon), defer —
   // skew-pending. Only a head old enough to rule that out is `diverged`.
-  const dirCreatedMs = dirHead ? Date.parse(dirHead.createdAt) : Number.NaN;
-  const withinHorizon = Number.isNaN(dirCreatedMs) ? dirHead !== null : now() - dirCreatedMs <= skewHorizonMs;
-  if (withinHorizon) {
+
+  // No live head at all: the directory serves nothing the anchor confirmed — real divergence.
+  if (dirHead === null) {
+    return result("diverged", "confirmed-head-absent", ev);
+  }
+
+  // The skew/divergence split depends entirely on the directory head's `createdAt`. If it is
+  // unparseable we cannot make that call, so we must not default to a non-alarming verdict —
+  // surface it as `error` rather than letting a malformed timestamp suppress `diverged`
+  // indefinitely (SECURITY-TODO item 4).
+  const dirCreatedMs = Date.parse(dirHead.createdAt);
+  if (Number.isNaN(dirCreatedMs)) {
+    return result("error", "directory-timestamp-unparseable", ev);
+  }
+
+  if (now() - dirCreatedMs <= skewHorizonMs) {
     return result("tentative-consistent", "skew-pending", ev);
   }
 

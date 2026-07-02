@@ -107,6 +107,18 @@ test("WALL: skew-pending — confirmed head absent but directory head is recent 
   assert.equal(r.reason, "skew-pending");
 });
 
+test("error — confirmed head absent and the directory head's createdAt is unparseable", async () => {
+  // Same contradiction as the diverged/skew rows, but the directory serves a malformed timestamp
+  // so the skew/divergence split can't be made. MUST surface as `error`, never silently absorbed
+  // into a non-alarming verdict (SECURITY-TODO item 4).
+  const r = await run(
+    fakeAnchor({ confirmedHead: "bafyA", tentativeHead: "bafyA" }),
+    fakeDirectory([entry("bafyOTHER", "not-a-date")]),
+  );
+  assert.equal(r.status, "error");
+  assert.equal(r.reason, "directory-timestamp-unparseable");
+});
+
 test("diverged — anchored with a confirmed head the directory serves nothing for", async () => {
   const r = await run(
     fakeAnchor({ confirmedHead: "bafyA", tentativeHead: "bafyA" }),

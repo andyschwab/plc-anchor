@@ -20,12 +20,18 @@ use atproto_dasl::cid::{compute_cid, Cid};
 use atproto_dasl::{to_vec, Ipld};
 use std::collections::BTreeMap;
 
+/// Maximum JSON nesting depth accepted by [`json_to_ipld`]. A legitimate PLC op nests only a
+/// few levels (op → `services`/`verificationMethods` map → string values); 64 is far above any
+/// real op but low enough that a maliciously deep payload from a mirror cannot stack-overflow
+/// the long-running indexer before we reject it (SECURITY-TODO item 3).
+const MAX_DEPTH: usize = 64;
+
 /// Re-encode a PLC operation (directory JSON) to its canonical DRISL signed-op bytes.
 pub fn signed_op_bytes(operation: &serde_json::Value) -> Result<Vec<u8>> {
     if !operation.is_object() {
         bail!("operation must be a JSON object");
     }
-    let ipld = json_to_ipld(operation)?;
+    let ipld = json_to_ipld(operation, MAX_DEPTH)?;
     to_vec(&ipld).context("DRISL encoding failed")
 }
 
@@ -45,17 +51,30 @@ pub fn is_genesis(operation: &serde_json::Value) -> bool {
 /// JSON→IPLD for a PLC op. Strict: PLC ops carry only strings, maps, arrays, and null (no
 /// numbers/floats — `prev` is a base32 string, not a link), so a number is a sign the input is
 /// not a PLC op.
-fn json_to_ipld(value: &serde_json::Value) -> Result<Ipld> {
+fn json_to_ipld(value: &serde_json::Value, depth_budget: usize) -> Result<Ipld> {
     use serde_json::Value;
+    // Charge one level for every container we descend into; refuse before recursing deeper so a
+    // pathologically nested payload can't blow the stack (SECURITY-TODO item 3).
+    let child_budget = match value {
+        Value::Array(_) | Value::Object(_) => depth_budget
+            .checked_sub(1)
+            .ok_or_else(|| anyhow::anyhow!("PLC operation nests deeper than {MAX_DEPTH} levels"))?,
+        _ => depth_budget,
+    };
     Ok(match value {
         Value::Null => Ipld::Null,
         Value::Bool(b) => Ipld::Bool(*b),
         Value::String(s) => Ipld::String(s.clone()),
-        Value::Array(items) => Ipld::List(items.iter().map(json_to_ipld).collect::<Result<_>>()?),
+        Value::Array(items) => Ipld::List(
+            items
+                .iter()
+                .map(|v| json_to_ipld(v, child_budget))
+                .collect::<Result<_>>()?,
+        ),
         Value::Object(obj) => {
             let mut map = BTreeMap::new();
             for (k, v) in obj {
-                map.insert(k.clone(), json_to_ipld(v)?);
+                map.insert(k.clone(), json_to_ipld(v, child_budget)?);
             }
             Ipld::Map(map)
         }
@@ -140,5 +159,28 @@ mod tests {
     #[test]
     fn rejects_non_object() {
         assert!(signed_op_bytes(&json!("just a string")).is_err());
+    }
+
+    #[test]
+    fn rejects_pathologically_deep_nesting() {
+        // Nest arrays well past MAX_DEPTH — must be rejected, not stack-overflow.
+        let mut deep = json!("leaf");
+        for _ in 0..(MAX_DEPTH + 10) {
+            deep = serde_json::Value::Array(vec![deep]);
+        }
+        let op = json!({ "type": "plc_operation", "prev": null, "deep": deep });
+        let err = signed_op_bytes(&op).expect_err("deep nesting must be rejected");
+        assert!(err.to_string().contains("nests deeper"), "got: {err}");
+    }
+
+    #[test]
+    fn accepts_nesting_within_limit() {
+        // A handful of levels (realistic PLC shape) must still encode fine.
+        let mut ok = json!("leaf");
+        for _ in 0..8 {
+            ok = serde_json::Value::Array(vec![ok]);
+        }
+        let op = json!({ "type": "plc_operation", "prev": null, "nested": ok });
+        assert!(signed_op_bytes(&op).is_ok());
     }
 }

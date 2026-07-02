@@ -9,10 +9,11 @@
 //!               index within a rotation-key set).
 //!   link      — `prev` linkage via the predecessor's base32 CID string.
 //!   recovery  — 72h higher-priority-key nullification decision (§4, §5).
-//!   verify    — the integrated non-genesis `verify_next_op` seam (the four above).
 //!
 //! Phase 3 (next) — state commitment + anchor endpoint:
-//!   state      — per-DID head + confirmed/tentative DID→document roots (§4).
+//!   state      — per-DID head + confirmed/tentative DID→document roots (§4); `apply_op`
+//!                composes the Phase 2 primitives above into the non-genesis append/recovery
+//!                decision (the single integrated verification path the anchor consumes).
 //!   merkle     — sha256 Merkle commitment over the DID→head map (§4, P3.2).
 //!   anchor     — the permissionless endpoint: `import`/`submit_op` (§2).
 //!   governance — multisig + timelock + one-way freeze flag (§6b).
@@ -26,4 +27,3 @@ pub mod op_verify;
 pub mod recovery;
 pub mod sig_verify;
 pub mod state;
-pub mod verify;

@@ -9,8 +9,10 @@ a graduated status a resolver or PDS can enforce as policy (the SPF/DMARC analog
 holds it accountable — any one checker turns it on alone, the way an email receiver enables
 DMARC. It is an anchor, **not** a replacement for the directory.
 
-> *Name provisional: "DIDMARC" = DID-mapping Authentication, Reporting & Conformance,
-> picked so the email-auth analogy reads at a glance. Rename freely.*
+> *Name provisional: "DIDMARC" = DID Mapping Alignment, Reporting & Conformance,
+> picked so the email-auth analogy reads at a glance. ("Alignment" over "Authentication":
+> PLC already provides per-op authentication — the DKIM half — so the layer DIDMARC adds is
+> the alignment check, mirroring DMARC's real mechanism.) Rename freely.*
 
 ---
 

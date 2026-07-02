@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>DIDMARC — atproto identity DMARC</title>
-<meta name="description" content="Independent, on-chain proof that plc.directory serves a DID's complete, current, non-equivocated history — a graduated status any resolver or PDS enforces unilaterally." />
+<title>DIDMARC — DID Mapping Alignment, Reporting &amp; Conformance</title>
+<meta name="description" content="DIDMARC (DID Mapping Alignment, Reporting & Conformance) — independent, on-chain proof that plc.directory serves a DID's complete, current, non-equivocated history, exposed as a graduated status any resolver or PDS enforces unilaterally." />
 <style>
   :root {
     --bg: #0f1117; --panel: #181b24; --line: #272b36; --fg: #e6e8ee; --muted: #9aa3b2;
@@ -18,16 +18,21 @@
   .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
   header { padding: 80px 0 48px; }
   .tag { color: var(--muted); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; }
-  h1 { font-size: 40px; line-height: 1.15; margin: 12px 0 16px; letter-spacing: -.01em; }
+  h1 { font-size: 40px; line-height: 1.15; margin: 12px 0 8px; letter-spacing: -.01em; }
   h1 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .expand { font-size: 15px; color: var(--muted); margin: 0 0 16px; }
+  .expand b { color: var(--fg); font-weight: 600; }
   .lede { font-size: 19px; color: #cdd2dd; }
   section { padding: 28px 0; border-top: 1px solid var(--line); }
   h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 14px; }
   p { margin: 0 0 14px; }
   .analogy { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .threats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
   .card h3 { margin: 0 0 6px; font-size: 15px; }
   .card p { margin: 0; color: var(--muted); font-size: 14px; }
+  .card .why { margin-top: 8px; color: #b7becb; font-size: 13px; }
+  .card .why b { color: var(--bad); font-weight: 600; }
   .ladder { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
   .ladder li { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font-size: 14px; }
   .ladder b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -38,14 +43,16 @@
   .cta { display: inline-block; background: var(--accent); color: #07101f; font-weight: 600;
     padding: 10px 18px; border-radius: 8px; margin-top: 8px; }
   footer { padding: 40px 0 80px; color: var(--muted); font-size: 13px; }
-  @media (max-width: 560px) { .analogy { grid-template-columns: 1fr; } h1 { font-size: 32px; } }
+  @media (max-width: 560px) { .analogy, .threats { grid-template-columns: 1fr; } h1 { font-size: 32px; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div class="tag">atproto identity DMARC</div>
+    <div class="tag">a witness for atproto identity</div>
     <h1><span class="mono">DIDMARC</span> — hold the directory accountable</h1>
+    <p class="expand"><b>D</b>ID <b>M</b>apping <b>A</b>lignment, <b>R</b>eporting &amp;
+      <b>C</b>onformance — an independent accountability layer for atproto identity.</p>
     <p class="lede">Independent, on-chain proof that <code>plc.directory</code> serves a DID's
       <b>complete, current, and non-equivocated</b> history — exposed as a graduated status any
       resolver or PDS can enforce <b>unilaterally</b>, with no network coordination and no
@@ -54,22 +61,59 @@
   </header>
 
   <section>
-    <h2>The analogy</h2>
-    <p>atproto identities are a signed, hash-linked log of operations served from one directory.
-      Every op is self-certifying — but a single signature can't tell you whether you were shown
-      the <i>whole</i> history. Email solved the same gap with a layered stack:</p>
+    <h2>The gap a signature leaves</h2>
+    <p>An atproto identity is a signed, hash-linked log of operations, served from a single
+      directory. Every operation is self-certifying — but a signature only vouches for the
+      operation it's attached to. It can't tell you whether the directory showed you <i>all</i> of
+      them, the <i>latest</i> ones, or the <i>same</i> ones it showed everyone else.</p>
     <div class="analogy">
       <div class="card">
-        <h3>PLC ≈ DKIM</h3>
-        <p>Each operation is signed by a then-valid rotation key. Per-op authenticity — already
-          there.</p>
+        <h3>What a signature proves</h3>
+        <p>This operation is authentic — signed by a key that was valid at the time. PLC already
+          gives you this, per operation.</p>
       </div>
       <div class="card">
-        <h3>DIDMARC ≈ SPF / DMARC</h3>
-        <p>The layer a signature structurally can't provide: <i>was I shown the complete, current,
-          non-equivocated history?</i> Verified on-chain.</p>
+        <h3>What it can't</h3>
+        <p>That you were shown the <i>complete, current, and non-equivocated</i> history. No
+          signature can speak for the operations it isn't on — including the ones you never saw.</p>
       </div>
     </div>
+  </section>
+
+  <section>
+    <h2>What a directory can do to you</h2>
+    <p>That gap isn't theoretical. Every operation can be perfectly signed and the directory can
+      still deceive you, because it alone decides <i>which</i> operations you see. None of the
+      attacks below needs a stolen key — only control of the directory a resolver trusts:</p>
+    <div class="threats">
+      <div class="card">
+        <h3>Omission — undo a fix</h3>
+        <p>Your account key is stolen, so you do the right thing and rotate it out with a new
+          signed operation. The directory serves your history with that one operation missing — so
+          to the rest of the network the stolen key is still live, and the thief keeps signing as
+          you.</p>
+        <p class="why"><b>The lie is the operation left out.</b></p>
+      </div>
+      <div class="card">
+        <h3>Erasure — make someone vanish</h3>
+        <p>The directory simply returns nothing for a DID that plainly exists. Every app that looks
+          the person up sees no such identity — handle dangling, posts unresolvable — with no error
+          to appeal.</p>
+        <p class="why"><b>Absence carries no proof to check.</b></p>
+      </div>
+      <div class="card">
+        <h3>Split-view — two faces</h3>
+        <p>Show the victim their real history, while showing one targeted service a forked version
+          that points their account at a server the attacker runs. Neither side ever sees the
+          other's copy.</p>
+        <p class="why"><b>No one viewer holds both halves.</b></p>
+      </div>
+    </div>
+    <p style="margin-top:14px;color:var(--muted);font-size:14px">Each of these is a real,
+      ground-truthed scenario in the
+      <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md">adversarial
+      report</a>. DIDMARC is the layer that catches them: independent, on-chain proof of the whole,
+      current history, so a resolver can tell when the directory's answer doesn't add up.</p>
   </section>
 
   <section>
@@ -79,7 +123,7 @@
       prover and no trusted snapshot. The contract commits a proven DID→document root. A resolver
       fetches a document from the directory and checks it against that root, getting back a
       status. <code>plc.directory</code> stays canonical; DIDMARC is a read-side witness that
-      anyone turns on alone — the way an email receiver enables DMARC.</p>
+      anyone turns on alone — no coordination and no protocol change.</p>
   </section>
 
   <section>
@@ -90,19 +134,26 @@
       <li class="warn"><b>tentative-consistent</b> — the on-chain view agrees with the directory,
         but the head is still within the recovery window (or explained by clock skew).</li>
       <li class="bad"><b>diverged</b> — the directory's served head <i>contradicts</i> the proven
-        head. The actionable alarm: warn, quarantine, or refuse to relay.</li>
-      <li class="muted"><b>absent</b> — DID not anchored; no opinion (the coverage gap, like DMARC
-        <code>p=none</code>).</li>
+        head. This is the alarm that fires on <b>omission</b> and <b>erasure</b> above: warn,
+        quarantine, or refuse to relay.</li>
+      <li class="muted"><b>absent</b> — DID not anchored; no opinion. DIDMARC has nothing to say
+        about an identity nobody opted in.</li>
     </ul>
-    <p style="margin-top:14px;color:var(--muted);font-size:14px">Adoption is the DMARC ramp:
-      start by logging the status, then quarantine on <code>diverged</code>, then refuse to relay
-      — each resolver decides on its own.</p>
+    <p style="margin-top:14px;color:var(--muted);font-size:14px"><b style="color:var(--fg)">Never a
+      false <code>diverged</code>.</b> A directory that's merely running ahead, or a contradiction
+      that plain clock skew could explain, stays at <code>tentative-consistent</code> — not an
+      alarm. A false alarm gets the check switched off, so that restraint is exactly what makes
+      <code>diverged</code> mean something.</p>
+    <p style="margin-top:14px;color:var(--muted);font-size:14px">Adoption is a ramp: start by just
+      logging the status, then quarantine on <code>diverged</code>, then refuse to relay — each
+      resolver decides on its own, at its own pace.</p>
   </section>
 
   <footer>
     <div class="wrap" style="padding:0">
       DIDMARC is a witness, not a replacement for the directory · V1 verifies on public Starknet ·
       <a href="https://plc.didmarc.dev">console</a> ·
+      <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md">adversarial report</a> ·
       <a href="https://github.com/andyschwab/plc-anchor">source</a>
     </div>
   </footer>
