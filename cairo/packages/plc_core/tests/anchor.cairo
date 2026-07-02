@@ -88,6 +88,37 @@ fn recovery_through_contract() {
 }
 
 #[test]
+#[should_panic(expected: 'recovery-of-imported')]
+fn recovery_cannot_nullify_imported_history() {
+    // SECURITY-TODO 4a. When a DID's history is *imported* (settled backfill), every op is
+    // stamped with the import block time — not its real authored time (`createdAt` is not in the
+    // signed op, §1/§5). If the recovery window were measured against that import time, then for
+    // 72h after import a *rotated-out* higher-priority key could fork below an ancient op — whose
+    // real 72h window closed years ago — and nullify the entire real history, capturing the DID.
+    //
+    // Here `import([genesis, opA])` marks both ops imported; the index-0 recovery key then tries
+    // to fork at genesis and nullify opA. That is a valid recovery *by key priority and by the
+    // import-time clock*, so the pre-fix contract would have ACCEPTED it. The provenance guard
+    // rejects it: a recovery may not nullify imported history. Contrast `recovery_through_contract`
+    // above, where opA is observed *live* via `submit_op` and the same recovery is honored.
+    let s = recovery_scenario();
+    let genesis = from_hex(@s.genesis_hex);
+    let op_a = from_hex(@s.op_a_hex);
+    let recovery_k0 = from_hex(@s.recovery_k0_hex);
+
+    let mut state = contract_state_for_testing();
+    set_block_timestamp(1000);
+    // Import the resolved history [genesis, opA] in one call → both ops are settled/imported.
+    let did = AnchorImpl::import(ref state, array![genesis, op_a]);
+    assert!(did == s.did.clone(), "did mismatch");
+
+    // A few seconds later — well inside 72h of the import stamp — the index-0 key attempts to
+    // fork at genesis, nullifying the imported opA. Must revert with `recovery-of-imported`.
+    set_block_timestamp(1100);
+    AnchorImpl::submit_op(ref state, did, recovery_k0);
+}
+
+#[test]
 fn unknown_did_is_not_anchored() {
     let state = contract_state_for_testing();
     assert!(!AnchorImpl::is_anchored(@state, "did:plc:doesnotexist000000000"), "not anchored");

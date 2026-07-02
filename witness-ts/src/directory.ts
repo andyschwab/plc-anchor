@@ -131,6 +131,17 @@ export function deriveLiveChain(log: readonly AuditEntry[], expectedDid?: string
       // and that op is within the 72h window (classify_next_op / assureValidNextOp).
       const firstNullified = chain[forkIndex + 1];
       if (signerIndex >= firstNullified.signerIndex) break; // recovery-weaker-key
+      // Window uses the directory's `createdAt` (finding 4b). This is FAITHFUL PLC, not added
+      // trust: `@did-plc/lib`'s `assureValidNextOp` measures the window against
+      // `firstNullified.createdAt` too — the trust PLC itself places in the directory clock,
+      // shared by every conformant resolver. Here `entry.createdAt` (the recovery op's directory
+      // time) stands in for the oracle's `Date.now()`, reconstructing the decision the directory
+      // made at the moment it accepted this op. The independent backstop is the anchor's own
+      // block-time confirmed head, which `status.ts` cross-checks against this derived live head;
+      // and signatures gate everything above, so a lying clock can only re-time a fork that is
+      // ALREADY validly signed by a higher-priority key — it cannot conjure a head. The
+      // NaN-is-not-late branch below is deliberately permissive to match the oracle byte-for-byte
+      // (changing it would fork this consensus-critical re-derivation). See REFERENCE.md §1.
       const lapsed = Date.parse(entry.createdAt) - Date.parse(firstNullified.createdAt);
       if (lapsed > RECOVERY_WINDOW_MS) break; // late-recovery (NaN ⇒ not late, matching the oracle)
       chain.length = forkIndex + 1; // drop the nullified suffix

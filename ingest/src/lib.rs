@@ -2,8 +2,11 @@
 //!
 //! The off-chain feeder for the anchor endpoint. It consumes a PLC directory mirror's
 //! `/export` stream, filters to the DIDs that have opted into anchoring (membership is
-//! off-chain policy — REFERENCE.md §2), and submits each new op as a delta to the on-chain
-//! `import_genesis` / `submit_op` entrypoints.
+//! off-chain policy — REFERENCE.md §2), and feeds the on-chain entrypoints: a DID's existing
+//! history is onboarded as one **settled** `import` chain ([`onboard_via_import`]), and new ops
+//! observed live while tailing route to `submit_op`. Onboarding via `import` (not op-by-op
+//! `submit_op`) is what keeps backfilled history settled on-chain, so a rotated-out key can't
+//! re-open a long-closed recovery window (SECURITY-TODO 4a).
 //!
 //! The pipeline is built around three trait seams so the consensus-relevant logic stays
 //! offline-testable:
@@ -30,7 +33,7 @@ pub mod starknet_sink;
 pub use anchored::AnchorSet;
 pub use cursor::Cursor;
 pub use export::ExportEntry;
-pub use pipeline::{process_batch, Indexer, Stats};
+pub use pipeline::{onboard_via_import, process_batch, Indexer, Stats};
 pub use sink::{AnchorSink, Delta, DryRunSink};
 pub use source::{fetch_audit_log, FixtureSource, HttpExportSource, OpSource};
 #[cfg(feature = "live")]

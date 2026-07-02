@@ -37,6 +37,11 @@ CONTRACT_NAME="anchor"
 PACKAGE="${SNCAST_PACKAGE:-plc_core}"
 
 first_hash() { printf '%s\n' "$1" | grep -oiE '0x[0-9a-f]{60,64}'; }
+# The hash on a specific labeled line (e.g. "Contract Address:"). Robust against hashes that
+# appear elsewhere in the output — an RPC warning, or a class hash quoted inside a *failed*
+# deploy's error message ("Class with hash 0x… is not declared"), which is exactly how a failed
+# deploy once got mis-recorded as the contract address.
+labeled_hash() { printf '%s\n' "$2" | grep -iE "$1" | grep -oiE '0x[0-9a-f]+' | head -n1; }
 
 echo "==> [$NETWORK] Building the Cairo workspace (sierra artifacts) ..."
 (cd "$REPO_ROOT/cairo" && scarb build)
@@ -46,7 +51,10 @@ echo "==> [$NETWORK] Declaring '$CONTRACT_NAME' (account: $ACCOUNT) ..."
 DECLARE_OUT="$(cd "$REPO_ROOT/cairo" && sncast --account "$ACCOUNT" declare \
   --contract-name "$CONTRACT_NAME" --package "$PACKAGE" --url "$RPC" 2>&1 || true)"
 echo "$DECLARE_OUT"
-CLASS_HASH="$(first_hash "$DECLARE_OUT" | head -n1 || true)"
+# Prefer the labeled "Class Hash:" line; a re-declare of an unchanged class exits non-zero without
+# that line but names the hash in its "already declared" message, so fall back to any hash then.
+CLASS_HASH="$(labeled_hash '^[[:space:]]*Class Hash:' "$DECLARE_OUT" || true)"
+[[ -z "$CLASS_HASH" ]] && CLASS_HASH="$(first_hash "$DECLARE_OUT" | head -n1 || true)"
 if [[ -z "$CLASS_HASH" ]]; then
   echo "!! Could not parse a class hash. If it says 'already declared', copy the class hash and:" >&2
   echo "     sncast --account $ACCOUNT deploy --class-hash <CLASS_HASH> --url \$STARKNET_RPC" >&2
@@ -55,15 +63,29 @@ fi
 echo "==> class hash: $CLASS_HASH"
 
 echo "==> [$NETWORK] Deploying an instance (no constructor — auth is the op's embedded sig, §2) ..."
-DEPLOY_OUT="$(cd "$REPO_ROOT/cairo" && sncast --account "$ACCOUNT" deploy \
-  --class-hash "$CLASS_HASH" --url "$RPC" 2>&1 || true)"
-echo "$DEPLOY_OUT"
-# sncast prints contract_address then transaction_hash.
-CONTRACT_ADDR="$(first_hash "$DEPLOY_OUT" | sed -n '1p' || true)"
-DEPLOY_TX="$(first_hash "$DEPLOY_OUT" | sed -n '2p' || true)"
+# Parse the address ONLY from sncast's labeled "Contract Address:" line — never "first hash in the
+# output", which on a *failed* deploy grabs the class hash quoted in the error message. So a failure
+# leaves CONTRACT_ADDR empty and we exit without recording. Retry the one common transient: the
+# freshly-declared class not yet visible to the RPC node ("... is not declared").
+CONTRACT_ADDR=""
+DEPLOY_TX=""
+for attempt in 1 2 3 4; do
+  DEPLOY_OUT="$(cd "$REPO_ROOT/cairo" && sncast --account "$ACCOUNT" deploy \
+    --class-hash "$CLASS_HASH" --url "$RPC" 2>&1 || true)"
+  echo "$DEPLOY_OUT"
+  CONTRACT_ADDR="$(labeled_hash '^[[:space:]]*Contract Address:' "$DEPLOY_OUT" || true)"
+  DEPLOY_TX="$(labeled_hash '^[[:space:]]*Transaction Hash:' "$DEPLOY_OUT" || true)"
+  [[ -n "$CONTRACT_ADDR" ]] && break
+  if [[ $attempt -lt 4 ]] && printf '%s' "$DEPLOY_OUT" | grep -qiE 'is not declared'; then
+    echo "   class not visible to the RPC node yet (attempt $attempt/4) — waiting 15s, retrying ..." >&2
+    sleep 15
+    continue
+  fi
+  break  # a different, non-transient error — stop and report below
+done
 if [[ -z "$CONTRACT_ADDR" ]]; then
-  echo "!! Deploy did not return a contract address — see output above. The class IS declared;" >&2
-  echo "   retry just the deploy once the declare tx is accepted:" >&2
+  echo "!! Deploy did not return a contract address — see output above. NOTHING was recorded." >&2
+  echo "   The class IS declared ($CLASS_HASH); once its declare tx is visible, retry just the deploy:" >&2
   echo "     sncast --account $ACCOUNT deploy --class-hash $CLASS_HASH --url \$STARKNET_RPC" >&2
   exit 1
 fi

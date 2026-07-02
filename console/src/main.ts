@@ -36,7 +36,8 @@ import { SETTINGS_DEFAULTS, SettingsStore, validateSettings, type ConsoleSetting
 import { createConsoleServer, type WorkerActions } from "./server.ts";
 import { DirectoryResolver, WitnessChecker } from "./witness.ts";
 
-const SEPOLIA_ANCHOR = "0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180";
+// Post-4a redeploy (the "imported ops are settled" fix); overridable via ANCHOR_CONTRACT_ADDRESS.
+const SEPOLIA_ANCHOR = "0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3";
 const bool = (v: string | undefined): boolean => /^(1|true)$/i.test(v?.trim() ?? "");
 const num = (v: string | undefined, dflt: number): number => {
   const n = Number(v);

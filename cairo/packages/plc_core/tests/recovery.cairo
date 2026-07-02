@@ -150,6 +150,7 @@ fn apply_op_rejects_unknown_prev() {
         created_at: T,
         signer_index: 0,
         tombstone: false,
+        imported: false,
     };
     let _ = g;
     let chain = array![bogus];
@@ -163,7 +164,14 @@ fn apply_op_rejects_unknown_prev() {
 // ────────────────────────────────────────────
 
 fn record(cid: ByteArray, created_at: u64) -> OpRecord {
-    OpRecord { cid, rotation_keys: array![], created_at, signer_index: 0, tombstone: false }
+    OpRecord {
+        cid,
+        rotation_keys: array![],
+        created_at,
+        signer_index: 0,
+        tombstone: false,
+        imported: false,
+    }
 }
 
 #[test]

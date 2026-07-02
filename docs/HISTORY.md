@@ -54,14 +54,18 @@ decision — all differential-green against `@did-plc/lib`.
   cross-check with a CI drift gate. (`REFERENCE.md` §3, §5a.)
 - **Roots are read-time views** (`now`-parameterized), recomputed over the roster — writes stay
   cheap; an incremental on-chain tree is a later optimization if root reads get hot.
-- **Storage = per-DID `Vec<StoredOp>`** (signed bytes + `created_at` + signer index); CID /
-  rotation keys / tombstone all rederive from the bytes.
+- **Storage = per-DID `Vec<StoredOp>`** (signed bytes + `created_at` + signer index + provenance);
+  CID / rotation keys / tombstone all rederive from the bytes.
 - **`createdAt` is not in the signed op** (directory-assigned metadata, absent from the op bytes
   and CID — confirmed against the corpus). The contract uses **Starknet block time** as the
   pragmatic `createdAt` the 72h window measures against; imported ops use the import block time.
-  A freshly imported chain is therefore tentative until observed for 72h — sound (it only
-  re-exposes the recovery window, never lets a non-key-holder mutate a DID). (`REFERENCE.md`
-  §1, §4, §5.)
+  A freshly imported chain is therefore tentative until observed for 72h. **Correction (see the
+  4a fix below):** an earlier note here claimed this was "sound" because it "only re-exposes the
+  recovery window." That was wrong. Re-exposing the recovery window on *backfilled* history is
+  precisely the hazard: an op authored years ago but stamped at import time looks fresh, so a
+  *rotated-out* higher-priority rotation key — no longer the DID's controller — could fork below
+  it within 72h of import and capture the DID. Fixed by marking imported ops **settled** (a
+  recovery may not nullify them); see the 4a entry below. (`REFERENCE.md` §1, §4, §5.)
 
 ## Item 4 — Sync indexer (`ingest/`)
 
@@ -92,7 +96,8 @@ pinned core needs only `node:crypto`.
 
 - `anchor`'s `tentative_proof` / `confirmed_proof` views (reuse `merkle_proof`); the contract
   isn't upgradeable, so this shipped as a fresh Sepolia deploy
-  (`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180`).
+  (`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180` — **superseded by the
+  post-4a redeploy `0x01e3cd…`; see the 4a fix below**).
 - `src/merkle.ts` — the resolver-side `verifyProof`, **byte-identical to `merkle.cairo`**,
   pinned via the shared `gen-merkle-vectors` fixture (one source, two consumers; CI drift-gated).
 - `src/starknet.ts` (hand-encoded `starknet_call` reads; selectors precomputed via
@@ -120,8 +125,9 @@ pinned core needs only `node:crypto`.
 
 Before item 6, the [`adversarial/`](../adversarial/README.md) suite validates the design against
 attack/fork cases, rendered as the engineer-facing
-[`docs/ADVERSARIAL-REPORT.md`](ADVERSARIAL-REPORT.md). 12 scenarios (8 read-side, one per
-status-ladder branch; 4 write-side rejections ground-truthed vs `@did-plc/lib`) on real signed
+[`docs/ADVERSARIAL-REPORT.md`](ADVERSARIAL-REPORT.md). 13 scenarios (8 read-side, one per
+status-ladder branch; 5 write-side rejections ground-truthed vs `@did-plc/lib` — including
+`recovery-of-imported`, the 4a capture) on real signed
 did:plc chains, plus an HTTP malicious-mirror exercising the real `DirectoryClient` fetch path
 offline and a gated live read vs Sepolia (`make adversarial-live`). **No new consensus logic** —
 it composes the already-differential-green modules into named attacks. This is the keep-it-high-
@@ -202,6 +208,53 @@ old exact-host filter) — made operable and cost-safe at ~20k. Load-bearing dec
 
 ---
 
+## Security fix 4a — imported history is settled (recovery-window capture)
+
+The import path stamped every backfilled op with the import block time and measured the 72h
+recovery window against it, so for 72h after onboarding the *entire* history looked freshly
+authored. Because a PLC recovery is authorized by any *strictly-higher-priority* rotation key,
+a key that was higher-priority at a historical fork point but had since been **rotated away**
+(the canonical custodial→self-hosted migration leaves exactly such a key) could fork below the
+real history within that window and nullify it — capturing the DID on-chain. The anchor would
+then harden the forged head to `confirmed` and read `diverged` against an *honest* directory:
+the anchor manufacturing the one alarm the §0 invariant exists to prevent. (This inverts the
+earlier "re-exposing the recovery window is sound" claim in item 3, now corrected.)
+
+**Fix — provenance, in two layers:**
+- **Contract (`state`/`anchor`).** Each op carries an `imported` flag: `true` via
+  `import`/`import_genesis` (settled backfill), `false` via `submit_op` (observed live).
+  `apply_op` refuses a recovery that would nullify an imported op (`recovery-of-imported`).
+  The 72h window is thus honored only for live-observed ops, whose block-time stamp
+  approximates their real authored time. The guard is a *strictly conservative* refinement of
+  `classify_next_op` (it only ever rejects) layered in `state`, so it leaves the
+  differential-green PLC validation (`recovery`/`op_verify`) untouched — no vector regeneration.
+  Regression test: `recovery_cannot_nullify_imported_history` (import `[genesis, opA]`, then the
+  index-0 key's fork at genesis is rejected), contrasted with `recovery_through_contract` where
+  the *live*-submitted opA is still recoverable.
+- **Ingest (`onboard_via_import`).** Onboarding now imports a DID's whole resolved history as one
+  settled `import` chain, instead of `import_genesis` + op-by-op `submit_op` (which would
+  live-stamp historical successors and defeat the contract guard). `submit_op` is reserved for
+  genuinely-new ops observed ~live while tailing.
+
+**Residual (documented, tolerable direction).** A DID onboarded while its real tail op is still
+inside its 72h window imports that tail as settled, so a *legitimate* recovery of it (at the
+directory) can't be mirrored on-chain → a benign, operator-recoverable `diverged` on that one
+DID (re-import to resolve). This is the §0-safe direction: it degrades to the status quo, never
+to capture. The alternative (live-stamping the tail to keep it recoverable) re-opens a bounded
+capture window — the unsafe direction — so it was rejected. The firehose/roster path is for
+*tailing* already-onboarded DIDs from a recent cursor; using it to backfill ancient history
+would live-stamp it and is a documented operational foot-gun, not the sanctioned onboarding path.
+
+**Status:** landed and green — Cairo (`make cairo-test`: 54 `plc_core` tests incl.
+`recovery_cannot_nullify_imported_history`, with `recovery_through_contract` still passing),
+Rust (`cargo test -p ingest`, clippy `-D warnings`), and the adversarial scenario
+`recovery-of-imported`. **Redeployed:** the `StoredOp` layout changed (gains `imported`), so the
+pre-4a Sepolia instance (`0x00816c…`) was superseded by a fresh post-4a deploy
+(`0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3`, `deployments/sepolia.json`).
+The roster starts empty; re-import DIDs from genesis (the already-proven path).
+
+---
+
 ## Open follow-ups (deliberately deferred)
 
 - **Off-chain prover service** (roster-scale memoization of the inclusion proofs the contract
@@ -213,11 +266,26 @@ old exact-host filter) — made operable and cost-safe at ~20k. Load-bearing dec
   MVP itself has landed (above).
 - **Generalization seam** (`REFERENCE.md` §5a) — the `merkle` leaf is separator-less, sound only
   because did:plc is fixed-width; add a length prefix *before* admitting variable-width subjects.
+- **Batched settled import for long chains** — `import` re-verifies every op's signature in one
+  transaction, so a long history (roughly ≥5–6 ops) can exceed the sequencer's per-tx L2 gas cap
+  (~1.21e9 on Sepolia; the ingest sink clamps the request under it and errors clearly past it).
+  Most did:plc chains are short and import fine. A robust fix for the long tail is an
+  `import_append(did, signed)` entrypoint that appends a **settled** op (same provenance as
+  `import`, so the 4a guard holds) across several transactions — a contract change, hence a
+  redeploy. Deferred until a real chain hits the ceiling.
+- **Trustless root reads (SECURITY-TODO 4c)** — the witness reads the anchor root via
+  `starknet_call`, which trusts the RPC; a fully trustless read verifies a **Starknet storage
+  proof against the L1-settled state root** (read the Starknet core contract on Ethereum +
+  Merkle-Patricia storage proof). Mode-2-adjacent infra; interim guidance is run-your-own-node /
+  trust-your-RPC. (4b — the read-side recovery window's use of directory `createdAt` — is faithful
+  PLC reproduction and is documented, not a follow-up.)
 
 ## Live-bring-up checklist (V1)
 
-To call V1 "live" on the fresh Sepolia deployment: re-import DID(s) onto the roster
-(`ingest --did … --submit`), point the `ANCHOR_CONTRACT_ADDRESS` secret at the deployed
-address, and run the gated live reads (`WITNESS_LIVE_RPC=… make adversarial-live` and
-`witness-ts/test/live.test.ts`). The confirmed-`diverged` headline needs a DID anchored ≥72h
+The post-4a anchor is deployed (`0x01e3cd…`, `deployments/sepolia.json`; the code defaults and
+`deployments/sepolia.json` already point at it). To call V1 "live": point the
+`ANCHOR_CONTRACT_ADDRESS` secret at it, re-import DID(s) onto the fresh (empty) roster
+(`ingest --did … --submit`), and run the gated live reads (`WITNESS_LIVE_RPC=… make
+adversarial-live` and `witness-ts/test/live.test.ts`). The confirmed-`diverged` headline needs a
+DID anchored ≥72h
 ahead so it has an immutable confirmed head.

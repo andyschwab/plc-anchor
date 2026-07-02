@@ -37,10 +37,16 @@ pub trait IAnchor<TContractState> {
     /// resolved chain, not an unadjudicated fork). Every op is stamped with the import block
     /// time (the pragmatic `createdAt`, §1/§4): `createdAt` is not part of the signed op, so
     /// the anchor uses its own observation time. A freshly imported chain is therefore
-    /// tentative until the anchor has observed it for 72h.
+    /// tentative until the anchor has observed it for 72h. Imported ops are marked **settled**:
+    /// a later `submit_op` recovery may not nullify them (`recovery-of-imported`), because their
+    /// import-time stamp is not their real authored time and honoring a recovery there would
+    /// re-open a long-closed window (SECURITY-TODO 4a). This is the onboarding path.
     fn import(ref self: TContractState, chain: Array<ByteArray>) -> ByteArray;
-    /// Append or recover onto `did`. Reverts on unknown DID, bad linkage/signature, a
-    /// tombstoned fork point, or an invalid/late recovery.
+    /// Append or recover onto `did`. The op is observed **live** (not settled): its block-time
+    /// stamp approximates its real authored time, so the 72h recovery window applies to it.
+    /// Reverts on unknown DID, bad linkage/signature, a tombstoned fork point, an invalid/late
+    /// recovery, or a recovery that would nullify imported/settled history
+    /// (`recovery-of-imported`).
     fn submit_op(ref self: TContractState, did: ByteArray, proposed_signed: ByteArray);
     /// The current head (tentative tip) CID string for `did`, or "" if not anchored.
     fn head_cid(self: @TContractState, did: ByteArray) -> ByteArray;
@@ -60,8 +66,12 @@ pub trait IAnchor<TContractState> {
     /// Inclusion proof for `did`'s **tentative** head against `tentative_root()`: returns
     /// `(head_cid, steps)`. A resolver rebuilds the leaf as `sha256(0x00 ‖ did ‖ head_cid)`
     /// and walks `steps` to recompute the root, comparing it to a `tentative_root()` it
-    /// fetched independently (the proof server stays untrusted). Returns `("", [])` if `did`
-    /// is not anchored. The proof is root-specific — use this against the tentative root only.
+    /// fetched independently — the proof server stays untrusted **so long as the root comes from
+    /// a trusted/independent source** (finding 4c: the proof shows head ∈ root, not root = true
+    /// state; via a single `starknet_call` RPC, root and proof share one trust domain — a
+    /// trustless read needs a storage proof against the L1-settled state root). Returns
+    /// `("", [])` if `did` is not anchored. Root-specific — use this against the tentative root
+    /// only.
     fn tentative_proof(self: @TContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>);
     /// Inclusion proof for `did`'s **confirmed** head against `confirmed_root()`. Returns
     /// `("", [])` if `did` has no confirmed head yet (all ops still within the 72h window).
@@ -100,6 +110,10 @@ pub mod anchor {
         signed: ByteArray,
         created_at: u64,
         signer_index: usize,
+        /// Provenance (SECURITY-TODO 4a): `true` for ops that entered via `import`/
+        /// `import_genesis` (settled backfill), `false` for ops observed live via `submit_op`.
+        /// A recovery may not nullify an imported op — see `state::apply_op`.
+        imported: bool,
     }
 
     #[event]
@@ -159,7 +173,11 @@ pub mod anchor {
                 self
                     .chains
                     .entry(key)
-                    .push(StoredOp { signed: signed.clone(), created_at: now, signer_index });
+                    .push(
+                        StoredOp {
+                            signed: signed.clone(), created_at: now, signer_index, imported: true,
+                        },
+                    );
                 records.append(outcome.new_record);
                 i += 1;
             }
@@ -189,7 +207,16 @@ pub mod anchor {
             while vec.len().try_into().unwrap() > keep {
                 let _ = vec.pop();
             }
-            vec.push(StoredOp { signed: proposed_signed, created_at: now, signer_index });
+            // Observed live: `submit_op` is the only path that stamps `imported: false`, so the
+            // 72h recovery window is measured against a block time that approximates this op's
+            // real authored time (SECURITY-TODO 4a). Truncation only ever removes live ops (a
+            // recovery cannot fork below an imported op), so the imported prefix stays intact.
+            vec
+                .push(
+                    StoredOp {
+                        signed: proposed_signed, created_at: now, signer_index, imported: false,
+                    },
+                );
 
             self.emit(Applied { did_key: key, head_cid, signer_index, nullified_count });
         }
@@ -243,7 +270,12 @@ pub mod anchor {
                 .chains
                 .entry(key)
                 .push(
-                    StoredOp { signed: genesis_signed.clone(), created_at: now, signer_index: 0 },
+                    StoredOp {
+                        signed: genesis_signed.clone(),
+                        created_at: now,
+                        signer_index: 0,
+                        imported: true,
+                    },
                 );
             // Roster + did-string, so the commitment root can enumerate this DID.
             self.did_keys.push(key);
@@ -327,7 +359,7 @@ pub mod anchor {
                 let stored = vec.at(i).read();
                 let record =
                     match record_from_signed(
-                        @stored.signed, stored.created_at, stored.signer_index,
+                        @stored.signed, stored.created_at, stored.signer_index, stored.imported,
                     ) {
                     Result::Ok(r) => r,
                     Result::Err(e) => core::panic_with_felt252(e),

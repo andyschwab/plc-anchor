@@ -126,6 +126,16 @@ pub struct OpRecord {
     pub signer_index: usize,
     /// Whether this op is a tombstone (a dead end — nothing may build on it).
     pub tombstone: bool,
+    /// Provenance: `true` if this op entered via `import`/`import_genesis` (backfilled settled
+    /// history the anchor never observed live), `false` if submitted and observed live
+    /// (`submit_op`). Imported ops are treated as already-settled: a recovery may not nullify
+    /// one (SECURITY-TODO 4a). Their `created_at` is the import block time, not the op's real
+    /// authored time (which is not in the signed op, §1/§5), so the 72h window measured against
+    /// it is meaningless for backfilled history — honoring a recovery there would let a
+    /// *rotated-out* higher-priority key re-open a window that closed years ago and capture the
+    /// DID. The window is sound only for live-observed ops, whose block-time `created_at`
+    /// approximates their real authored time.
+    pub imported: bool,
 }
 
 /// The result of applying a proposed op to a chain: how it relates to the history and the
@@ -140,6 +150,10 @@ pub struct ApplyOutcome {
 }
 
 /// Verify a genesis op and produce the DID + its initial chain record (`created_at = now`).
+/// Genesis always enters via an import path (a DID is only ever anchored by
+/// `import`/`import_genesis`; `submit_op` requires an existing chain), so the record is
+/// `imported: true`. This is inert for genesis as a *nullify target* — nothing forks below
+/// genesis — but keeps the flag honest for the whole chain.
 pub fn genesis_record(
     genesis_signed: @ByteArray, now: u64,
 ) -> Result<(ByteArray, OpRecord), felt252> {
@@ -157,14 +171,17 @@ pub fn genesis_record(
         created_at: now,
         signer_index,
         tombstone: false,
+        imported: true,
     };
     Result::Ok((did, record))
 }
 
 /// Rebuild an `OpRecord` from a stored op's signed bytes plus the metadata the chain keeps
-/// alongside it (anchored timestamp + signer index). Used by the contract to load its chain.
+/// alongside it (anchored timestamp + signer index + provenance). Used by the contract to load
+/// its chain; `imported` is carried through from storage so the recovery guard in `apply_op`
+/// sees each op's true provenance.
 pub fn record_from_signed(
-    signed: @ByteArray, created_at: u64, signer_index: usize,
+    signed: @ByteArray, created_at: u64, signer_index: usize, imported: bool,
 ) -> Result<OpRecord, felt252> {
     let h = head_from_signed(signed)?;
     Result::Ok(
@@ -174,6 +191,7 @@ pub fn record_from_signed(
             created_at,
             signer_index,
             tombstone: h.tombstoned,
+            imported,
         },
     )
 }
@@ -221,6 +239,20 @@ pub fn apply_op(
         OpClass::Append
     } else {
         let first_nullified = chain.at(fork_index + 1);
+        // A recovery may not nullify an *imported* op (SECURITY-TODO 4a). Imported ops are
+        // settled backfill the anchor never observed live; their `created_at` is the import
+        // block time, not the op's real authored time, so the 72h window measured against it is
+        // meaningless. Without this guard a rotated-out higher-priority key could fork below an
+        // ancient imported op — whose real recovery window closed years ago — within 72h of
+        // import and capture the DID. Imported ops always form the chain's prefix (live ops are
+        // only ever appended by `submit_op`), so checking the *first* nullified op is
+        // sufficient: if it is live, every op after it is live too. This is a strictly
+        // *conservative* refinement of `classify_next_op` (it only ever rejects, never accepts
+        // what the reference rejects), so it cannot fork the differential-green op validation —
+        // it is anchor policy layered on top of the PLC rule, not a change to it.
+        if *first_nullified.imported {
+            return Result::Err('recovery-of-imported');
+        }
         classify_next_op(
             proposed_index,
             nullified_count,
@@ -230,12 +262,16 @@ pub fn apply_op(
         )?
     };
 
+    // A newly-applied op is always live-observed here: `submit_op` persists `imported: false`,
+    // and `import`'s in-memory replay only ever appends (it rejects forks with `import-fork`),
+    // so this record's `imported` is never consulted as a nullify target during import.
     let new_record = OpRecord {
         cid: derive_cid_string(CODEC_DAGCBOR, proposed_signed),
         rotation_keys,
         created_at: now,
         signer_index: proposed_index,
         tombstone: op_type == OpType::Tombstone,
+        imported: false,
     };
     Result::Ok(ApplyOutcome { class, fork_index, nullified_count, new_record })
 }

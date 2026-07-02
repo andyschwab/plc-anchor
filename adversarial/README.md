@@ -87,6 +87,7 @@ ground-truthed against `@did-plc/lib` at generation time:
 | `forged-signature` | `invalid-sig` | `plc_core::op_verify` / `sig_verify` |
 | `weaker-key-recovery` | `recovery-weaker-key` | `plc_core::recovery` |
 | `late-recovery` | `late-recovery` | `plc_core::recovery` |
+| `recovery-of-imported` | `recovery-of-imported` | `plc_core::state::apply_op` — the 4a fix: imported history is settled |
 | `integrity-mismatch` | `cid-mismatch` | ingest integrity gate (off-chain) |
 
 ## Status

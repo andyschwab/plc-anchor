@@ -45,6 +45,36 @@ that opt in (a PDS naturally anchors its own users).
 
 Per-op validity is **proven**, not assumed.
 
+### Read-path trust — what the witness proves vs. trusts (findings 4b, 4c)
+
+The write-path residual trust above is the anchor's; the **read path** (the witness `check()`)
+has its own two boundaries, stated here so no one mistakes "on-chain proof" for "trusts nothing":
+
+- **Directory `createdAt` on the read side (4b) — faithful PLC, not added trust.** To decide
+  which of several validly-signed forks the directory's log presents as *live*, the witness
+  re-derives PLC recovery locally (`deriveLiveChain`, the item-1 fix) using the directory's
+  `createdAt` for the 72h window — **exactly as `@did-plc/lib` does** (`assureValidNextOp`
+  measures the window against `firstNullified.createdAt`). This is the trust PLC *itself* places
+  in the directory clock; every conformant resolver shares it. The witness adds no new
+  dependency — and the anchor's **independent, block-time** confirmed head is precisely the
+  cross-check that backstops it. Signatures gate everything: a fork the witness could be steered
+  toward must still be validly signed by a strictly-higher-priority key, so a lying clock cannot
+  manufacture a head out of nothing. A hostile mirror lying about `createdAt` to move its served
+  head *away* from the anchor's confirmed head only trips the alarm — the safe direction. The
+  behavior must stay byte-identical to the oracle (changing it would fork); so 4b is documented,
+  not "fixed."
+- **The Starknet RPC on the read side (4c) — trusted for the root, until storage proofs.** The
+  witness reads the anchor root + inclusion proof via `starknet_call` at `block latest`
+  (`starknet.ts`). The Merkle proof proves *head ∈ root*; it does **not** prove *root = the
+  contract's real state* — that value is whatever the RPC returns. So a witness using a single
+  untrusted RPC trusts that RPC. Non-equivocation is real at the **settlement** layer (Starknet
+  has one canonical state, proven and settled to Ethereum), but exposing it *trustlessly* to the
+  resolver requires verifying a **Starknet storage proof against the L1-settled state root** —
+  deferred infra (Mode-2-adjacent). Until then the honest guidance is: **run your own full node,
+  or trust your RPC.** The "proof server stays untrusted" property holds only when the *root* is
+  obtained from a trusted/independent source; via one public RPC, root and proof share a trust
+  domain. (See `docs/SECURITY-TODO.md` 4c.)
+
 ---
 
 ## 1a. Operating modes — V1 and the ladder beyond
@@ -223,11 +253,18 @@ everything else.
   the op bytes and the CID (confirmed against the corpus). The contract has no authored
   timestamp to read; it uses **Starknet block time** (× 1000 ms) as the pragmatic
   `createdAt` the 72h window measures against, and imported ops are stamped with the import
-  block time. *Window-edge recovery is the delicate witness corner:* the anchor's clock is
-  strictly later than the directory's, so near the 72h edge the anchor can accept a
-  higher-priority-key nullification the directory rejected as too-late (conservative — it
-  only re-exposes the recovery window, never lets a non-key-holder mutate a DID), producing a
-  `diverged` (§4) from clock skew alone. Pin the exact rule when building the checker (item 5).
+  block time. **Imported ops are therefore treated as _settled_: a recovery may not nullify
+  one (`state::apply_op` → `recovery-of-imported`).** The block-time stamp approximates real
+  authored time only for *live-observed* ops; for backfilled history it is meaningless (an op
+  authored years ago is stamped now), and honoring a recovery against it would re-open a
+  window that closed years ago and let a *rotated-out* higher-priority key capture the DID —
+  the 4a hazard (docs/HISTORY.md, docs/SECURITY-TODO.md). So the 72h window is honored only for
+  live-observed ops. *Window-edge recovery is the remaining delicate corner:* the anchor's
+  clock is strictly later than the directory's, so near the 72h edge the anchor can accept a
+  higher-priority-key nullification of a *live* op the directory rejected as too-late
+  (conservative — it only re-exposes the window for a live-observed op, never mutates settled
+  history), producing a `diverged` (§4) from clock skew alone. Pin the exact rule when building
+  the checker (item 5).
 - **Constraints:** max 10 verificationMethods/DID; max op size 7500 bytes (dCBOR-encoded).
 - **Op sizes (context):** legacy `create` ~330 B; modern `plc_operation` ~1.4–2.0 KB.
 

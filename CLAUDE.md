@@ -93,6 +93,11 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
   DRISL-encoded). Two distinct byte strings; conflating them fails every check. (§5)
 - **Two-tier roots:** confirmed (past 72h, immutable) vs tentative tip. (§4)
 - **Recovery:** lower-index rotation key nullifies within 72h. (§5)
+- **Imported history is settled; the 72h window is for live-observed ops only.** Ops entering
+  via `import`/`import_genesis` carry `imported: true`; a recovery may not nullify one
+  (`state::apply_op` → `recovery-of-imported`). The block-time stamp only approximates authored
+  time for ops the anchor saw live; giving backfilled history a live window let a rotated-out
+  key capture a DID (SECURITY-TODO 4a). Onboard via `import`, not op-by-op `submit_op`. (§5)
 - **Authorization = the op's embedded signature, verified in-contract.** The Starknet
   transaction signer / fee payer is irrelevant and may be anyone — that is the
   permissionless property. Native AA + paymasters are for gas/UX only, never authorization.
@@ -113,8 +118,9 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 
 Build order is dependency order, not priority order: the V1 *product* is the witness (item 5),
 built last because it stands on 1–4. **Items 1–5 have landed**, each differential-green against
-the references; the `anchor` contract is deployed to Sepolia
-(`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180`).
+the references; the **post-4a** `anchor` contract is deployed to Sepolia
+(`0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3`, `deployments/sepolia.json`
+— supersedes the pre-4a `0x00816c…`). Roster starts empty on a fresh deploy; re-import DIDs.
 
 | # | Item | Where | Status |
 |---|---|---|---|
