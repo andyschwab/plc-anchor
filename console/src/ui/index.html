@@ -111,6 +111,7 @@
       <button id="w-enrich">Enrich</button>
       <button id="w-onboard">Onboard</button>
       <button id="w-refresh">Refresh</button>
+      <button id="w-reconcile" title="re-queue anchored DIDs to re-anchor after a contract switch">Reconcile</button>
     </div>
   </section>
 
@@ -229,7 +230,7 @@ const COLUMNS = [
   { key: "anchorFee", label: "Fee", sort: "anchorFee" },
 ];
 const grid = { q: "", state: "", status: "", pdsHost: "", offCriterion: false, sort: "updated_at", order: "desc", limit: 50, offset: 0 };
-const WORKER_ORDER = ["enumerate", "tail", "enrich", "onboard", "refresh"];
+const WORKER_ORDER = ["enumerate", "tail", "enrich", "onboard", "refresh", "reconcile"];
 
 function renderHead() {
   document.getElementById("head").innerHTML = COLUMNS.map((c) => {
@@ -364,6 +365,10 @@ document.getElementById("budget").onchange = (e) => guard(() => {
 for (const name of ["enumerate", "tail", "enrich", "onboard", "refresh"]) {
   document.getElementById("w-" + name).onclick = () => guard(() => post("/worker/" + name));
 }
+document.getElementById("w-reconcile").onclick = () => {
+  if (!confirm("Reconcile: re-queue every anchored/onboarding DID to APPROVED so it re-anchors to the current contract. Use this after switching the anchor contract. Continue?")) return;
+  guard(() => post("/worker/reconcile"));
+};
 
 document.getElementById("unlock").onclick = () => guard(async () => {
   const secret = document.getElementById("secret").value;

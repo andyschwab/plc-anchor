@@ -29,6 +29,8 @@ export interface WorkerActions {
   enrich?: () => Promise<unknown>;
   onboard?: () => Promise<unknown>;
   refresh?: () => Promise<unknown>;
+  /** Re-queue anchored/onboarding DIDs to re-anchor after a contract switch. */
+  reconcile?: () => Promise<unknown>;
 }
 
 /** The live-settings port (implemented by `SettingsStore`); `patch` throws on invalid input. */
@@ -289,6 +291,7 @@ function routes(): Route[] {
     { method: "POST", parts: ["worker", "enrich"], handle: ({ config }) => runAction(config, "enrich") },
     { method: "POST", parts: ["worker", "onboard"], handle: ({ config }) => runAction(config, "onboard") },
     { method: "POST", parts: ["worker", "refresh"], handle: ({ config }) => runAction(config, "refresh") },
+    { method: "POST", parts: ["worker", "reconcile"], handle: ({ config }) => runAction(config, "reconcile") },
   ];
 }
 

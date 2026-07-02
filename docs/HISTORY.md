@@ -198,6 +198,13 @@ old exact-host filter) — made operable and cost-safe at ~20k. Load-bearing dec
   DID's authoritative PDS host against the criterion and **flags** (never removes) migration
   stragglers — enumeration is criterion-blind (trusts `listRepos`), so this closes the loop as a
   visible count + a one-click grid filter, leaving disposition a manual decision.
+- **Contract-switch reconcile.** `anchored`/`onboarding` are DB lifecycle state tied to a *specific*
+  anchor contract, never re-derived from chain — so a redeploy (e.g. the 4a `0x01e3cd…`) leaves
+  those rows stale (new roster is empty). The console records the anchor address and, on a boot
+  where it changed, resets `anchored`/`onboarding` → `approved` + clears the old tx/fee/anchored-at/
+  status so they re-import from genesis to the new contract; a manual `POST /worker/reconcile` /
+  Reconcile button covers the first migration (a DB predating the feature has no recorded prior
+  address). Keyed on an actual change, so a normal restart is a no-op.
 - **Non-secret config is live-editable** (`src/settings.ts`, `GET/PUT /settings`, the ⚙ panel).
   A store-backed facade composes over the existing `active`/`budget` accessors; workers re-read
   config each tick and cadence changes reschedule live (self-scheduling timer), so the criterion,

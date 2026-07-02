@@ -81,6 +81,7 @@ on-chain" however it got there. Transitions are validated (`ALLOWED_TRANSITIONS`
 | GET/POST | `/settings/active` | read / set the Active toggle (`{active, budget?}`) |
 | GET/PUT | `/settings` | read / patch the **live config** (below); `PUT` validates, 400 on bad input |
 | POST | `/worker/{enumerate,tail,enrich,onboard,refresh}` | kick a worker cycle now |
+| POST | `/worker/reconcile` | re-queue anchored/onboarding DIDs to re-anchor (after a contract switch) |
 
 `GET /roster` query params: `state`, `status`, `q` (substring over DID + handle), `pdsHost`,
 `offCriterion` (`1` = only the migration stragglers), `sort` (a column alias), `order`
@@ -152,6 +153,19 @@ short-lived HMAC-signed bearer token (`CONSOLE_SESSION_TTL_MS`, default 1h) sent
 `Authorization: Bearer <token>`. The token is stateless (an HMAC over its expiry). Auth is a
 pluggable seam (`src/auth.ts`) — the shared-secret MVP can be swapped for "sign-in with Starknet"
 without touching the routes.
+
+### Switching the anchor contract (redeploy / mainnet cutover)
+
+`anchored`/`onboarding` are **DB lifecycle** state — they record that a DID was written to a
+*specific* anchor contract, and are never re-derived from the chain on boot. So pointing
+`ANCHOR_CONTRACT_ADDRESS` at a new contract leaves those rows stale: the new contract's roster
+starts empty, yet the DB still counts them `anchored` (and refresh will show their `status` as
+`absent`). The console **reconciles automatically**: it records the anchor address, and on a boot
+where it changed, moves `anchored`/`onboarding` DIDs back to `approved` and clears the old
+tx/fee/anchored-at/status, so they re-onboard (re-import from genesis) to the new contract. There's
+also a manual **Reconcile** button / `POST /worker/reconcile` for on-demand use — **use it once**
+after the first deploy of this feature, since a DB that predates it has no recorded prior address
+and so won't auto-fire for the already-stale rows.
 
 ### Status reflects on-chain reality
 

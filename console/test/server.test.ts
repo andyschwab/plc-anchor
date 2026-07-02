@@ -172,6 +172,25 @@ test("worker trigger → 503 when the action is not configured", async () => {
   assert.match(json.error, /not configured/);
 });
 
+test("worker/reconcile trigger runs the reconcile action", async () => {
+  const rs = RosterStore.open();
+  rs.upsertCandidate("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "explicit");
+  rs.transition("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "approved");
+  rs.transition("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "onboarding");
+  rs.transition("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "anchored");
+  const wired = createConsoleServer(rs, {
+    contractAddress: "0xnew",
+    allowOpenWrites: true,
+    actions: { reconcile: async () => ({ reset: rs.reconcileForContract() }) },
+  });
+  await new Promise<void>((r) => wired.listen(0, "127.0.0.1", r));
+  const p = (wired.address() as AddressInfo).port;
+  const res = await fetch(`http://127.0.0.1:${p}/worker/reconcile`, { method: "POST" });
+  assert.equal((await res.json()).reset, 1);
+  assert.equal(rs.get("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa")!.state, "approved");
+  wired.close();
+});
+
 test("worker trigger runs a configured action", async () => {
   const wired = createConsoleServer(RosterStore.open(), {
     contractAddress: "0x0",

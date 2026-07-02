@@ -89,6 +89,20 @@ const store = RosterStore.open(dbPath);
 const settings = new SettingsStore(store, settingsDefaults());
 settings.seedDefaults();
 
+// Contract-change reconcile: `anchored`/`onboarding` state records a write to a *specific* anchor
+// contract. If the address changed since last boot (a redeploy / mainnet cutover), that state is
+// stale (the new contract's roster starts empty), so re-queue those DIDs to re-anchor. Keyed on an
+// actual change, so it's a no-op on a normal restart. The current contract is always recorded.
+const lastContract = store.getMeta("anchor_contract");
+if (lastContract !== null && lastContract !== contractAddress) {
+  const reset = store.reconcileForContract();
+  console.error(
+    `[reconcile] anchor contract changed (${lastContract} → ${contractAddress}); ` +
+      `reset ${reset} DID(s) to approved for re-anchoring`,
+  );
+}
+store.setMeta("anchor_contract", contractAddress);
+
 const feeResolver: FeeResolver | null = rpc ? starknetFeeResolver(rpc) : null;
 const actions: WorkerActions = {};
 let lastRefreshAt: number | null = null;
@@ -112,6 +126,8 @@ function summarize(name: string, result: unknown): string {
         return r.active ? `${r.anchored ?? 0}/${r.attempted ?? 0} anchored (budget ${r.budget})` : "inactive";
       case "refresh":
         return `${r.diverged ?? 0} diverged`;
+      case "reconcile":
+        return `reset ${r.reset ?? 0} → approved`;
       default:
         return JSON.stringify(result).slice(0, 80);
     }
@@ -190,6 +206,12 @@ actions.enrich = instrument("enrich", async () => {
   return enricher.enrichStale(s.enrichBatch, s.enrichDelayMs);
 });
 loop(() => settings.get().enrichIntervalMs, actions.enrich);
+
+// --- Reconcile (manual): re-queue anchored/onboarding DIDs after a contract switch. No loop. ---
+actions.reconcile = instrument("reconcile", async () => ({
+  reset: store.reconcileForContract(),
+  contract: contractAddress,
+}));
 
 // --- Refresh (read side): §4 status + the diverged alarm. Needs an RPC. ---
 if (rpc) {

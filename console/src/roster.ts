@@ -523,6 +523,27 @@ export class RosterStore {
     this.transition(did, "anchored");
   }
 
+  /** Contract-change reconcile: `anchored`/`onboarding` state records that a DID was written to a
+   * *specific* anchor contract. When the contract address changes (a redeploy / mainnet cutover),
+   * that state is stale — the new contract's roster starts empty — so re-queue those DIDs for
+   * onboarding to the new contract and clear the old on-chain provenance + status. This is a
+   * deliberate reconcile, not a lifecycle transition (hence a direct write, bypassing
+   * `ALLOWED_TRANSITIONS`, which has no `anchored → approved` edge by design). Returns the count
+   * reset. `removed` tombstones and in-flight `candidate`/`approved` are left untouched. */
+  reconcileForContract(): number {
+    const res = this.#db
+      .prepare(
+        `UPDATE roster
+           SET state = 'approved',
+               anchor_tx = NULL, anchor_fee = NULL, anchored_at = NULL,
+               status = NULL, status_reason = NULL, head_cid = NULL, status_checked_at = NULL,
+               error = NULL, updated_at = ?
+         WHERE state IN ('anchored', 'onboarding')`,
+      )
+      .run(this.#now());
+    return Number(res.changes);
+  }
+
   // ---- filters ------------------------------------------------------------
 
   addFilter(type: "pds_host", value: string): Filter {

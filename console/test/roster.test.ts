@@ -168,6 +168,42 @@ test("setAnchorCost stores the tip tx and accumulates the fee", () => {
   assert.equal(e.anchorFee, "1500", "fee accumulates across txs");
 });
 
+test("reconcileForContract re-queues anchored/onboarding and clears on-chain provenance", () => {
+  const s = store();
+  // One anchored (with fee/status), one onboarding, plus a candidate + approved that must be left alone.
+  s.upsertCandidate("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "explicit");
+  s.transition("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "approved");
+  s.transition("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "onboarding");
+  s.transition("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "anchored");
+  s.setAnchorCost("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "0xtx", "1000");
+  s.setStatus("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", { status: "confirmed", reason: "ok", headCid: "bafy" });
+
+  s.upsertCandidate("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb", "explicit");
+  s.transition("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb", "approved");
+  s.transition("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb", "onboarding");
+
+  s.upsertCandidate("did:plc:cccccccccccccccccccccccc", "explicit"); // candidate — untouched
+  s.upsertCandidate("did:plc:dddddddddddddddddddddddd", "explicit");
+  s.transition("did:plc:dddddddddddddddddddddddd", "approved"); // approved — untouched
+
+  const reset = s.reconcileForContract();
+  assert.equal(reset, 2, "anchored + onboarding are reset");
+
+  const a = s.get("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa")!;
+  assert.equal(a.state, "approved");
+  assert.equal(a.anchorTx, null, "on-chain provenance cleared");
+  assert.equal(a.anchorFee, null);
+  assert.equal(a.anchoredAt, null);
+  assert.equal(a.status, null, "stale status cleared");
+  assert.equal(a.headCid, null);
+
+  assert.equal(s.get("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb")!.state, "approved");
+  assert.equal(s.get("did:plc:cccccccccccccccccccccccc")!.state, "candidate", "candidate untouched");
+  assert.equal(s.get("did:plc:dddddddddddddddddddddddd")!.state, "approved");
+  // Idempotent: nothing anchored/onboarding remains.
+  assert.equal(s.reconcileForContract(), 0);
+});
+
 test("setEnrichment records the off-criterion flag; aggregates + query surface it", () => {
   const s = store();
   for (const d of ["did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb"]) {
