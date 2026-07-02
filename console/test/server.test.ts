@@ -13,7 +13,8 @@ let base = "";
 let store: RosterStore;
 const server = (() => {
   store = RosterStore.open();
-  return createConsoleServer(store, { contractAddress: "0xanchor" });
+  // These CRUD tests exercise routes without auth, so opt into open-writes explicitly.
+  return createConsoleServer(store, { contractAddress: "0xanchor", allowOpenWrites: true });
 })();
 
 before(async () => {
@@ -106,6 +107,7 @@ test("worker trigger → 503 when the action is not configured", async () => {
 test("worker trigger runs a configured action", async () => {
   const wired = createConsoleServer(RosterStore.open(), {
     contractAddress: "0x0",
+    allowOpenWrites: true,
     actions: { refresh: async () => ({ diverged: 3 }) },
   });
   await new Promise<void>((r) => wired.listen(0, "127.0.0.1", r));
@@ -134,8 +136,8 @@ test("auth gate: reads open, writes 401 without a session, 200 with one", async 
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
 
-  // healthz advertises that auth is required, and reads work unauthenticated.
-  assert.equal((await (await call("GET", "/healthz")).json()).authRequired, true);
+  // healthz advertises the gated write mode, and reads work unauthenticated.
+  assert.equal((await (await call("GET", "/healthz")).json()).writeMode, "gated");
   assert.equal((await call("GET", "/roster")).status, 200);
 
   // A write with no session is rejected.
@@ -162,9 +164,31 @@ test("auth gate: reads open, writes 401 without a session, 200 with one", async 
   gated.close();
 });
 
-test("auth disabled: /auth/login is a no-op and writes stay open", async () => {
-  // The default (no `auth`) server is already exercised above; confirm the login route is inert.
-  const { status, json } = await req("POST", "/auth/login", { secret: "anything" });
-  assert.equal(status, 200);
-  assert.equal(json.authRequired, false);
+test("fail-closed default: no auth + no open flag → writes refused, reads open", async () => {
+  const shut = createConsoleServer(RosterStore.open(), { contractAddress: "0xc" });
+  await new Promise<void>((r) => shut.listen(0, "127.0.0.1", r));
+  const b = `http://127.0.0.1:${(shut.address() as AddressInfo).port}`;
+
+  assert.equal((await (await fetch(`${b}/healthz`)).json()).writeMode, "closed");
+  assert.equal((await fetch(`${b}/roster`)).status, 200); // reads open
+
+  const write = await fetch(`${b}/roster/dids`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ did: "did:plc:x" }),
+  });
+  assert.equal(write.status, 503);
+  assert.match((await write.json()).error, /CONSOLE_ADMIN_TOKEN/);
+
+  // Login is unavailable when no auth is configured.
+  const login = await fetch(`${b}/auth/login`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ secret: "x" }),
+  });
+  assert.equal(login.status, 503);
+  assert.match((await login.json()).error, /not configured/);
+  shut.close();
+});
+
+test("open-writes escape hatch: writes allowed without a session", async () => {
+  // The main test server runs with allowOpenWrites; confirm healthz reports it and writes pass.
+  assert.equal((await req("GET", "/healthz")).json.writeMode, "open");
+  assert.equal((await req("POST", "/roster/filters", { value: "open.example" })).status, 200);
 });

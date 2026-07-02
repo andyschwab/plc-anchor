@@ -4,6 +4,8 @@
 #   fly --config console/fly.toml volumes create roster_data --region fra --size 1
 #   fly --config console/fly.toml secrets set STARKNET_RPC=... ANCHOR_CONTRACT_ADDRESS=... \
 #                   STARKNET_ACCOUNT_ADDRESS=... STARKNET_ACCOUNT_PRIVATE_KEY=...
+#   # Writes are fail-closed: set an admin secret or the console refuses every change.
+#   fly --config console/fly.toml secrets set CONSOLE_ADMIN_TOKEN="$(openssl rand -hex 32)"
 #   fly deploy --config console/fly.toml --dockerfile console/Dockerfile
 #
 #   fly certs add plc.didmarc.dev --config console/fly.toml
