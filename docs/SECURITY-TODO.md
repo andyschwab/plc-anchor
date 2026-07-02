@@ -4,9 +4,14 @@ Findings from the June 2026 internal security audit. Ordered by priority; items 
 only ones that meaningfully affect security properties. Items 3–6 are resilience/quality
 improvements.
 
+**Status (2026-07-01):** items 2–6 are done and landed on
+`claude/security-updates-review-4ejk28`. **Item 1 (HIGH) is the only remaining work** — it is a
+larger, consensus-critical change scoped for its own focused follow-up; see the expanded notes
+in that section.
+
 ---
 
-## 1. Re-derive `nullified` from op contents — HIGH
+## 1. Re-derive `nullified` from op contents — HIGH  *(remaining — own follow-up)*
 
 **Files:** `witness-ts/src/directory.ts`, `witness-ts/src/status.ts`
 
@@ -16,14 +21,42 @@ surface a forged op as live (false `confirmed`/`tentative-consistent`). The fiel
 discarded and re-derived locally using the same recovery-key-index + 72h-window logic that
 the Cairo contract enforces.
 
+**Why this is its own PR (scope note).** Re-deriving `nullified` means reproducing PLC's
+recovery decision, which turns on *which rotation key signed each op* — the signer key index.
+That index is only obtainable by verifying each op's signature against the fork-point op's
+`rotationKeys`, so item 1 requires bringing signature verification into `witness-ts`, which
+today does **zero** crypto and has **no dependencies** (Node ≥22, type-strip, no build step).
+did:plc uses two curves — **secp256k1** and **P-256** — with compact low-S ECDSA sigs over the
+DRISL-encoded *unsigned* op and compressed did:key pubkeys.
+
+**Load-bearing decisions (already settled for the follow-up):**
+- **Crypto via Node builtins** (`node:crypto`), not a new dependency — preserves the
+  zero-dep / no-build invariant. Hand-write did:key multibase decode, compressed-point
+  decompression, and compact→DER signature conversion.
+- The Cairo side is the byte-exact reference: `op_verify` (signer-index resolution),
+  `sig_verify` (k256 low-S / p256 malleable), `recovery::classify_next_op` (72h + lower-index
+  rule), and `state::apply_op` (fork-point search). Mirror these exactly.
+- **Signed vs unsigned discipline** (CLAUDE.md / REFERENCE.md §5): DID/CID derivation hashes
+  the *signed* op; signature verification is over the *unsigned* op (sig removed, then
+  DRISL-encoded). Do not conflate.
+
+**Guardrail:** this is a consensus-critical module — it must be **differential-green against
+`@did-plc/lib`** before merge (CLAUDE.md), with its own vector corpus (extend
+`conformance/`), never a hand-tuned fixture.
+
 **Work items:**
+- [ ] Add a Node-builtin ECDSA verifier for secp256k1 + P-256 over did:key rotation keys
+  (did:key decode, point decompression, compact→DER, low-S enforcement for k256).
+- [ ] Implement signer-index resolution for an op against a `rotationKeys` set (the TS analog
+  of `op_verify::verify_op_authorized`), over the *unsigned* DRISL bytes.
 - [ ] Implement `deriveNullified(ops: AuditEntry[]): Set<string>` in `directory.ts` — scan
   the op chain for any rotation using a lower-index recovery key within the 72h window of the
   op it supersedes; that op and everything after it are nullified regardless of the directory
   claim.
 - [ ] Wire into `status.ts` in place of the directory-asserted `nullified` flag.
-- [ ] Add adversarial test cases in `witness-ts/test/`: directory claims op is not nullified
-  but local re-derivation says it is → expect `diverged`.
+- [ ] Add a differential vector corpus (ground-truthed vs `@did-plc/lib`) plus adversarial test
+  cases in `witness-ts/test/`: directory claims op is not nullified but local re-derivation says
+  it is → expect `diverged`.
 
 ---
 
@@ -36,11 +69,12 @@ Missing fields silently become `undefined`/`NaN` and flow into comparisons rathe
 surfacing as explicit errors.
 
 **Work items:**
-- [ ] Replace the bare cast with explicit runtime validation: `Array.isArray`, max array
+- [x] Replace the bare cast with explicit runtime validation: `Array.isArray`, max array
   length, required fields (`cid`, `createdAt`, `nullified`, `operation`) present and correctly
-  typed.
-- [ ] Treat missing/malformed fields as a hard error (throw), not silent `undefined`.
-- [ ] Add a max-bytes cap on the raw fetch body (or check `Content-Length` before reading).
+  typed. — `parseAuditLog`/`isAuditEntry` in `directory.ts`.
+- [x] Treat missing/malformed fields as a hard error (throw), not silent `undefined`.
+- [x] Add a max-bytes cap on the raw fetch body (or check `Content-Length` before reading). —
+  `readBoundedText` (streaming cap + `Content-Length` pre-check), 8 MiB.
 
 ---
 
@@ -53,10 +87,10 @@ can stack-overflow the long-running indexer process. `serde_json::from_str` has 
 guard either, so the crash can happen before re-encoding is reached.
 
 **Work items:**
-- [ ] Add `max_depth: usize` parameter to `json_to_ipld` (64 is well above any legitimate PLC
-  op); return `Err` instead of recursing further.
-- [ ] Add a max-bytes cap on HTTP response bodies in `source.rs` before passing to
-  `serde_json::from_str`.
+- [x] Add `max_depth: usize` parameter to `json_to_ipld` (64 is well above any legitimate PLC
+  op); return `Err` instead of recursing further. — depth budget, `MAX_DEPTH = 64`.
+- [x] Add a max-bytes cap on HTTP response bodies in `source.rs` before passing to
+  `serde_json::from_str`. — `MAX_BODY_BYTES = 32 MiB` via ureq `.limit(...)` on both reads.
 
 ---
 
@@ -69,8 +103,9 @@ When `Date.parse(entry.createdAt)` yields `NaN`, `withinHorizon` silently defaul
 indefinitely.
 
 **Work item:**
-- [ ] Treat `NaN` from `Date.parse` as an unverifiable state — propagate an error or surface
-  a distinct status (e.g. `error`) rather than absorbing it as non-alarming.
+- [x] Treat `NaN` from `Date.parse` as an unverifiable state — propagate an error or surface
+  a distinct status (e.g. `error`) rather than absorbing it as non-alarming. — new `error`
+  status (`directory-timestamp-unparseable`), CLI exit 1.
 
 ---
 
@@ -83,8 +118,10 @@ the same fork-point/authorization logic inline. Two parallel implementations of
 security-critical code risk silent drift if one is patched without the other.
 
 **Work item:**
-- [ ] Either delete `verify.cairo` and its dead transitive code, or wire `state.cairo`/
-  `anchor.cairo` through it so there is a single implementation.
+- [x] Either delete `verify.cairo` and its dead transitive code, or wire `state.cairo`/
+  `anchor.cairo` through it so there is a single implementation. — deleted `verify.cairo` +
+  `tests/verify.cairo`; `state::apply_op` is the single integrated path. (`check_prev_link`
+  kept — a standalone P2.4 primitive with its own test in `tests/link.cairo`.)
 
 ---
 
@@ -95,13 +132,19 @@ security-critical code risk silent drift if one is patched without the other.
 Comment claims `now`/`createdAt` are "never a block clock." They are — `anchor.cairo` feeds
 `get_block_timestamp() * 1000`. One-line correction.
 
+- [x] Done — corrected to distinguish `createdAt` (directory time, never a block clock) from
+  `now` (the caller's clock; the block timestamp in production, a fixed value in tests).
+
 ---
 
 ## Dependency order
 
 ```
-3 & 4  (ingest bounds, timestamp guard)   — independent, can be done in parallel
-2      (response validation)
-└─ 1   (nullified re-derivation)          — builds on validated op payloads; do 2 first
-5 & 6  (Cairo cleanup)                    — independent, any time
+3 & 4  (ingest bounds, timestamp guard)   — DONE
+2      (response validation)              — DONE
+└─ 1   (nullified re-derivation)          — REMAINING; builds on the now-validated op payloads
+5 & 6  (Cairo cleanup)                    — DONE
 ```
+
+Item 2 is done, so item 1 now starts from validated, well-typed op payloads — the signature
+re-derivation can assume `operation` is a present object with the expected field types.

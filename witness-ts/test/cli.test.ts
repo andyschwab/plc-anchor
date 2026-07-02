@@ -28,8 +28,9 @@ test("parseArgs: errors without a DID, or without an RPC", () => {
   }
 });
 
-test("exitCodeFor: only diverged is a failure", () => {
+test("exitCodeFor: diverged → 2, error → 1, rest → 0", () => {
   assert.equal(exitCodeFor("diverged"), 2);
+  assert.equal(exitCodeFor("error"), 1);
   for (const s of ["confirmed", "tentative-consistent", "absent"] as const) {
     assert.equal(exitCodeFor(s), 0);
   }

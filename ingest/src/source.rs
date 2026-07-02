@@ -8,6 +8,11 @@
 use crate::export::{parse_jsonl, ExportEntry};
 use anyhow::{Context, Result};
 
+/// Upper bound on an HTTP response body we will buffer, in bytes. A single-DID audit log or one
+/// `?count=` export page is far smaller; this only exists so a malicious mirror can't stream an
+/// unbounded body to exhaust memory in the long-running indexer (SECURITY-TODO item 3). 32 MiB.
+const MAX_BODY_BYTES: u64 = 32 * 1024 * 1024;
+
 /// Fetch one DID's complete operation log from the directory's `/<did>/log/audit` endpoint — a
 /// JSON array (not JSONL), ordered genesis-first, each element sharing the [`ExportEntry`] shape
 /// (`did`/`operation`/`cid`/`nullified`/`createdAt`). This is the per-DID onboarding path: it
@@ -21,6 +26,8 @@ pub fn fetch_audit_log(base_url: &str, did: &str) -> Result<Vec<ExportEntry>> {
         .call()
         .with_context(|| format!("GET {url}"))?
         .body_mut()
+        .with_config()
+        .limit(MAX_BODY_BYTES)
         .read_to_string()
         .with_context(|| format!("read body of {url}"))?;
     serde_json::from_str(&body).with_context(|| format!("parse audit log for {did}"))
@@ -63,6 +70,8 @@ impl OpSource for HttpExportSource {
             .call()
             .with_context(|| format!("GET {url}"))?
             .body_mut()
+            .with_config()
+            .limit(MAX_BODY_BYTES)
             .read_to_string()
             .with_context(|| format!("read body of {url}"))?;
         parse_jsonl(&body)

@@ -11,6 +11,7 @@ export {
   type DirectoryHead,
   directoryHead,
   type Fetcher,
+  parseAuditLog,
 } from "./directory.ts";
 export {
   AnchorReader,
