@@ -22,6 +22,18 @@ export interface ListReposPage {
 
 export type Fetcher = (url: string) => Promise<Response>;
 
+/** Best-effort human reason from a failed XRPC response body (`{ error, message }`), as a `" — …"`
+ * suffix; empty string if the body isn't readable JSON. A 403/400 then says *why*, not just the code. */
+async function reason(res: Response): Promise<string> {
+  try {
+    const b = (await res.clone().json()) as { error?: unknown; message?: unknown };
+    const parts = [b.error, b.message].filter((x) => typeof x === "string" && x.length > 0);
+    return parts.length > 0 ? ` — ${parts.join(": ")}` : "";
+  } catch {
+    return "";
+  }
+}
+
 /** Reads pages of a PDS's `com.atproto.sync.listRepos` endpoint. */
 export class PdsClient {
   readonly #baseUrl: string;
@@ -43,7 +55,7 @@ export class PdsClient {
     url.searchParams.set("limit", String(limit));
     if (cursor) url.searchParams.set("cursor", cursor);
     const res = await this.#fetch(url.toString());
-    if (!res.ok) throw new Error(`listRepos: HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`listRepos ${this.#baseUrl}: HTTP ${res.status}${await reason(res)}`);
     const body = (await res.json()) as { repos?: unknown; cursor?: unknown };
     const repos: RepoEntry[] = Array.isArray(body.repos)
       ? (body.repos as RepoEntry[]).filter(

@@ -14,6 +14,7 @@
 //!   ROSTER_CRITERION / PDS_ENDPOINTS          seed the criterion / enumeration targets
 //!   IMPORT_BUDGET_PER_TICK / ACTIVE_DEFAULT   seed the budget / boot Active state
 //!   {ENUMERATE,TAIL,ENRICH,REFRESH}_INTERVAL_MS   seed loop cadences (0 disables)
+//!   ENUMERATE_PAGE_SIZE                       seed listRepos page size (repos per enumerate tick)
 //!   ENRICH_BATCH / ENRICH_DELAY_MS            seed enrich batch size / inter-request ms
 //!   PLC_DIRECTORY_URL / PLC_MIRROR_URL        seed the directory / mirror bases
 //!   SETTINGS_DEFAULTS_FILE                    optional JSON file of default settings (below env)
@@ -33,7 +34,7 @@ import { PdsClient } from "./pds.ts";
 import { RefreshService } from "./refresh.ts";
 import { RosterStore } from "./roster.ts";
 import { SETTINGS_DEFAULTS, SettingsStore, validateSettings, type ConsoleSettings } from "./settings.ts";
-import { createConsoleServer, type WorkerActions } from "./server.ts";
+import { createConsoleServer, type SettingsPort, type WorkerActions } from "./server.ts";
 import { DirectoryResolver, WitnessChecker } from "./witness.ts";
 
 // The post-4a Sepolia anchor — an explicit DEV convenience only, never the production path.
@@ -84,6 +85,7 @@ function settingsDefaults(): ConsoleSettings {
   if (eps) d.pdsEndpoints = eps;
   if (e.IMPORT_BUDGET_PER_TICK !== undefined) d.importBudget = num(e.IMPORT_BUDGET_PER_TICK, d.importBudget);
   if (e.ACTIVE_DEFAULT !== undefined) d.active = bool(e.ACTIVE_DEFAULT);
+  if (e.ENUMERATE_PAGE_SIZE !== undefined) d.enumeratePageSize = num(e.ENUMERATE_PAGE_SIZE, d.enumeratePageSize);
   if (e.ENUMERATE_INTERVAL_MS !== undefined) d.enumerateIntervalMs = num(e.ENUMERATE_INTERVAL_MS, d.enumerateIntervalMs);
   if (e.TAIL_INTERVAL_MS !== undefined) d.tailIntervalMs = num(e.TAIL_INTERVAL_MS, d.tailIntervalMs);
   if (e.ENRICH_INTERVAL_MS !== undefined) d.enrichIntervalMs = num(e.ENRICH_INTERVAL_MS, d.enrichIntervalMs);
@@ -149,6 +151,21 @@ function summarize(name: string, result: unknown): string {
   }
 }
 
+/** A readable one-line error string that unwraps `err.cause`. Node's `fetch` (undici) throws a
+ * bare `TypeError: fetch failed` and hides the real reason (`ENOTFOUND` / `ECONNREFUSED` / a TLS
+ * error) on `.cause`; without this the UI can only ever show "fetch failed". Appends the cause's
+ * `code`/message when it adds signal the top-level message doesn't already carry. */
+function describeError(err: unknown): string {
+  const base = err instanceof Error ? err.message : String(err);
+  const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
+  if (cause === undefined || cause === null) return base;
+  const code = typeof (cause as { code?: unknown }).code === "string" ? (cause as { code: string }).code : null;
+  const msg = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : null;
+  const detail = [code, msg && msg !== code ? msg : null].filter(Boolean).join(": ");
+  if (!detail || base.includes(detail)) return base;
+  return `${base} (${detail})`;
+}
+
 /** Wrap a worker action so every run (timer *or* manual `/worker/*`) persists its status — start,
  * duration, result summary, and any error — making the otherwise-invisible loops observable. */
 function instrument(name: string, fn: () => Promise<unknown>): () => Promise<unknown> {
@@ -165,7 +182,7 @@ function instrument(name: string, fn: () => Promise<unknown>): () => Promise<unk
     } catch (err) {
       store.setWorkerStatus(name, {
         running: false, lastRunAt: Date.now(), durationMs: Date.now() - t0,
-        ok: false, error: err instanceof Error ? err.message : String(err),
+        ok: false, error: describeError(err),
       });
       throw err;
     }
@@ -193,10 +210,14 @@ function loop(getIntervalMs: () => number, fn: () => Promise<unknown>): void {
 }
 
 // --- Enumerate (backlog): page each configured PDS's listRepos → auto-approved candidates. ---
+// One small page per PDS per tick — a steady trickle (e.g. 50/min) rather than one big hourly
+// drain, so a slow PDS can't drop a long-lived paginated call mid-flight (UND_ERR_SOCKET). The
+// per-PDS cursor persists, so the backlog still drains fully across ticks, then idles when done.
 actions.enumerate = instrument("enumerate", async () => {
+  const s = settings.get();
   const results = [];
-  for (const url of settings.get().pdsEndpoints) {
-    results.push({ pds: url, ...(await new EnumerationService(store, new PdsClient(url)).enumerateBacklog()) });
+  for (const url of s.pdsEndpoints) {
+    results.push({ pds: url, ...(await new EnumerationService(store, new PdsClient(url)).enumerateOnce(s.enumeratePageSize)) });
   }
   return { results };
 });
@@ -287,10 +308,30 @@ const locked = () => ({
   ingestConfigured: Boolean(ingestCommand),
 });
 
+/** Settings port for the API, wrapping the store so flipping **Active** on (false→true) kicks an
+ * onboard cycle immediately. Otherwise the spend wouldn't start until the next onboard tick (up to
+ * a refresh interval later), which reads as "onboard needs a manual click after Active". Fires the
+ * existing worker action (a no-op when onboarding isn't configured); the console's `PUT /settings`
+ * is the path the Settings panel uses to toggle Active, so this covers the UI and API alike. */
+const settingsPort: SettingsPort = {
+  get: () => settings.get(),
+  patch: (partial) => {
+    const wasActive = settings.get().active;
+    const next = settings.patch(partial);
+    if (!wasActive && settings.get().active && actions.onboard) {
+      console.error("[onboard] Active turned on — kicking an onboard cycle");
+      void actions.onboard().catch((err) =>
+        console.error("[onboard] kick failed:", err instanceof Error ? err.message : err),
+      );
+    }
+    return next;
+  },
+};
+
 const server = createConsoleServer(store, {
   contractAddress,
   criterionLabel,
-  settings,
+  settings: settingsPort,
   locked,
   lastRefreshAt: () => lastRefreshAt,
   actions,
