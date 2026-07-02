@@ -17,7 +17,15 @@ primary_region = "fra"
   dockerfile = 'Dockerfile'
 
 [env]
-  DISCOVER_INTERVAL_MS = '0'
+  # Eurosky-MVP: criterion-driven roster (domain-suffix match), enumerate + tail discovery.
+  # These SEED the live settings — once edited in the ⚙ Settings panel, the stored value wins.
+  ROSTER_CRITERION = 'pds_domain:eurosky.social'
+  PDS_ENDPOINTS = 'https://eurosky.social'
+  ACTIVE_DEFAULT = 'false'          # spend gate off at first boot; flip on in the UI
+  IMPORT_BUDGET_PER_TICK = '25'
+  ENUMERATE_INTERVAL_MS = '3600000'
+  TAIL_INTERVAL_MS = '60000'
+  ENRICH_INTERVAL_MS = '30000'
   PLC_DIRECTORY_URL = 'https://plc.directory'
   PORT = '8787'
   REFRESH_INTERVAL_MS = '300000'

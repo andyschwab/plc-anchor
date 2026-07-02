@@ -24,13 +24,31 @@ function loadUi(): string | null {
 /** Optional worker actions, wired by `main.ts`, exposed as manual `POST /worker/*` triggers so
  * an operator can kick a cycle without waiting for the interval. Absent actions return 503. */
 export interface WorkerActions {
-  discover?: () => Promise<unknown>;
+  enumerate?: () => Promise<unknown>;
+  tail?: () => Promise<unknown>;
+  enrich?: () => Promise<unknown>;
   onboard?: () => Promise<unknown>;
   refresh?: () => Promise<unknown>;
+  /** Re-queue anchored/onboarding DIDs to re-anchor after a contract switch. */
+  reconcile?: () => Promise<unknown>;
+}
+
+/** The live-settings port (implemented by `SettingsStore`); `patch` throws on invalid input. */
+export interface SettingsPort {
+  get(): unknown;
+  patch(partial: Record<string, unknown>): unknown;
 }
 
 export interface ServerConfig {
   contractAddress: string;
+  /** The current membership criterion label, surfaced in the UI/healthz. A getter (not a string)
+   * because the criterion is now runtime-editable, so a cached label would go stale. */
+  criterionLabel?: () => string | null;
+  /** Runtime-editable settings (enables `GET/PUT /settings`). */
+  settings?: SettingsPort;
+  /** Boot-only / secret config surfaced read-only alongside `GET /settings` (never secret values —
+   * only presence booleans and non-secret identifiers like the contract address / port). */
+  locked?: () => Record<string, unknown>;
   /** Reported by `/healthz`; set by the worker after each successful refresh. */
   lastRefreshAt?: () => number | null;
   actions?: WorkerActions;
@@ -60,6 +78,7 @@ interface Route {
 
 interface Ctx {
   params: Record<string, string>;
+  query: URLSearchParams;
   body: unknown;
   store: RosterStore;
   config: ServerConfig;
@@ -106,6 +125,32 @@ function bodyField(body: unknown, key: string): string {
   return (body as Record<string, string>)[key];
 }
 
+/** Read one optional query param, or undefined if absent/blank. */
+function qp(query: URLSearchParams, key: string): string | undefined {
+  const v = query.get(key);
+  return v !== null && v.length > 0 ? v : undefined;
+}
+
+function qpInt(query: URLSearchParams, key: string): number | undefined {
+  const v = qp(query, key);
+  if (v === undefined) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** Enumerate/tail cursor progress for the dashboard, read from persisted meta. */
+function cursorProgress(store: RosterStore): {
+  tail: string | null;
+  enumerate: { pds: string; cursor: string; done: boolean }[];
+} {
+  const enumerate = store.metaWithPrefix("enumerate_cursor:").map((r) => ({
+    pds: r.key.slice("enumerate_cursor:".length),
+    cursor: r.value,
+    done: r.value === "__complete__",
+  }));
+  return { tail: store.getMeta("tail_cursor"), enumerate };
+}
+
 function routes(): Route[] {
   return [
     {
@@ -114,7 +159,9 @@ function routes(): Route[] {
       handle: ({ store, config }) => ({
         ok: true,
         contractAddress: config.contractAddress,
+        criterion: config.criterionLabel?.() ?? null,
         writeMode: writeMode(config),
+        active: store.getActive(),
         lastRefreshAt: config.lastRefreshAt?.() ?? null,
         counts: {
           total: store.list().length,
@@ -134,9 +181,32 @@ function routes(): Route[] {
       },
     },
     {
+      // Server-side paginated / filtered / sorted grid.
       method: "GET",
       parts: ["roster"],
-      handle: ({ store }) => store.list(),
+      handle: ({ store, query }) =>
+        store.query({
+          state: qp(query, "state") as never,
+          status: qp(query, "status") as never,
+          q: qp(query, "q"),
+          pdsHost: qp(query, "pdsHost"),
+          offCriterion: qp(query, "offCriterion") === "1" ? true : undefined,
+          sort: qp(query, "sort"),
+          order: qp(query, "order") === "asc" ? "asc" : "desc",
+          limit: qpInt(query, "limit"),
+          offset: qpInt(query, "offset"),
+        }),
+    },
+    {
+      method: "GET",
+      parts: ["roster", "aggregates"],
+      handle: ({ store }) => ({
+        ...store.aggregates(),
+        active: store.getActive(),
+        budget: store.getBudget(),
+        cursors: cursorProgress(store),
+        workers: store.workerStatuses(),
+      }),
     },
     {
       method: "GET",
@@ -158,6 +228,8 @@ function routes(): Route[] {
       },
     },
     {
+      // Kept for explicit/manual curation; the criterion path auto-approves, so the UI no longer
+      // calls this in the Eurosky deployment.
       method: "POST",
       parts: ["roster", "dids", ":did", "approve"],
       handle: ({ store, params }) => store.transition(requireDid(params), "approved"),
@@ -168,28 +240,58 @@ function routes(): Route[] {
       handle: ({ store, params }) => store.transition(requireDid(params), "removed"),
     },
     {
+      // Read the spend toggle + budget.
       method: "GET",
-      parts: ["roster", "filters"],
-      handle: ({ store }) => store.listFilters(),
+      parts: ["settings", "active"],
+      handle: ({ store }) => ({ active: store.getActive(), budget: store.getBudget() }),
     },
     {
+      // Set the spend toggle; optionally the per-tick budget in the same call.
       method: "POST",
-      parts: ["roster", "filters"],
-      handle: ({ store, body }) => store.addFilter("pds_host", bodyField(body, "value")),
-    },
-    {
-      method: "DELETE",
-      parts: ["roster", "filters", ":id"],
-      handle: ({ store, params }) => {
-        const id = Number(params.id);
-        if (!Number.isInteger(id)) throw new HttpError(400, "invalid filter id");
-        store.removeFilter(id);
-        return { ok: true };
+      parts: ["settings", "active"],
+      handle: ({ store, body }) => {
+        if (body === null || typeof body !== "object") throw new HttpError(400, "expected an object body");
+        const b = body as Record<string, unknown>;
+        if (typeof b.active !== "boolean") throw new HttpError(400, "missing boolean field: active");
+        store.setActive(b.active);
+        if ("budget" in b) {
+          if (b.budget === null) store.setBudget(null);
+          else if (typeof b.budget === "number" && Number.isInteger(b.budget) && b.budget >= 0) {
+            store.setBudget(b.budget);
+          } else throw new HttpError(400, "budget must be a non-negative integer or null");
+        }
+        return { active: store.getActive(), budget: store.getBudget() };
       },
     },
-    { method: "POST", parts: ["worker", "discover"], handle: ({ config }) => runAction(config, "discover") },
+    {
+      // Full live settings + a read-only snapshot of the boot-only / secret config.
+      method: "GET",
+      parts: ["settings"],
+      handle: ({ config }) => {
+        if (config.settings === undefined) throw new HttpError(503, "settings not configured");
+        return { settings: config.settings.get(), locked: config.locked?.() ?? {} };
+      },
+    },
+    {
+      // Patch live settings (validated in the store; bad input → 400). Auth-gated like all writes.
+      method: "PUT",
+      parts: ["settings"],
+      handle: ({ config, body }) => {
+        if (config.settings === undefined) throw new HttpError(503, "settings not configured");
+        if (body === null || typeof body !== "object") throw new HttpError(400, "expected an object body");
+        try {
+          return { settings: config.settings.patch(body as Record<string, unknown>) };
+        } catch (err) {
+          throw new HttpError(400, err instanceof Error ? err.message : "invalid settings");
+        }
+      },
+    },
+    { method: "POST", parts: ["worker", "enumerate"], handle: ({ config }) => runAction(config, "enumerate") },
+    { method: "POST", parts: ["worker", "tail"], handle: ({ config }) => runAction(config, "tail") },
+    { method: "POST", parts: ["worker", "enrich"], handle: ({ config }) => runAction(config, "enrich") },
     { method: "POST", parts: ["worker", "onboard"], handle: ({ config }) => runAction(config, "onboard") },
     { method: "POST", parts: ["worker", "refresh"], handle: ({ config }) => runAction(config, "refresh") },
+    { method: "POST", parts: ["worker", "reconcile"], handle: ({ config }) => runAction(config, "reconcile") },
   ];
 }
 
@@ -254,7 +356,7 @@ export function createConsoleServer(store: RosterStore, config: ServerConfig): S
             }
           }
           const body = method === "POST" || method === "PUT" ? await readBody(req) : null;
-          const result = await route.handle({ params, body, store, config });
+          const result = await route.handle({ params, query: url.searchParams, body, store, config });
           send(res, 200, result);
           return;
         }

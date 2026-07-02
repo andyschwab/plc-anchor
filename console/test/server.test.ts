@@ -7,6 +7,7 @@ import { after, before, test } from "node:test";
 import { SharedSecretAuth } from "../src/auth.ts";
 import { createConsoleServer } from "../src/server.ts";
 import { RosterStore } from "../src/roster.ts";
+import { SettingsStore } from "../src/settings.ts";
 
 const DID = "did:plc:abcdefghijklmnopqrstuvwx";
 let base = "";
@@ -14,7 +15,12 @@ let store: RosterStore;
 const server = (() => {
   store = RosterStore.open();
   // These CRUD tests exercise routes without auth, so opt into open-writes explicitly.
-  return createConsoleServer(store, { contractAddress: "0xanchor", allowOpenWrites: true });
+  return createConsoleServer(store, {
+    contractAddress: "0xanchor",
+    allowOpenWrites: true,
+    settings: new SettingsStore(store),
+    locked: () => ({ port: 8787, contractAddress: "0xanchor", rpcConfigured: false }),
+  });
 })();
 
 before(async () => {
@@ -50,19 +56,33 @@ test("healthz reports contract address and counts", async () => {
   assert.equal(json.counts.total, 0);
 });
 
-test("add → list → approve → detail", async () => {
+test("add → list (paged) → approve → detail", async () => {
   const add = await req("POST", "/roster/dids", { did: DID });
   assert.equal(add.status, 200);
   assert.equal(add.json.state, "candidate");
 
   const list = await req("GET", "/roster");
-  assert.equal(list.json.length, 1);
+  assert.equal(list.json.total, 1);
+  assert.equal(list.json.rows.length, 1);
+  assert.equal(list.json.rows[0].did, DID);
 
   const approve = await req("POST", `/roster/dids/${DID}/approve`);
   assert.equal(approve.json.state, "approved");
 
   const detail = await req("GET", `/roster/dids/${DID}`);
   assert.equal(detail.json.did, DID);
+});
+
+test("roster query filters by state and searches DID + handle", async () => {
+  // DID is 'approved' from the prior test. Filter to approved returns it; candidate returns none.
+  const byApproved = await req("GET", "/roster?state=approved");
+  assert.equal(byApproved.json.total, 1);
+  const byCandidate = await req("GET", "/roster?state=candidate");
+  assert.equal(byCandidate.json.total, 0);
+  const bySearch = await req("GET", `/roster?q=${DID.slice(-6)}`);
+  assert.equal(bySearch.json.total, 1);
+  const noMatch = await req("GET", "/roster?q=zzzzzznope");
+  assert.equal(noMatch.json.total, 0);
 });
 
 test("approving a non-candidate is a 400 (illegal transition surfaced)", async () => {
@@ -82,14 +102,62 @@ test("diverged alarm endpoint", async () => {
   assert.equal(json[0].did, DID);
 });
 
-test("filters create/list/delete", async () => {
-  const add = await req("POST", "/roster/filters", { value: "pds.example.eu" });
-  assert.equal(add.json.value, "pds.example.eu");
-  const list = await req("GET", "/roster/filters");
-  assert.equal(list.json.length, 1);
-  const del = await req("DELETE", `/roster/filters/${add.json.id}`);
-  assert.equal(del.json.ok, true);
-  assert.equal((await req("GET", "/roster/filters")).json.length, 0);
+test("settings/active reads and sets the toggle + budget", async () => {
+  const initial = await req("GET", "/settings/active");
+  assert.equal(initial.json.active, false, "defaults off");
+
+  const on = await req("POST", "/settings/active", { active: true, budget: 5 });
+  assert.equal(on.json.active, true);
+  assert.equal(on.json.budget, 5);
+  assert.equal((await req("GET", "/settings/active")).json.active, true);
+
+  // Bad body is a 400.
+  assert.equal((await req("POST", "/settings/active", { budget: 1 })).status, 400);
+
+  // Reset for later tests.
+  await req("POST", "/settings/active", { active: false, budget: null });
+});
+
+test("GET /settings returns live settings + a read-only locked snapshot", async () => {
+  const { status, json } = await req("GET", "/settings");
+  assert.equal(status, 200);
+  assert.equal(json.settings.tailIntervalMs, 60000);
+  assert.deepEqual(json.settings.pdsEndpoints, ["https://eurosky.social"]);
+  assert.equal(json.locked.contractAddress, "0xanchor");
+  assert.equal(json.locked.rpcConfigured, false);
+});
+
+test("PUT /settings patches live fields and rejects bad input", async () => {
+  const ok = await req("PUT", "/settings", { tailIntervalMs: 12345, criterion: "pds_domain:eurosky.social" });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.settings.tailIntervalMs, 12345);
+  assert.equal(ok.json.settings.criterion, "pds_domain:eurosky.social");
+  // Persisted: a fresh GET sees it.
+  assert.equal((await req("GET", "/settings")).json.settings.tailIntervalMs, 12345);
+  // Bad input → 400.
+  const bad = await req("PUT", "/settings", { importBudget: -5 });
+  assert.equal(bad.status, 400);
+  const badCrit = await req("PUT", "/settings", { criterion: "bogus:x" });
+  assert.equal(badCrit.status, 400);
+});
+
+test("aggregates rollup exposes counts, fees, active, cursors, workers, and enrichment", async () => {
+  const { status, json } = await req("GET", "/roster/aggregates");
+  assert.equal(status, 200);
+  assert.equal(typeof json.total, "number");
+  assert.equal(typeof json.byState, "object");
+  assert.equal(typeof json.feeTotal, "string");
+  assert.equal(json.active, false);
+  assert.ok(json.cursors);
+  assert.ok(json.workers, "worker statuses present");
+  assert.equal(typeof json.enrichment.enriched, "number");
+  assert.equal(typeof json.offCriterion, "number");
+});
+
+test("healthz advertises the criterion and active flag", async () => {
+  const { json } = await req("GET", "/healthz");
+  assert.equal(json.active, false);
+  assert.ok("criterion" in json);
 });
 
 test("unknown route → 404, bad body → 400", async () => {
@@ -102,6 +170,25 @@ test("worker trigger → 503 when the action is not configured", async () => {
   const { status, json } = await req("POST", "/worker/onboard");
   assert.equal(status, 503);
   assert.match(json.error, /not configured/);
+});
+
+test("worker/reconcile trigger runs the reconcile action", async () => {
+  const rs = RosterStore.open();
+  rs.upsertCandidate("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "explicit");
+  rs.transition("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "approved");
+  rs.transition("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "onboarding");
+  rs.transition("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "anchored");
+  const wired = createConsoleServer(rs, {
+    contractAddress: "0xnew",
+    allowOpenWrites: true,
+    actions: { reconcile: async () => ({ reset: rs.reconcileForContract() }) },
+  });
+  await new Promise<void>((r) => wired.listen(0, "127.0.0.1", r));
+  const p = (wired.address() as AddressInfo).port;
+  const res = await fetch(`http://127.0.0.1:${p}/worker/reconcile`, { method: "POST" });
+  assert.equal((await res.json()).reset, 1);
+  assert.equal(rs.get("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa")!.state, "approved");
+  wired.close();
 });
 
 test("worker trigger runs a configured action", async () => {
@@ -190,5 +277,5 @@ test("fail-closed default: no auth + no open flag → writes refused, reads open
 test("open-writes escape hatch: writes allowed without a session", async () => {
   // The main test server runs with allowOpenWrites; confirm healthz reports it and writes pass.
   assert.equal((await req("GET", "/healthz")).json.writeMode, "open");
-  assert.equal((await req("POST", "/roster/filters", { value: "open.example" })).status, 200);
+  assert.equal((await req("POST", "/settings/active", { active: false })).status, 200);
 });

@@ -8,68 +8,139 @@ guardrail):
 
 - reads status via **`@plc-anchor/witness`** (`check()` → the §4 graduated status);
 - writes via **`ingest --did/--roster --submit`** (the integrity invariant stays in ingest);
-- the only net-new logic is the **PDS-host parser** (`src/pdshost.ts`), which only *selects*
-  DIDs — it carries no consensus weight.
+- the only net-new logic *selects* DIDs — the PDS-host parser (`src/pdshost.ts`) and the
+  membership `criterion` (`src/criterion.ts`) — and carries no consensus weight.
+
+## The "Eurosky MVP" shape
+
+This deployment narrows the roster to **one fixed, deploy-time criterion** — accounts hosted on
+the `eurosky.social` PDS (~20k) — and is built to be *operable and cost-safe at that scale*. The
+per-DID human approve gate does not scale to 20k, so it is replaced by an **Active/Inactive
+toggle + a per-tick import budget**: matched DIDs auto-queue, and the operator controls the
+on-chain spend with one switch and a cap.
+
+- **Criterion** = `ROSTER_CRITERION=pds_domain:eurosky.social` — a **domain-suffix** match
+  (`eurosky.social` and any `*.eurosky.social`). Deploy-time config, not user-editable.
+- **Discovery = enumerate then tail.** *Enumerate* pages the PDS's `com.atproto.sync.listRepos`
+  to seed the backlog (cheap and complete — `plc.directory` has no "list DIDs on PDS X" API).
+  *Tail* polls `/export` from ~now for identity changes matching the criterion.
+- **Enrichment** attaches PLC-derivable context (handle, PDS host, rotation-key count, last-op
+  time, tombstoned) so 20k bare DIDs are legible. Throttled + cached; display-only.
+- **Cost readout**: anchored/pending counts, cumulative + average on-chain fee, so you measure a
+  small batch and extrapolate before scaling.
 
 ## Roster lifecycle
 
 ```
-candidate ──approve──▶ approved ──▶ onboarding ──▶ anchored{confirmed|tentative-consistent|diverged|absent}
-   ▲  │ (explicit add or filter match)      │ (ingest --submit)        │ (witness check, refreshed)
-   │  └─────────────── removed ◀────────────┴──────────────────────────┘
+candidate ──auto-approve──▶ approved ──▶ onboarding ──▶ anchored{confirmed|tentative-consistent|diverged|absent}
+   ▲  │ (criterion match / explicit add)   │ (ingest --submit, only when Active + within budget)   │ (witness check)
+   │  └──────────────── removed ◀──────────┴───────────────────────────────────────────────────────┘
    └── revive
 ```
 
-The **approve gate** is the cost guardrail: a dynamic filter only ever *proposes* a `candidate`;
-a human must approve before the onboarder writes on-chain. Transitions are validated
-(`ALLOWED_TRANSITIONS`), so a filter can never skip the gate.
+Discovery **auto-advances** a matched `candidate` to `approved` (the manual approve endpoint stays
+but the criterion UI doesn't use it). The **spend guardrail** is now the onboarder: it processes
+`approved` DIDs **only when Active**, up to the per-tick budget. `anchored` still means "present
+on-chain" however it got there. Transitions are validated (`ALLOWED_TRANSITIONS`).
 
 ## Layout
 
-- `src/types.ts` — roster/filter shapes + the lifecycle states.
-- `src/roster.ts` — the SQLite store (`node:sqlite`, zero deps) + the validated state machine.
+- `src/types.ts` — roster/settings/query shapes + the lifecycle states.
+- `src/roster.ts` — the SQLite store (`node:sqlite`, zero deps) + the validated state machine +
+  the paginated `query`/`aggregates` + persisted settings (Active toggle, budget, cursors).
+- `src/criterion.ts` — **net-new** membership criterion (`pds_domain:` domain-suffix match).
 - `src/pdshost.ts` — **net-new** PDS-host extraction (modern `plc_operation`, legacy `create`,
-  and resolved DID-doc shapes).
-- `src/refresh.ts` — status refresher over an injectable `StatusChecker` (testable without a
-  live anchor).
-- `src/onboard.ts` — drives `ingest --did --submit` over an injectable `CommandRunner`
-  (`approved → onboarding → anchored`, or back to `approved` on failure).
-- `src/discover.ts` — the filter discover-scan: polls a mirror's `/export`, matches `pds_host`,
-  upserts candidates (behind the approve gate).
-- `src/witness.ts` — the one binding to `@plc-anchor/witness` (isolated; loaded only at runtime).
+  resolved DID-doc).
+- `src/pds.ts` — PDS `listRepos` transport (enumeration backlog).
+- `src/discover.ts` — the two discovery workers: `EnumerationService` (listRepos → auto-approve)
+  and `TailService` (`/export` from ~now, criterion-filtered → auto-approve).
+- `src/enrich.ts` — identity enrichment (`identityFromLog` + a throttled/cached worker) over an
+  injectable resolver.
+- `src/onboard.ts` — drives `ingest --did --submit`; gated on **Active** + **budget**; captures
+  the tx hash + fee from ingest's `ANCHORED` line.
+- `src/fees.ts` — resolves a tx's `actual_fee` via `starknet_getTransactionReceipt`.
+- `src/refresh.ts` — status refresher over an injectable `StatusChecker`.
+- `src/witness.ts` — the bindings to `@plc-anchor/witness` (`WitnessChecker`, `DirectoryResolver`;
+  isolated, loaded only at runtime).
 - `src/server.ts` — framework-free `node:http` API.
-- `src/main.ts` — entry point: API + the worker loops.
+- `src/main.ts` — entry point: API + the enumerate/tail/enrich/onboard/refresh worker loops.
 
 ## API
 
 | Method | Path | Does |
 |---|---|---|
-| GET | `/healthz` | liveness, contract address, `writeMode`, counts (incl. diverged) |
+| GET | `/healthz` | liveness, contract, `criterion`, `writeMode`, `active`, counts |
 | POST | `/auth/login` | exchange `{secret}` for a short-lived session `{token, expiresAt}` |
-| GET | `/roster` | list all entries |
+| GET | `/roster` | **paginated/filtered/sorted** grid → `{rows, total}` (see below) |
+| GET | `/roster/aggregates` | counts by state+status, backlog, anchored, fee total/avg, active, cursors, **worker last-run status**, enrichment progress, off-criterion count |
 | GET | `/roster/diverged` | the alarm list |
 | POST | `/roster/dids` | add an explicit DID (`{did}`) → `candidate` |
 | GET | `/roster/dids/:did` | one entry |
-| POST | `/roster/dids/:did/approve` | `candidate → approved` (the gate) |
+| POST | `/roster/dids/:did/approve` | `candidate → approved` (manual; unused by the criterion UI) |
 | DELETE | `/roster/dids/:did` | → `removed` |
-| GET/POST | `/roster/filters` | list / add a `pds_host` filter (`{value}`) |
-| DELETE | `/roster/filters/:id` | remove a filter |
-| POST | `/worker/discover` | run one discover-scan now |
-| POST | `/worker/onboard` | onboard all approved DIDs now (writes on-chain) |
-| POST | `/worker/refresh` | check every active DID against the anchor now |
+| GET/POST | `/settings/active` | read / set the Active toggle (`{active, budget?}`) |
+| GET/PUT | `/settings` | read / patch the **live config** (below); `PUT` validates, 400 on bad input |
+| POST | `/worker/{enumerate,tail,enrich,onboard,refresh}` | kick a worker cycle now |
+| POST | `/worker/reconcile` | re-queue anchored/onboarding DIDs to re-anchor (after a contract switch) |
 
-The read-only loops (discover, refresh) run on timers; **onboarding never does** — it spends
-on-chain, so it is operator-triggered only (`POST /worker/onboard`), reinforcing the approve
-gate.
+`GET /roster` query params: `state`, `status`, `q` (substring over DID + handle), `pdsHost`,
+`offCriterion` (`1` = only the migration stragglers), `sort` (a column alias), `order`
+(`asc`/`desc`), `limit` (≤1000), `offset`. All loops run on timers; **onboarding is a no-op unless
+Active** (the spend gate), independent of its cadence.
+
+## Observability
+
+Fly's logs are thin, so the periodic worker runs are made visible in-app. Every worker run (timer
+*or* manual `/worker/*`) persists a last-run record — `{ running, lastRunAt, durationMs, ok,
+summary, error }` — to the store, surfaced in `/roster/aggregates.workers` and rendered as the UI's
+**Workers** panel (last run, duration, a live "running…" dot, a result summary like `queued 3004 ·
+complete`, and **the last error in red**). This is the main way to catch a worker that's failing —
+e.g. a refresh RPC error — without SSHing in.
+
+The dashboard also shows **enrichment progress** (`enrichment.{enriched,pending}`) and an
+**off-criterion** count: enrichment re-checks each DID's *authoritative* PDS host against the
+criterion (enumeration is criterion-blind and trusts the PDS's `listRepos`), and **flags** — never
+removes — DIDs whose host no longer matches (migration stragglers). Clicking the Off-criterion tile
+filters the grid to them (`GET /roster?offCriterion=1`). Handling them (remove, or re-scope the
+criterion) stays a manual, operator decision.
+
+To watch enumeration drain without the UI: `curl -s $HOST/roster/aggregates | jq
+'{workers:.workers.enumerate, enumerate:.cursors.enumerate}'`.
+
+## Cost tracking
+
+ingest emits a machine-readable `ANCHORED <did> tx=<hash>` line on stdout for each accepted tx;
+the onboarder captures the tip tx and resolves `actual_fee` via `STARKNET_RPC` (`src/fees.ts`),
+accumulating per-DID fee (genesis + appends). If the ingest build predates the `ANCHORED` line, it
+degrades to count-only. Fees are stored as raw decimal felt strings (STRK wei) and rolled up in
+`/roster/aggregates`.
+
+## Live settings (the ⚙ panel)
+
+Non-secret config is **runtime-editable** — no redeploy. The UI's **Settings** panel reads/writes
+`GET/PUT /settings`; edits persist in the store (`meta` KV, on the Fly volume) and take effect on
+the **next worker tick** (the loops re-read config each cycle, and cadence changes reschedule live
+via a self-scheduling timer). Editable fields: `criterion`, `pdsEndpoints`, `importBudget`, the
+four loop intervals (`0` disables a loop), `enrichBatch`/`enrichDelayMs`, `directoryUrl`/`mirrorUrl`
+(plus `active`, which is the header toggle). Validation is server-side (`src/settings.ts`): the
+criterion must parse, intervals/counts are non-negative integers, URLs must be well-formed.
+
+Precedence (low → high): hardcoded defaults ← optional `SETTINGS_DEFAULTS_FILE` (a committed JSON
+seed) ← **env** ← **persisted UI edits**. So env stays authoritative for any field nobody has
+touched, a committed file can carry deploy defaults, and a UI edit wins at runtime. **Boot-only and
+secret** config (`PORT`, `ROSTER_DB`, `ANCHOR_CONTRACT_ADDRESS`, `INGEST_COMMAND`, `STARKNET_RPC`,
+the account keys, `CONSOLE_ADMIN_TOKEN`) is **not** editable here — it stays in env and is surfaced
+**read-only** in the panel (presence booleans + non-secret identifiers only; secret *values* are
+never returned). Changing the criterion re-scopes membership going forward but does not auto-remove
+DIDs that no longer match; swapping PDS endpoints leaves prior cursors/DIDs in place.
 
 ## Auth (write gate)
 
-This is **Layer-2 access control** — who may curate the roster / trigger the on-chain spend — and
-is deliberately separate from contract authorization, which stays the op's embedded signature (the
-fee payer is irrelevant; REFERENCE.md §2). Gating the admin UI does not touch that property.
-
-The console is **fail-closed**. `/healthz.writeMode` is one of three states, and **all mutating
-routes** (every non-`GET` except `/auth/login`) obey it; **reads always stay open**:
+This is **Layer-2 access control** — who may curate the roster / flip Active / trigger the spend —
+and is deliberately separate from contract authorization, which stays the op's embedded signature
+(the fee payer is irrelevant; REFERENCE.md §2). The console is **fail-closed**.
+`/healthz.writeMode` is one of three states; **all mutating routes** (every non-`GET` except
+`/auth/login`) obey it; **reads always stay open**:
 
 | `writeMode` | When | Mutating routes |
 |---|---|---|
@@ -77,26 +148,30 @@ routes** (every non-`GET` except `/auth/login`) obey it; **reads always stay ope
 | `gated` | `CONSOLE_ADMIN_TOKEN` set | require a valid session |
 | `open` | `CONSOLE_ALLOW_OPEN_WRITES=1` and no token | allowed unauthenticated (dev/demo) |
 
-So a fresh deploy can change nothing until you set a secret — that's the point. To gate: set
-`CONSOLE_ADMIN_TOKEN` to a shared operator secret (`openssl rand -hex 32`). Clients then
-`POST /auth/login {secret}` for a short-lived HMAC-signed bearer token (`CONSOLE_SESSION_TTL_MS`,
-default 1h) and send it as `Authorization: Bearer <token>`. The token is stateless (an HMAC over
-its expiry), so there is no session store; a leaked request expires and the long-lived secret never
-rides on every call. The bundled UI shows an **Unlock** box when `writeMode` is `gated`, keeps the
-token in `sessionStorage`, and displays a "writes disabled" notice when `closed`. Run genuinely
-open only on purpose with `CONSOLE_ALLOW_OPEN_WRITES=1`.
+Set `CONSOLE_ADMIN_TOKEN` (`openssl rand -hex 32`); clients `POST /auth/login {secret}` for a
+short-lived HMAC-signed bearer token (`CONSOLE_SESSION_TTL_MS`, default 1h) sent as
+`Authorization: Bearer <token>`. The token is stateless (an HMAC over its expiry). Auth is a
+pluggable seam (`src/auth.ts`) — the shared-secret MVP can be swapped for "sign-in with Starknet"
+without touching the routes.
 
-Auth is a pluggable seam (`src/auth.ts`, `Authenticator`): the shared-secret MVP can be swapped for
-wallet-signature ("sign-in with Starknet") verification without touching the routes — only
-`login`/`verify` change. Behind Fly's TLS the bearer token never travels in cleartext.
+### Switching the anchor contract (redeploy / mainnet cutover)
+
+`anchored`/`onboarding` are **DB lifecycle** state — they record that a DID was written to a
+*specific* anchor contract, and are never re-derived from the chain on boot. So pointing
+`ANCHOR_CONTRACT_ADDRESS` at a new contract leaves those rows stale: the new contract's roster
+starts empty, yet the DB still counts them `anchored` (and refresh will show their `status` as
+`absent`). The console **reconciles automatically**: it records the anchor address, and on a boot
+where it changed, moves `anchored`/`onboarding` DIDs back to `approved` and clears the old
+tx/fee/anchored-at/status, so they re-onboard (re-import from genesis) to the new contract. There's
+also a manual **Reconcile** button / `POST /worker/reconcile` for on-demand use — **use it once**
+after the first deploy of this feature, since a DB that predates it has no recorded prior address
+and so won't auto-fire for the already-stale rows.
 
 ### Status reflects on-chain reality
 
 The refresher checks **every active (non-`removed`) roster DID** against the anchor via
-`@plc-anchor/witness`, not just ones the console onboarded. So a DID anchored **anywhere** —
-including via `ingest` directly — shows its real §4 status once you add it to the roster, and is
-promoted to `anchored` on observation (no write, so the approve gate is untouched). Workflow: set
-the Starknet secrets → **Add** the DID → it lights up with its Sepolia status. `absent` means the
+`@plc-anchor/witness`, not just ones the console onboarded — so a DID anchored **anywhere** shows
+its real §4 status and is promoted to `anchored` on observation (no write). `absent` means the
 anchor doesn't know it yet.
 
 ## Running
@@ -105,49 +180,54 @@ anchor doesn't know it yet.
 # Tests (Node-native TS; node:sqlite needs the flag):
 make console-test            # or: cd console && node --experimental-sqlite --test
 
-# Serve (refresh loop enabled only when STARKNET_RPC is set):
+# Serve the Eurosky MVP (refresh + fee lookup enabled when STARKNET_RPC is set):
+ROSTER_CRITERION=pds_domain:eurosky.social PDS_ENDPOINTS=https://eurosky.social \
 STARKNET_RPC=https://<sepolia-rpc> node --experimental-sqlite src/main.ts
 ```
 
-Env: `PORT` (8787), `ROSTER_DB` (`./roster.db`), `STARKNET_RPC` (enables the refresh loop),
-`ANCHOR_CONTRACT_ADDRESS` (default = the Sepolia deployment), `PLC_DIRECTORY_URL`
-(`https://plc.directory`), `REFRESH_INTERVAL_MS` (300000; 0 disables), `INGEST_COMMAND` (enables
-onboarding; set to `/usr/local/bin/ingest` in the Docker image), `CONSOLE_ADMIN_TOKEN` (gates
-writes; **unset = writes closed**), `CONSOLE_SESSION_TTL_MS` (session lifetime, default 3600000),
-`CONSOLE_ALLOW_OPEN_WRITES` (`1`/`true` to run open without a token), plus the ingest fee-payer
-secrets (`STARKNET_ACCOUNT_ADDRESS`, `STARKNET_ACCOUNT_PRIVATE_KEY`).
+Env (criterion-driven additions in **bold**):
+
+| Env | Meaning | Default |
+|---|---|---|
+| **`ROSTER_CRITERION`** | membership rule, e.g. `pds_domain:eurosky.social` (enables the tail) | (unset → tail off) |
+| **`PDS_ENDPOINTS`** | comma-sep PDS base URLs to enumerate | `https://eurosky.social` |
+| **`IMPORT_BUDGET_PER_TICK`** | max on-chain imports per onboard tick | `25` |
+| **`ACTIVE_DEFAULT`** | `1`/`true` to boot Active (spend on) | `false` |
+| **`ENUMERATE_INTERVAL_MS`** / **`TAIL_INTERVAL_MS`** / **`ENRICH_INTERVAL_MS`** | loop cadences (`0` disables) | `3600000` / `60000` / `30000` |
+| `STARKNET_RPC` | JSON-RPC (enables refresh + fee lookups) | (unset → refresh off) |
+| `ANCHOR_CONTRACT_ADDRESS` | anchor contract | the Sepolia deployment |
+| `PLC_DIRECTORY_URL` / `PLC_MIRROR_URL` | directory base / `/export` source | `https://plc.directory` |
+| `REFRESH_INTERVAL_MS` | status refresh + onboard cadence | `300000` |
+| `INGEST_COMMAND` | ingest argv (enables on-chain writes) | (unset → onboarding off) |
+| `PORT` / `ROSTER_DB` | HTTP port / SQLite path | `8787` / `./roster.db` |
+| `SETTINGS_DEFAULTS_FILE` | optional JSON file of default live settings (below env) | (none) |
+| `CONSOLE_ADMIN_TOKEN` / `CONSOLE_SESSION_TTL_MS` / `CONSOLE_ALLOW_OPEN_WRITES` | the write gate | closed |
+
+The **bold** rows only *seed* the live settings (see [Live settings](#live-settings-the--panel)) —
+once edited in the ⚙ panel, the stored value wins over env. The Active toggle, budget, and all
+cursors persist in the store, so a restart resumes mid-backlog and honours the last operator toggle
+(`ACTIVE_DEFAULT` only seeds the first boot).
 
 ## Deploy (Fly)
 
-Two apps: `site/` (static landing) and this console. The console image is **multi-stage** —
-stage 1 builds the Rust `ingest` binary (`--features live`) so the Onboard button works on Fly;
-stage 2 is the Node runtime with the console + `witness-ts`. Build context is the **repo root**:
+Two apps: `site/` (static landing) and this console. The console image is **multi-stage** — stage
+1 builds the Rust `ingest` binary (`--features live`) so onboarding works on Fly; stage 2 is the
+Node runtime with the console + `witness-ts`. Build context is the **repo root**:
 
 ```sh
 fly deploy --config console/fly.toml --dockerfile console/Dockerfile   # from repo root
-fly --config console/fly.toml secrets set STARKNET_RPC=… CONSOLE_ADMIN_TOKEN=… \
+fly --config console/fly.toml secrets set \
+    ROSTER_CRITERION=pds_domain:eurosky.social PDS_ENDPOINTS=https://eurosky.social \
+    STARKNET_RPC=… CONSOLE_ADMIN_TOKEN="$(openssl rand -hex 32)" \
     STARKNET_ACCOUNT_ADDRESS=0x… STARKNET_ACCOUNT_PRIVATE_KEY=0x…
 ```
 
-Without `STARKNET_RPC` the refresh loop is off (`[refresh] disabled`) and the console only curates
-policy — that's the usual cause of a live console that "isn't connected."
-
-**Enabling the write gate on Fly.** The console is fail-closed, so a fresh deploy refuses every
-change until you set the secret — no image rebuild needed, `secrets set` triggers a rolling
-restart and the gate is live on the next boot:
-
-```sh
-fly --config console/fly.toml secrets set CONSOLE_ADMIN_TOKEN="$(openssl rand -hex 32)"
-# optional: override the 1h session lifetime
-fly --config console/fly.toml secrets set CONSOLE_SESSION_TTL_MS=3600000
-```
-
-Verify: `curl -s https://<host>/healthz` shows `"writeMode":"gated"`, and an unauthenticated
-`curl -X POST https://<host>/roster/dids …` returns `401`. Boot logs show `[auth] writes CLOSED`
-until the secret is set. To run intentionally open (local/demo), set `CONSOLE_ALLOW_OPEN_WRITES=1`
-instead.
+**First activation must be cheap and measurable**: leave `ACTIVE_DEFAULT` off, set a small
+`IMPORT_BUDGET_PER_TICK` (e.g. 5), flip Active on in the UI, confirm ≤budget imports/tick and that
+`/roster/aggregates` shows the fee accruing, then scale the budget once the per-DID cost is known.
 
 ## Not yet here
 
-Mainnet repoint (a fresh contract deploy — see `scripts/deploy.sh` + `deployments/`) · cost
-allocation (paymaster/AA) · governance. The durable record lands in `docs/HISTORY.md`.
+Mutable/multi-criterion rosters · mainnet repoint (a fresh contract deploy — `scripts/deploy.sh` +
+`deployments/`) · cost allocation (paymaster/AA) · governance · bsky-appview enrichment
+(display names/avatars). The durable record lands in `docs/HISTORY.md`.

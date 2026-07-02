@@ -229,6 +229,9 @@ impl StarknetSink {
             match self.account.provider().get_transaction_receipt(hash).await {
                 Ok(receipt) => match receipt.receipt.execution_result() {
                     ExecutionResult::Succeeded => {
+                        // Machine-readable anchor line for the console (stdout, not stderr): one per
+                        // accepted tx. The console captures the hash and resolves the fee via RPC.
+                        println!("ANCHORED {did} tx={hash:#x}");
                         eprintln!("ingest: accepted {did} (tx {hash:#x})");
                         return Ok(());
                     }
