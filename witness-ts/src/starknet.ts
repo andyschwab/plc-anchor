@@ -7,6 +7,19 @@
 //!
 //! The witness only ever **reads** (`starknet_call`); it never builds a transaction. The pure
 //! codec (encode/decode) is separated from the network so it can be unit-tested offline.
+//!
+//! ## Trust boundary — the root is RPC-trusted (finding 4c)
+//!
+//! `starknet_call` at `block latest` returns whatever state the queried node *claims*; it is NOT
+//! accompanied by a proof against the L1-settled Starknet state root. The anchor's Merkle
+//! inclusion proof (verified in `merkle.ts`) proves *head ∈ root* — but the **root value itself
+//! comes from this RPC**, so a witness pointed at a single untrusted RPC trusts that RPC for the
+//! root. Non-equivocation is real at the settlement layer (Starknet has one canonical state,
+//! settled to Ethereum); exposing it *trustlessly* to a resolver would require verifying a
+//! Starknet **storage proof** against the L1 state root — deferred, Mode-2-adjacent infra. Until
+//! then: **run your own full node, or trust your RPC.** The "untrusted proof server" property
+//! (fetch the proof from anywhere) holds only once the *root* comes from a trusted/independent
+//! source; via one public RPC, root and proof share a trust domain. (REFERENCE.md §1; SECURITY-TODO 4c.)
 
 import { SELECTORS, type ViewName } from "./selectors.ts";
 import type { ProofStep } from "./merkle.ts";

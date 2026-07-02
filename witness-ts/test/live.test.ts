@@ -14,7 +14,7 @@ import { check } from "../src/status.ts";
 
 const RPC = process.env.WITNESS_LIVE_RPC;
 const CONTRACT =
-  process.env.WITNESS_LIVE_CONTRACT ?? "0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180";
+  process.env.WITNESS_LIVE_CONTRACT ?? "0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3";
 const skip = RPC ? false : "set WITNESS_LIVE_RPC to run the live read";
 
 test("live: the tentative root reads back as a 32-byte digest", { skip }, async () => {

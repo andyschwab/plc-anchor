@@ -356,6 +356,13 @@ const agedChain = [await rec(rGenesis, new Date(Date.now() - 100 * HOUR)), await
 await assertRejected("weaker-key-recovery", recentChain, recByK2);
 // Late recovery: valid key, but the disputed op is older than the 72h window.
 await assertRejected("late-recovery", agedChain, recByK0);
+// 4a — recovery of imported history. The SAME recovery on the real aged chain is rejected by the
+// oracle as late (opA's authored window closed), so rejecting it is correct. But the anchor stamps
+// imported ops with the import time, not their real authored time, so its late-recovery check
+// can't see that age — its in-contract defender is instead the provenance rule
+// (recovery-of-imported), proven in Cairo by tests::anchor::recovery_cannot_nullify_imported_history.
+// Same oracle fact, different in-contract defender depending on op provenance.
+await assertRejected("recovery-of-imported (oracle rejects on real age)", agedChain, recByK0);
 // Forged signature: a well-formed append whose signature has been tampered.
 await assertRejected("forged-signature", recentChain, forgedSig);
 
@@ -419,6 +426,27 @@ const writeScenarios = [
     },
     lesson:
       "Even the strongest key can't rewrite history indefinitely. Once an op has survived the 72h window it is immutable, and a fork below it is rejected (`late-recovery`). This is the window that makes the confirmed tier meaningful — and it's enforced on the directory-assigned clock, the same input PLC uses.",
+  },
+  {
+    id: "recovery-of-imported",
+    title: "Recovery of imported history — a rotated-out key exploits the import-time clock (4a)",
+    threat:
+      "The 4a capture. A DID's history is IMPORTED (settled backfill), and the anchor stamps every op with the import time — not its real authored time (`createdAt` is not in the signed op). So for 72h after onboarding the whole history looks freshly authored. A higher-priority rotation key that was long ago ROTATED AWAY — the custodial→self-hosted migration leaves exactly such a key, no longer the DID's controller — forks below the real history and nullifies it, capturing the anchored DID inside that window.",
+    class: "write",
+    proposed: [
+      `forks at genesis on ${rDid}, nullifying opA — an IMPORTED op whose REAL createdAt is >72h old (its recovery window closed long ago)`,
+      "signed by a strictly-higher-priority key (index 0) — in the field, a rotated-out custodial key no longer controlling the DID",
+      "the anchor's import-time stamp makes opA look fresh, so the 72h late-recovery check ALONE would accept this and let the DID be captured",
+    ],
+    verdict: {
+      rejected: true,
+      reason: "recovery-of-imported",
+      defender: "plc_core::state::apply_op (in-contract)",
+      provenance:
+        "Two-part. (1) On the REAL aged chain, `@did-plc/lib` `assureValidNextOp` rejects this recovery as late (opA's authored window closed) — so rejecting it is correct, and this generator throws if the oracle ever accepts it. (2) The anchor cannot see that age — it stamped opA at import time — so its in-contract defender is the provenance rule, not the window check: `state::apply_op` refuses a recovery that nullifies an imported op. Proven by `plc_core::tests::anchor::recovery_cannot_nullify_imported_history`, contrasted with `recovery_through_contract` where a LIVE-observed opA (honest block-time clock) remains recoverable.",
+    },
+    lesson:
+      "The 72h late-recovery check has a blind spot: it measures against the anchor's clock, which for backfilled history is the import time, not the op's real authored time. That blind spot IS the 4a capture — a rotated-out higher-priority key re-opening a window that closed years ago. The fix marks imported ops SETTLED (a recovery may not nullify them), so the window is honored only for live-observed ops whose block-time stamp approximates their real authored time. Onboarding via `import` (not op-by-op `submit_op`) is what preserves that provenance. (SECURITY-TODO 4a.)",
   },
   {
     id: "integrity-mismatch",

@@ -59,11 +59,12 @@ with `make test-snforge`. See [cairo/TESTING.md](cairo/TESTING.md).
 
 ## Status
 
-**V1 (the witness) is feature-complete and offline-green**, and the `anchor` contract is
-deployed to Sepolia (`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180`).
-Build-order items 1–5 (`REFERENCE.md` §3) have landed, each differential-green against the
-reference implementations, and the [adversarial suite](docs/ADVERSARIAL-REPORT.md) validates
-the design against attack/fork cases. Remaining to call V1 fully "live": re-import DIDs onto the
-fresh roster and run the gated Sepolia reads — see the bring-up checklist in
-[docs/HISTORY.md](docs/HISTORY.md). Next major milestone (deferred): item 6 — the Layer-2
-admin/user tool and governance.
+**V1 (the witness) is feature-complete and offline-green.** Build-order items 1–5
+(`REFERENCE.md` §3) have landed, each differential-green against the reference implementations,
+and the [adversarial suite](docs/ADVERSARIAL-REPORT.md) validates the design against attack/fork
+cases. The **post-4a** `anchor` contract is deployed to Sepolia
+(`0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3`,
+[deployments/sepolia.json](deployments/sepolia.json); it supersedes the pre-4a `0x00816c…`).
+Remaining to call V1 fully "live": re-import DIDs onto the fresh (empty) roster and run the gated
+Sepolia reads — see the bring-up checklist in [docs/HISTORY.md](docs/HISTORY.md). Next major
+milestone (deferred): item 6 — the Layer-2 admin/user tool and governance.
