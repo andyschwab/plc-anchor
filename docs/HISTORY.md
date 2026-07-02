@@ -96,7 +96,8 @@ pinned core needs only `node:crypto`.
 
 - `anchor`'s `tentative_proof` / `confirmed_proof` views (reuse `merkle_proof`); the contract
   isn't upgradeable, so this shipped as a fresh Sepolia deploy
-  (`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180`).
+  (`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180` — **note: pre-4a; see the
+  4a fix below, redeploy required**).
 - `src/merkle.ts` — the resolver-side `verifyProof`, **byte-identical to `merkle.cairo`**,
   pinned via the shared `gen-merkle-vectors` fixture (one source, two consumers; CI drift-gated).
 - `src/starknet.ts` (hand-encoded `starknet_call` reads; selectors precomputed via
@@ -203,11 +204,12 @@ capture window — the unsafe direction — so it was rejected. The firehose/ros
 *tailing* already-onboarded DIDs from a recent cursor; using it to backfill ancient history
 would live-stamp it and is a documented operational foot-gun, not the sanctioned onboarding path.
 
-**Status:** contract + tests + ingest landed and Rust-green (`cargo test -p ingest`, clippy
-`-D warnings`). The Cairo suite (`make cairo-test`) must be run on a Scarb-equipped box / CI —
-it could not be executed in the authoring sandbox (no Scarb; the network policy blocks its
-installer). Verify before the fresh **mainnet** deploy (the storage-layout change — `StoredOp`
-gains `imported` — is fine on a fresh deploy; migration = re-import from genesis).
+**Status:** landed and green — Cairo (`make cairo-test`: 54 `plc_core` tests incl.
+`recovery_cannot_nullify_imported_history`, with `recovery_through_contract` still passing),
+Rust (`cargo test -p ingest`, clippy `-D warnings`), and the adversarial scenario
+`recovery-of-imported`. **Redeploy required:** the `StoredOp` layout changed (gains `imported`),
+so the current Sepolia deployment (`0x00816c…`) predates this fix and must be redeployed before
+any live/mainnet bring-up — migration is re-import from genesis, the already-proven path.
 
 ---
 
@@ -231,8 +233,10 @@ gains `imported` — is fine on a fresh deploy; migration = re-import from genes
 
 ## Live-bring-up checklist (V1)
 
-To call V1 "live" on the fresh Sepolia deployment: re-import DID(s) onto the roster
-(`ingest --did … --submit`), point the `ANCHOR_CONTRACT_ADDRESS` secret at the deployed
-address, and run the gated live reads (`WITNESS_LIVE_RPC=… make adversarial-live` and
-`witness-ts/test/live.test.ts`). The confirmed-`diverged` headline needs a DID anchored ≥72h
+To call V1 "live": first **redeploy the anchor** (the recorded `0x00816c…` predates the 4a fix),
+then update the contract address in the code defaults (`witness-ts/src/cli.ts`,
+`console/src/main.ts`, the live-test defaults) and the `ANCHOR_CONTRACT_ADDRESS` secret. Then
+re-import DID(s) onto the roster (`ingest --did … --submit`) and run the gated live reads
+(`WITNESS_LIVE_RPC=… make adversarial-live` and `witness-ts/test/live.test.ts`). The
+confirmed-`diverged` headline needs a DID anchored ≥72h
 ahead so it has an immutable confirmed head.
