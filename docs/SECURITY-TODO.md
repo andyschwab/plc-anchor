@@ -2,14 +2,17 @@
 
 Findings from the June 2026 internal security audit. Ordered by priority; items 1–2 are the
 only ones that meaningfully affect security properties. Items 3–6 are resilience/quality
-improvements. Finding **4a** (below) is a later, higher-severity finding from the July 2026
-design review — a write-path capture, not a read-path suppression like item 1.
+improvements. Findings **4a–4c** (below) are later findings from the July 2026 design review:
+4a a write-path capture (fixed), 4b/4c read-path trust boundaries (documented).
 
 **Status (2026-07-02):** items 1–6 done (item 1 HIGH — the witness re-derives `nullified`
-locally, differential-green vs `@did-plc/lib`). **Finding 4a (CRITICAL, below): fix landed on
+locally, differential-green vs `@did-plc/lib`). **Finding 4a (CRITICAL): fix landed on
 `claude/project-analysis-risk-oudg4u`** — imported history is now marked *settled* on-chain
 (a recovery may not nullify it) and ingest onboards via the settled `import` chain. Rust-green;
-the Cairo suite must be run on CI / a Scarb box before the mainnet deploy.
+the Cairo suite must be run on CI / a Scarb box before the mainnet deploy. **Findings 4b (LOW)
+and 4c (MEDIUM): documented, not code-fixed** — 4b is faithful PLC reproduction (changing it
+would fork the oracle); 4c's real fix (Starknet storage proofs against the L1 state root) is
+deferred Mode-2 infra, with interim run-your-own-node guidance recorded.
 
 ---
 
@@ -60,6 +63,66 @@ quo, never to capture; live-stamping the tail to avoid it would re-open a bounde
 (the unsafe direction) and was rejected. Follow-up: the firehose/roster path can still live-stamp
 ancient history if pointed at old data — an operational foot-gun to fence off (onboard via
 `--did`/`import`; tail from a recent cursor).
+
+---
+
+## 4b. Read-side recovery window trusts directory `createdAt` — LOW / documented  *(no fix — faithful PLC)*
+
+**Files:** `witness-ts/src/directory.ts` (`deriveLiveChain`), `witness-ts/src/status.ts`
+
+To re-derive which of several validly-signed forks the directory's log presents as *live*, the
+witness evaluates the 72h recovery window using the directory-asserted `createdAt`. A hostile
+mirror could lie about `createdAt` to re-time a fork (in-window ⇄ late), steering the derived
+live head.
+
+**Why this is documented, not fixed.** This is **faithful reproduction of PLC**, not trust the
+witness adds. `@did-plc/lib`'s `assureValidNextOp` measures the window against
+`firstNullified.createdAt` — the same directory-assigned clock — so every conformant resolver
+already depends on it (verified in `@did-plc/lib/dist/index.js`: `timeLapsed = Date.now() -
+firstNullified.createdAt`). Changing the witness's behavior would **fork** this consensus-critical
+re-derivation from the oracle (CLAUDE.md guardrail). The dependency is bounded:
+
+- **Signatures gate everything.** A fork the clock could promote must still be validly signed by
+  a strictly-higher-priority rotation key; a lying clock cannot conjure a head from nothing.
+- **The anchor is the independent backstop.** The anchor's confirmed head is computed on-chain
+  from **block time**, not the directory clock; `status.ts` cross-checks the derived live head
+  against it. A mirror lying to move its served head *away* from the anchor's confirmed head only
+  trips the alarm — the §0-safe direction.
+- **Residual.** A MITM mirror could induce a *false* `diverged` only if a real
+  higher-priority-key-signed fork already exists below the confirmed head AND it back-dates that
+  fork past the skew horizon — a narrow case, and no more power than a transport attacker already
+  has (it can withhold or wholesale-forge the log). No capture.
+
+**Resolution:** documented in `REFERENCE.md` §1 (read-path trust) and in code (`deriveLiveChain`);
+behavior intentionally left byte-identical to the oracle.
+
+---
+
+## 4c. Witness reads trust the Starknet RPC for the root — MEDIUM / documented  *(fix deferred: storage proofs)*
+
+**Files:** `witness-ts/src/starknet.ts` (`httpCall`/`AnchorReader`), `witness-ts/src/status.ts`,
+`cairo/packages/plc_core/src/anchor.cairo` (proof-view docs)
+
+The witness reads the anchor root + inclusion proof via `starknet_call` at `block latest`. The
+Merkle proof proves *head ∈ root*, but the **root value itself is whatever the RPC returns** — it
+is not accompanied by a proof against the L1-settled Starknet state root. So a witness pointed at
+a single untrusted RPC trusts that RPC, and the "proof server stays untrusted / independently
+fetched root" framing holds only when the *root* comes from a trusted/independent source. This
+also bounds the **non-equivocation** claim: it is real at the settlement layer (Starknet has one
+canonical state, proven and settled to Ethereum), but a *dishonest RPC* can still show different
+resolvers different roots — the chain's single-state guarantee is only surfaced trustlessly if the
+witness verifies it.
+
+**Fix (deferred — Mode-2-adjacent infra):** verify a **Starknet storage proof** for the anchor's
+storage against the **L1-settled state root** (read the Starknet core contract on Ethereum L1 +
+`pathfinder_getProof`-style Merkle-Patricia proof), so the root is cryptographically tied to L1
+finality rather than an RPC's word. Substantial; consistent with the off-chain-prover deferral
+(HISTORY.md open follow-ups).
+
+**Interim guidance (documented now):** **run your own full node, or trust your RPC** (optionally
+cross-check the root across independent RPCs). Recorded in `REFERENCE.md` §1 (read-path trust),
+`witness-ts/src/starknet.ts`, and the `anchor.cairo` proof-view docs. Tracked as a follow-up in
+`docs/HISTORY.md`.
 
 ---
 

@@ -65,8 +65,11 @@ pub trait IAnchor<TContractState> {
     /// Inclusion proof for `did`'s **tentative** head against `tentative_root()`: returns
     /// `(head_cid, steps)`. A resolver rebuilds the leaf as `sha256(0x00 ‖ did ‖ head_cid)`
     /// and walks `steps` to recompute the root, comparing it to a `tentative_root()` it
-    /// fetched independently (the proof server stays untrusted). Returns `("", [])` if `did`
-    /// is not anchored. The proof is root-specific — use this against the tentative root only.
+    /// fetched independently — the proof server stays untrusted **so long as the root comes from
+    /// a trusted/independent source** (finding 4c: the proof shows head ∈ root, not root = true
+    /// state; via a single `starknet_call` RPC, root and proof share one trust domain — a
+    /// trustless read needs a storage proof against the L1-settled state root). Returns
+    /// `("", [])` if `did` is not anchored. Root-specific — use this against the tentative root only.
     fn tentative_proof(self: @TContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>);
     /// Inclusion proof for `did`'s **confirmed** head against `confirmed_root()`. Returns
     /// `("", [])` if `did` has no confirmed head yet (all ops still within the 72h window).

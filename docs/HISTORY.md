@@ -222,6 +222,12 @@ gains `imported` — is fine on a fresh deploy; migration = re-import from genes
   MVP itself has landed (above).
 - **Generalization seam** (`REFERENCE.md` §5a) — the `merkle` leaf is separator-less, sound only
   because did:plc is fixed-width; add a length prefix *before* admitting variable-width subjects.
+- **Trustless root reads (SECURITY-TODO 4c)** — the witness reads the anchor root via
+  `starknet_call`, which trusts the RPC; a fully trustless read verifies a **Starknet storage
+  proof against the L1-settled state root** (read the Starknet core contract on Ethereum +
+  Merkle-Patricia storage proof). Mode-2-adjacent infra; interim guidance is run-your-own-node /
+  trust-your-RPC. (4b — the read-side recovery window's use of directory `createdAt` — is faithful
+  PLC reproduction and is documented, not a follow-up.)
 
 ## Live-bring-up checklist (V1)
 
