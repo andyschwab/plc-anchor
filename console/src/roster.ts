@@ -89,10 +89,6 @@ CREATE TABLE IF NOT EXISTS roster (
 );
 CREATE INDEX IF NOT EXISTS roster_state_idx    ON roster(state);
 CREATE INDEX IF NOT EXISTS roster_status_idx   ON roster(status);
-CREATE INDEX IF NOT EXISTS roster_handle_idx   ON roster(handle);
-CREATE INDEX IF NOT EXISTS roster_pdshost_idx  ON roster(pds_host);
-CREATE INDEX IF NOT EXISTS roster_anchored_idx ON roster(anchored_at);
-CREATE INDEX IF NOT EXISTS roster_enriched_idx ON roster(enriched_at);
 CREATE TABLE IF NOT EXISTS filters (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   type       TEXT NOT NULL,
@@ -105,6 +101,16 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+`;
+
+/** Indexes on columns added after the initial schema. Created **after** `#migrate()` — on a
+ * pre-existing DB the `CREATE TABLE IF NOT EXISTS` above is a no-op, so these columns don't exist
+ * until the migration adds them (indexing them in `SCHEMA` would crash with "no such column"). */
+const POST_MIGRATE_INDEXES = `
+CREATE INDEX IF NOT EXISTS roster_handle_idx   ON roster(handle);
+CREATE INDEX IF NOT EXISTS roster_pdshost_idx  ON roster(pds_host);
+CREATE INDEX IF NOT EXISTS roster_anchored_idx ON roster(anchored_at);
+CREATE INDEX IF NOT EXISTS roster_enriched_idx ON roster(enriched_at);
 `;
 
 /** Columns added after the initial schema. Applied idempotently to pre-existing DBs so a
@@ -209,6 +215,9 @@ export class RosterStore {
     this.#now = now;
     this.#db.exec(SCHEMA);
     this.#migrate();
+    // Indexes on the migrated columns must come after the ALTERs above (they don't exist on a
+    // pre-existing DB until the migration adds them).
+    this.#db.exec(POST_MIGRATE_INDEXES);
   }
 
   /** Add any post-initial columns missing from a pre-existing DB (idempotent). `CREATE TABLE IF
