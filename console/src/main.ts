@@ -136,6 +136,21 @@ function summarize(name: string, result: unknown): string {
   }
 }
 
+/** A readable one-line error string that unwraps `err.cause`. Node's `fetch` (undici) throws a
+ * bare `TypeError: fetch failed` and hides the real reason (`ENOTFOUND` / `ECONNREFUSED` / a TLS
+ * error) on `.cause`; without this the UI can only ever show "fetch failed". Appends the cause's
+ * `code`/message when it adds signal the top-level message doesn't already carry. */
+function describeError(err: unknown): string {
+  const base = err instanceof Error ? err.message : String(err);
+  const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
+  if (cause === undefined || cause === null) return base;
+  const code = typeof (cause as { code?: unknown }).code === "string" ? (cause as { code: string }).code : null;
+  const msg = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : null;
+  const detail = [code, msg && msg !== code ? msg : null].filter(Boolean).join(": ");
+  if (!detail || base.includes(detail)) return base;
+  return `${base} (${detail})`;
+}
+
 /** Wrap a worker action so every run (timer *or* manual `/worker/*`) persists its status — start,
  * duration, result summary, and any error — making the otherwise-invisible loops observable. */
 function instrument(name: string, fn: () => Promise<unknown>): () => Promise<unknown> {
@@ -152,7 +167,7 @@ function instrument(name: string, fn: () => Promise<unknown>): () => Promise<unk
     } catch (err) {
       store.setWorkerStatus(name, {
         running: false, lastRunAt: Date.now(), durationMs: Date.now() - t0,
-        ok: false, error: err instanceof Error ? err.message : String(err),
+        ok: false, error: describeError(err),
       });
       throw err;
     }

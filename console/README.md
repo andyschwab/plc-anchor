@@ -93,9 +93,13 @@ Active** (the spend gate), independent of its cadence.
 Fly's logs are thin, so the periodic worker runs are made visible in-app. Every worker run (timer
 *or* manual `/worker/*`) persists a last-run record — `{ running, lastRunAt, durationMs, ok,
 summary, error }` — to the store, surfaced in `/roster/aggregates.workers` and rendered as the UI's
-**Workers** panel (last run, duration, a live "running…" dot, a result summary like `queued 3004 ·
-complete`, and **the last error in red**). This is the main way to catch a worker that's failing —
-e.g. a refresh RPC error — without SSHing in.
+**Workers** panel (last run, duration, a per-worker status dot — pulsing while running, green on
+success, red on failure — a result summary like `queued 3004 · complete`, and **the last error in
+red with a plain-English hint**). Errors unwrap the real cause: `instrument()` (`src/main.ts`)
+folds `err.cause` into the stored message, so a bare `fetch failed` becomes e.g. `fetch failed
+(ENOTFOUND …)` / `listRepos <host>: HTTP 403`, and the UI maps common causes (DNS, connection
+refused, 403, timeout, TLS) to an operator-facing hint. This is the main way to catch a worker
+that's failing — e.g. a blocked PDS enumerate or a refresh RPC error — without SSHing in.
 
 The dashboard also shows **enrichment progress** (`enrichment.{enriched,pending}`) and an
 **off-criterion** count: enrichment re-checks each DID's *authoritative* PDS host against the
@@ -117,13 +121,24 @@ degrades to count-only. Fees are stored as raw decimal felt strings (STRK wei) a
 
 ## Live settings (the ⚙ panel)
 
-Non-secret config is **runtime-editable** — no redeploy. The UI's **Settings** panel reads/writes
-`GET/PUT /settings`; edits persist in the store (`meta` KV, on the Fly volume) and take effect on
-the **next worker tick** (the loops re-read config each cycle, and cadence changes reschedule live
-via a self-scheduling timer). Editable fields: `criterion`, `pdsEndpoints`, `importBudget`, the
-four loop intervals (`0` disables a loop), `enrichBatch`/`enrichDelayMs`, `directoryUrl`/`mirrorUrl`
-(plus `active`, which is the header toggle). Validation is server-side (`src/settings.ts`): the
-criterion must parse, intervals/counts are non-negative integers, URLs must be well-formed.
+Non-secret config is **runtime-editable** — no redeploy. **All** config lives in **one unified
+Settings panel** (the ⚙ button), grouped into *Spend* (`active`, `importBudget`), *Discovery*
+(`criterion`, `pdsEndpoints`, `mirrorUrl`), *Identity & enrichment* (`directoryUrl`, `enrichBatch`,
+`enrichDelayMs`), *Cadence* (the four `*IntervalMs`, with a live `= 1h · 0 disables` hint), and a
+read-only *Environment* group (the boot-only snapshot). The whole form saves through **one**
+`PUT /settings` with one **Save changes** button — `active`/`importBudget` are no longer a separate
+header mechanism (the header keeps only a read-only **Active** status badge that opens the panel).
+The panel is schema-driven and loads on page open, so it renders from the field schema and **can't
+silently blank**; a load failure shows an inline banner + Retry instead. Edits persist in the store
+(`meta` KV, on the Fly volume) and take effect on the **next worker tick** (the loops re-read config
+each cycle, and cadence changes reschedule live via a self-scheduling timer). Validation is
+server-side (`src/settings.ts`): the criterion must parse, intervals/counts are non-negative
+integers, URLs must be well-formed — a 400's reason is surfaced inline. (`POST /settings/active`
+remains for API/back-compat, but the UI no longer uses it.)
+
+The six **manual worker triggers** (enumerate/tail/enrich/onboard/refresh/reconcile) live in a
+collapsed **Advanced** disclosure under Spend & roster — the loops run them automatically; the
+buttons are there for on-demand kicks.
 
 Precedence (low → high): hardcoded defaults ← optional `SETTINGS_DEFAULTS_FILE` (a committed JSON
 seed) ← **env** ← **persisted UI edits**. So env stays authoritative for any field nobody has
