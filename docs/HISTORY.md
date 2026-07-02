@@ -96,8 +96,8 @@ pinned core needs only `node:crypto`.
 
 - `anchor`'s `tentative_proof` / `confirmed_proof` views (reuse `merkle_proof`); the contract
   isn't upgradeable, so this shipped as a fresh Sepolia deploy
-  (`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180` — **note: pre-4a; see the
-  4a fix below, redeploy required**).
+  (`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180` — **superseded by the
+  post-4a redeploy `0x01e3cd…`; see the 4a fix below**).
 - `src/merkle.ts` — the resolver-side `verifyProof`, **byte-identical to `merkle.cairo`**,
   pinned via the shared `gen-merkle-vectors` fixture (one source, two consumers; CI drift-gated).
 - `src/starknet.ts` (hand-encoded `starknet_call` reads; selectors precomputed via
@@ -207,9 +207,10 @@ would live-stamp it and is a documented operational foot-gun, not the sanctioned
 **Status:** landed and green — Cairo (`make cairo-test`: 54 `plc_core` tests incl.
 `recovery_cannot_nullify_imported_history`, with `recovery_through_contract` still passing),
 Rust (`cargo test -p ingest`, clippy `-D warnings`), and the adversarial scenario
-`recovery-of-imported`. **Redeploy required:** the `StoredOp` layout changed (gains `imported`),
-so the current Sepolia deployment (`0x00816c…`) predates this fix and must be redeployed before
-any live/mainnet bring-up — migration is re-import from genesis, the already-proven path.
+`recovery-of-imported`. **Redeployed:** the `StoredOp` layout changed (gains `imported`), so the
+pre-4a Sepolia instance (`0x00816c…`) was superseded by a fresh post-4a deploy
+(`0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3`, `deployments/sepolia.json`).
+The roster starts empty; re-import DIDs from genesis (the already-proven path).
 
 ---
 
@@ -233,10 +234,10 @@ any live/mainnet bring-up — migration is re-import from genesis, the already-p
 
 ## Live-bring-up checklist (V1)
 
-To call V1 "live": first **redeploy the anchor** (the recorded `0x00816c…` predates the 4a fix),
-then update the contract address in the code defaults (`witness-ts/src/cli.ts`,
-`console/src/main.ts`, the live-test defaults) and the `ANCHOR_CONTRACT_ADDRESS` secret. Then
-re-import DID(s) onto the roster (`ingest --did … --submit`) and run the gated live reads
-(`WITNESS_LIVE_RPC=… make adversarial-live` and `witness-ts/test/live.test.ts`). The
-confirmed-`diverged` headline needs a DID anchored ≥72h
+The post-4a anchor is deployed (`0x01e3cd…`, `deployments/sepolia.json`; the code defaults and
+`deployments/sepolia.json` already point at it). To call V1 "live": point the
+`ANCHOR_CONTRACT_ADDRESS` secret at it, re-import DID(s) onto the fresh (empty) roster
+(`ingest --did … --submit`), and run the gated live reads (`WITNESS_LIVE_RPC=… make
+adversarial-live` and `witness-ts/test/live.test.ts`). The confirmed-`diverged` headline needs a
+DID anchored ≥72h
 ahead so it has an immutable confirmed head.

@@ -14,10 +14,10 @@ outstanding work is the one deliberately deferred item (4c), tracked in `HISTORY
 | **4b** | LOW | The read-side recovery re-derivation (`deriveLiveChain`) evaluates the 72h window using the directory-asserted `createdAt`; a hostile mirror could re-time a fork. | **Documented, no code change — faithful PLC.** `@did-plc/lib`'s `assureValidNextOp` uses the same directory clock, so changing the witness would *fork* the consensus-critical oracle. Bounded: signatures gate every fork, and the anchor's independent **block-time** confirmed head is the cross-check. Detail: `REFERENCE.md` §1 (read-path trust); `directory.ts`. |
 | **4c** | MEDIUM | The witness reads the anchor root via `starknet_call`, trusting the RPC — the Merkle proof shows *head ∈ root*, not *root = true state*. | **Documented; real fix deferred.** Trustless reads require a **Starknet storage proof against the L1-settled state root** (Mode-2 infra; tracked in `HISTORY.md` follow-ups). Interim: run your own node, or trust your RPC. Detail: `REFERENCE.md` §1; `starknet.ts`; `anchor.cairo` proof-view docs. |
 
-**Deployment consequence of 4a.** The Sepolia contract recorded across the repo
-(`0x00816c…`) predates 4a — the `StoredOp` storage layout changed — so it must be **redeployed**
-to carry the fix (migration = re-import from genesis, the already-proven path). Do this before any
-live/mainnet bring-up.
+**Deployment consequence of 4a.** The `StoredOp` storage layout changed, so the pre-4a Sepolia
+instance (`0x00816c…`) was superseded by a fresh **post-4a redeploy**
+(`0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3`, `deployments/sepolia.json`;
+code defaults updated). The roster starts empty — re-import DIDs from genesis before live/mainnet.
 
 ## June 2026 internal audit (items 1–6)
 

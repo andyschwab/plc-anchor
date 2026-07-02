@@ -118,10 +118,9 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 
 Build order is dependency order, not priority order: the V1 *product* is the witness (item 5),
 built last because it stands on 1–4. **Items 1–5 have landed**, each differential-green against
-the references; the `anchor` contract is deployed to Sepolia
-(`0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180` — **predates the 4a fix;
-redeploy required** before live/mainnet, migration = re-import from genesis. See
-`docs/SECURITY-TODO.md` 4a).
+the references; the **post-4a** `anchor` contract is deployed to Sepolia
+(`0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3`, `deployments/sepolia.json`
+— supersedes the pre-4a `0x00816c…`). Roster starts empty on a fresh deploy; re-import DIDs.
 
 | # | Item | Where | Status |
 |---|---|---|---|
