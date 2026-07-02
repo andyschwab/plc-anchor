@@ -12,6 +12,31 @@ every phase ends in a **✅ confirm gate** you must satisfy before moving on.
 
 ---
 
+## Progress (2026-07-02) — PAUSED at Phase 4 pending rearchitecture decision
+
+The protocol is **live on Starknet mainnet** end-to-end. Phases 0–3 done; console
+productionization (4–8) deliberately **not started** — see why below.
+
+- **Phase 1 ✅** — `plc-mainnet` operator wallet live & funded (deployed tx `0x5d92f3e2…`).
+- **Phase 2 ✅** — `anchor` deployed: `0x04db57b605f64e9ffac02c423d864dfe37d8c40c8f18203a55a6c402cfc1d9aa`
+  (class `0x19a28cac…`), empty-root verified, `deployments/mainnet.json` committed (`0055484`).
+- **Phase 3 ✅** — canary `did:plc:rzeldxi4pe24uahas3z65wnp` anchored (tx `0x78e8fc85…`);
+  `witness check` → `tentative-consistent`; `make adversarial-live` green. **72h clock started
+  ~2026-07-02 17:20 UTC** → confirmed head ~2026-07-05 (Phase 8 validation).
+- **Secrets:** single local source of truth in `secrets/mainnet.env` (gitignored); operator key
+  stays only in the sncast accounts file. RPC = keyed Alchemy mainnet 0.10.x (verified `SN_MAIN`).
+
+**Why paused:** measuring real fees on-chain (receipt gas decomposition) showed **per-DID import
+cost ≈ 6.9 STRK/op and is ~100% Cairo *execution* gas — the in-contract signature verification —
+not storage/DA (which is ~free).** The full 18 991-DID roster would cost hundreds of thousands of
+STRK to *verify on-chain*, disproportionate for a backup witness. Before standing up the prod
+console + flipping `Active` on the full roster (Phases 4/7), we are evaluating a
+**verify-on-read rearchitecture** ([`ONCHAIN-REARCH-PLAN.md`](ONCHAIN-REARCH-PLAN.md)) that moves
+verification off the expensive on-chain path. The current mainnet contract stays live and correct
+meanwhile.
+
+---
+
 ## Target end-state
 
 Two isolated console environments, one static site. A Fly app has exactly **one**
