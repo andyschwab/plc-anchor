@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy deploy-sepolia wallet-create wallet-deploy wallet-info rust-build rust-test witness-test console-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-nullified-vectors gen-nullified-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy deploy-sepolia wallet-create wallet-deploy wallet-info rust-build rust-test witness-test console-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
 
 # Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
 # (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
@@ -66,6 +66,12 @@ gen-merkle-vectors: ## Regenerate the DID→head Merkle commitment vectors (Cair
 gen-merkle-vectors-check: gen-merkle-vectors ## Fail if either Merkle vector consumer drifted (CI gate)
 	git diff --exit-code -- cairo/packages/plc_core/tests/merkle_vectors_generated.cairo \
 		witness-ts/test/vectors/merkle-vectors.json
+
+gen-nullified-vectors: ## Regenerate the witness `deriveNullified` differential fixture (ground-truthed vs @did-plc/lib)
+	cd conformance && node src/gen-nullified-vectors.mjs
+
+gen-nullified-vectors-check: gen-nullified-vectors ## Fail if the witness nullified-derivation fixture drifted (CI gate)
+	git diff --exit-code -- witness-ts/test/vectors/nullified-vectors.json
 
 gen-selectors: ## Regenerate witness-ts Starknet selectors from the `starknet` crate (needs the `live` deps)
 	cargo run -p ingest --example gen_selectors --features live
@@ -156,7 +162,7 @@ fmt: ## Format Rust + Cairo
 	cargo fmt
 	cd cairo && scarb fmt
 
-ci: gen-vectors-check gen-plc-vectors-check gen-op-verify-vectors-check gen-recovery-vectors-check gen-merkle-vectors-check gen-adversarial-scenarios-check cairo-build cairo-test rust-test witness-test console-test adversarial-check conformance ## Everything CI runs
+ci: gen-vectors-check gen-plc-vectors-check gen-op-verify-vectors-check gen-recovery-vectors-check gen-merkle-vectors-check gen-nullified-vectors-check gen-adversarial-scenarios-check cairo-build cairo-test rust-test witness-test console-test adversarial-check conformance ## Everything CI runs
 
 clean: ## Remove build artifacts
 	cargo clean

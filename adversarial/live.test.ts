@@ -17,9 +17,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AnchorReader } from "../witness-ts/src/starknet.ts";
-import { type AuditEntry, DirectoryClient } from "../witness-ts/src/directory.ts";
+import { directoryHead, type AuditEntry, DirectoryClient, type LiveChain } from "../witness-ts/src/directory.ts";
 import { check } from "../witness-ts/src/status.ts";
 import { startMaliciousMirror } from "./mirror.ts";
+
+// Live transport/anchor test: the mirror serves stub ops keyed by CID (not full signed chains),
+// so it drives the ladder with a flag-based live derivation. The crypto re-derivation of
+// `nullified` is covered offline in witness-ts/test/nullified.test.ts.
+const flagLive = (log: readonly AuditEntry[]): LiveChain => ({
+  liveCids: new Set(log.filter((e) => !e.nullified).map((e) => e.cid)),
+  head: directoryHead(log),
+});
 
 const RPC = process.env.WITNESS_LIVE_RPC;
 const CONTRACT = process.env.WITNESS_LIVE_CONTRACT ?? "0x00816c0b5bbf26d186b78f6ec0e1a8f8ae94ad58fc69595e7b0a334417e5c180";
@@ -35,7 +43,7 @@ async function checkAgainstMirror(did: string, logsByDid: Map<string, AuditEntry
   const anchor = AnchorReader.http(RPC as string, CONTRACT);
   const mirror = await startMaliciousMirror(logsByDid);
   try {
-    return await check(did, anchor, new DirectoryClient(mirror.baseUrl));
+    return await check(did, anchor, new DirectoryClient(mirror.baseUrl), { deriveLive: flagLive });
   } finally {
     await mirror.close();
   }

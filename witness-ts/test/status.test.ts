@@ -6,8 +6,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { leafHash } from "../src/merkle.ts";
-import { type AuditEntry } from "../src/directory.ts";
+import { directoryHead, type AuditEntry, type LiveChain } from "../src/directory.ts";
 import { type AnchorView, check, type DirectorySource } from "../src/status.ts";
+
+// These rows isolate the status LADDER, driving it with stub ops and explicit `nullified` labels;
+// they inject a flag-based live derivation so the crypto re-derivation (tested in
+// nullified.test.ts) doesn't reject the stubs. The label IS the test input here.
+const flagLive = (log: readonly AuditEntry[]): LiveChain => ({
+  liveCids: new Set(log.filter((e) => !e.nullified).map((e) => e.cid)),
+  head: directoryHead(log),
+});
 
 const DID = "did:plc:ewvi7nxzyoun6zhxrhs64oiz";
 const NOW = Date.parse("2026-06-30T00:00:00Z");
@@ -41,7 +49,8 @@ const entry = (cid: string, createdAt: string, nullified = false): AuditEntry =>
 
 const fakeDirectory = (log: AuditEntry[]): DirectorySource => ({ auditLog: async () => log });
 
-const run = (anchor: AnchorView, dir: DirectorySource) => check(DID, anchor, dir, { now: () => NOW });
+const run = (anchor: AnchorView, dir: DirectorySource) =>
+  check(DID, anchor, dir, { now: () => NOW, deriveLive: flagLive });
 
 test("absent — DID not anchored", async () => {
   const r = await run(fakeAnchor({ anchored: false }), fakeDirectory([]));

@@ -1,0 +1,692 @@
+{
+  "_generated": "by conformance/src/gen-nullified-vectors.mjs — DO NOT EDIT. Run: make gen-nullified-vectors",
+  "_about": "Differential fixture for the witness's local re-derivation of PLC `nullified` (SECURITY-TODO item 1). Each scenario's live head + non-live CID set is ground-truthed vs @did-plc/lib assureValidNextOp. Hostile scenarios inject ops @did-plc/lib rejects; the witness must exclude them regardless of the served `nullified` flag.",
+  "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+  "scenarios": [
+    {
+      "id": "clean-chain",
+      "note": "genesis → opA → opB, all appends; nothing nullified.",
+      "auditLog": [
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+          "createdAt": "2026-06-21T16:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://nullified-demo.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": null,
+            "sig": "iSbNJ86_zDZBl0T3gwz9Ze8aaI-d3YdU173n37HYAt85pO8-YSSD1XH2K5yzC9rCOS83WTWpcMyINIXCGLAcxw"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+          "createdAt": "2026-06-25T20:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://a.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "rGqf3rwJpR9-Bsred-PjEQ993LNPeHyEKU4sLDbVzApLV1pzIiAJUjZAdDKbexSzaH9nvoB1J_Es8c2f1Tjeow"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreidq5swfjqa4gn3hddoydr4dvigvdpqmv7v5u2n5palvopy7ydfhu4",
+          "createdAt": "2026-06-25T21:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://b.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+            "sig": "LJBQyPrUuHedMuWI0_XV6MvhHg_xTgFCG8OglNI9yzNdHv8mbB3mf52RexJkKbZYzRrqmTfZqpSirBcdsXtSNQ"
+          }
+        }
+      ],
+      "expectedHeadCid": "bafyreidq5swfjqa4gn3hddoydr4dvigvdpqmv7v5u2n5palvopy7ydfhu4",
+      "expectedNullifiedCids": []
+    },
+    {
+      "id": "valid-recovery",
+      "note": "genesis → opA(k1), then a valid recovery(k0) forking at genesis within 72h → opA nullified.",
+      "auditLog": [
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+          "createdAt": "2026-06-21T16:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://nullified-demo.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": null,
+            "sig": "iSbNJ86_zDZBl0T3gwz9Ze8aaI-d3YdU173n37HYAt85pO8-YSSD1XH2K5yzC9rCOS83WTWpcMyINIXCGLAcxw"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+          "createdAt": "2026-06-25T20:00:00.000Z",
+          "nullified": true,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://a.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "rGqf3rwJpR9-Bsred-PjEQ993LNPeHyEKU4sLDbVzApLV1pzIiAJUjZAdDKbexSzaH9nvoB1J_Es8c2f1Tjeow"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreie7by6ithh65flk5ib6rlteqhed24uoi6utrrikfa3nsset53447u",
+          "createdAt": "2026-06-25T21:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://recovered.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "zi69mwdke4R0OTUunUFmw-glVoLFxHm_N_W8pucwtA1pA8UGbh1zx2x33TSJ-x1XpDt1SAXQ_PZSddVpCeNLJg"
+          }
+        }
+      ],
+      "expectedHeadCid": "bafyreie7by6ithh65flk5ib6rlteqhed24uoi6utrrikfa3nsset53447u",
+      "expectedNullifiedCids": [
+        "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i"
+      ]
+    },
+    {
+      "id": "hostile-weaker-key-recovery",
+      "note": "A mirror injects a weaker-key(k2) fork and claims it live; the witness must reject it and keep opA live.",
+      "auditLog": [
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+          "createdAt": "2026-06-21T16:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://nullified-demo.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": null,
+            "sig": "iSbNJ86_zDZBl0T3gwz9Ze8aaI-d3YdU173n37HYAt85pO8-YSSD1XH2K5yzC9rCOS83WTWpcMyINIXCGLAcxw"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+          "createdAt": "2026-06-25T20:00:00.000Z",
+          "nullified": true,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://a.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "rGqf3rwJpR9-Bsred-PjEQ993LNPeHyEKU4sLDbVzApLV1pzIiAJUjZAdDKbexSzaH9nvoB1J_Es8c2f1Tjeow"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreidvxci6sha7z4g3x3ivcz67yoyzobw2k7pvjctxbpd377gj7n33qq",
+          "createdAt": "2026-06-25T21:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://weak.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "gkkYr3uDGki-er7ZhhSwZR64NeQBzhTXJq1SdPOvIrweoophdQg1BikVJOiaBS5l-XnE8WX3qsihC6-UWRJJkA"
+          }
+        }
+      ],
+      "expectedHeadCid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+      "expectedNullifiedCids": [
+        "bafyreidvxci6sha7z4g3x3ivcz67yoyzobw2k7pvjctxbpd377gj7n33qq"
+      ]
+    },
+    {
+      "id": "hostile-late-recovery",
+      "note": "A mirror injects a valid-key(k0) recovery but the disputed op is >72h old; the witness must reject it (late).",
+      "auditLog": [
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+          "createdAt": "2026-06-21T16:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://nullified-demo.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": null,
+            "sig": "iSbNJ86_zDZBl0T3gwz9Ze8aaI-d3YdU173n37HYAt85pO8-YSSD1XH2K5yzC9rCOS83WTWpcMyINIXCGLAcxw"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+          "createdAt": "2026-06-25T20:00:00.000Z",
+          "nullified": true,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://a.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "rGqf3rwJpR9-Bsred-PjEQ993LNPeHyEKU4sLDbVzApLV1pzIiAJUjZAdDKbexSzaH9nvoB1J_Es8c2f1Tjeow"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreie7by6ithh65flk5ib6rlteqhed24uoi6utrrikfa3nsset53447u",
+          "createdAt": "2026-06-29T04:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://recovered.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "zi69mwdke4R0OTUunUFmw-glVoLFxHm_N_W8pucwtA1pA8UGbh1zx2x33TSJ-x1XpDt1SAXQ_PZSddVpCeNLJg"
+          }
+        }
+      ],
+      "expectedHeadCid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+      "expectedNullifiedCids": [
+        "bafyreie7by6ithh65flk5ib6rlteqhed24uoi6utrrikfa3nsset53447u"
+      ]
+    },
+    {
+      "id": "hostile-forged-append",
+      "note": "A mirror injects a forged (bad-sig) append and claims it live; the witness must reject it.",
+      "auditLog": [
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+          "createdAt": "2026-06-21T16:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://nullified-demo.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": null,
+            "sig": "iSbNJ86_zDZBl0T3gwz9Ze8aaI-d3YdU173n37HYAt85pO8-YSSD1XH2K5yzC9rCOS83WTWpcMyINIXCGLAcxw"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+          "createdAt": "2026-06-25T20:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://a.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "rGqf3rwJpR9-Bsred-PjEQ993LNPeHyEKU4sLDbVzApLV1pzIiAJUjZAdDKbexSzaH9nvoB1J_Es8c2f1Tjeow"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreiabac2hd5bd2zjbk5rrpu3gaie3l6wkpanhwrdgb4snmp3lv2xqnu",
+          "createdAt": "2026-06-25T21:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://b.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+            "sig": "LJBQyPrUuHedMuWI0_XV6MvhHg_xTgFCG8OglNI9yzNdHv8mbB3mf52RexJkKbZYzRrqmTfZqpSirBcdsXAAAA"
+          }
+        }
+      ],
+      "expectedHeadCid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+      "expectedNullifiedCids": [
+        "bafyreiabac2hd5bd2zjbk5rrpu3gaie3l6wkpanhwrdgb4snmp3lv2xqnu"
+      ]
+    },
+    {
+      "id": "tombstone-terminal",
+      "note": "genesis → opA → tombstone; the tombstone is the live head, nothing nullified.",
+      "auditLog": [
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+          "createdAt": "2026-06-21T16:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://nullified-demo.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": null,
+            "sig": "iSbNJ86_zDZBl0T3gwz9Ze8aaI-d3YdU173n37HYAt85pO8-YSSD1XH2K5yzC9rCOS83WTWpcMyINIXCGLAcxw"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+          "createdAt": "2026-06-25T20:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://a.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "rGqf3rwJpR9-Bsred-PjEQ993LNPeHyEKU4sLDbVzApLV1pzIiAJUjZAdDKbexSzaH9nvoB1J_Es8c2f1Tjeow"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreidnfpvv5agnuzkptnebu2jhezraqxv64rpx2wmurvlyg4abemezmi",
+          "createdAt": "2026-06-25T21:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_tombstone",
+            "prev": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+            "sig": "OH-82vjeFaMvDY1HrHwFSGx_0SZchCkJylu143oNu4BzqCK8aNcpNwLP1_mNq7gE43To-PE7Ci1TVnBoTwXxDg"
+          }
+        }
+      ],
+      "expectedHeadCid": "bafyreidnfpvv5agnuzkptnebu2jhezraqxv64rpx2wmurvlyg4abemezmi",
+      "expectedNullifiedCids": []
+    },
+    {
+      "id": "hostile-build-on-tombstone",
+      "note": "A mirror injects an op building on a tombstone and claims it live; the witness must reject it.",
+      "auditLog": [
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+          "createdAt": "2026-06-21T16:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://nullified-demo.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": null,
+            "sig": "iSbNJ86_zDZBl0T3gwz9Ze8aaI-d3YdU173n37HYAt85pO8-YSSD1XH2K5yzC9rCOS83WTWpcMyINIXCGLAcxw"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+          "createdAt": "2026-06-25T20:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://a.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreiho7e5shjjkqrdpghegunpfb3prwapaqxczbtpxajwu5lxwr2fjai",
+            "sig": "rGqf3rwJpR9-Bsred-PjEQ993LNPeHyEKU4sLDbVzApLV1pzIiAJUjZAdDKbexSzaH9nvoB1J_Es8c2f1Tjeow"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreidnfpvv5agnuzkptnebu2jhezraqxv64rpx2wmurvlyg4abemezmi",
+          "createdAt": "2026-06-25T21:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_tombstone",
+            "prev": "bafyreifwcyqldhj7jhwtc54es5cm7qpgvtj65j6jigqp6zyajalfgncq7i",
+            "sig": "OH-82vjeFaMvDY1HrHwFSGx_0SZchCkJylu143oNu4BzqCK8aNcpNwLP1_mNq7gE43To-PE7Ci1TVnBoTwXxDg"
+          }
+        },
+        {
+          "did": "did:plc:534twi5ffkcen4y4q2rv4uhn",
+          "cid": "bafyreibmnw45obh6y62zqjkf5uv2rbkht6p4ikzpaclpmmncuerj3stiki",
+          "createdAt": "2026-06-29T14:00:00.000Z",
+          "nullified": false,
+          "operation": {
+            "type": "plc_operation",
+            "verificationMethods": {
+              "atproto": "did:key:zQ3shhc3E5EPyVi1LuBVCdHsmRmoyPHrnWFVRZM7RFwZxAjrx"
+            },
+            "rotationKeys": [
+              "did:key:zQ3shjyJXUaRJC2GC43mX8aPrUhoTdoiongXhZjsdTzPKYZUM",
+              "did:key:zQ3shS9i8ufXsDMmNUWAzJDryVeJeQjh2cQNVA6Sc3r9W8wnv",
+              "did:key:zQ3shRUke9kEV715U9eWXBSYLw8TGmg2qm87uQidBGexviaFA"
+            ],
+            "alsoKnownAs": [
+              "at://after-grave.test"
+            ],
+            "services": {
+              "atproto_pds": {
+                "type": "AtprotoPersonalDataServer",
+                "endpoint": "https://pds.nullified.test"
+              }
+            },
+            "prev": "bafyreidnfpvv5agnuzkptnebu2jhezraqxv64rpx2wmurvlyg4abemezmi",
+            "sig": "rGqf3rwJpR9-Bsred-PjEQ993LNPeHyEKU4sLDbVzApLV1pzIiAJUjZAdDKbexSzaH9nvoB1J_Es8c2f1Tjeow"
+          }
+        }
+      ],
+      "expectedHeadCid": "bafyreidnfpvv5agnuzkptnebu2jhezraqxv64rpx2wmurvlyg4abemezmi",
+      "expectedNullifiedCids": [
+        "bafyreibmnw45obh6y62zqjkf5uv2rbkht6p4ikzpaclpmmncuerj3stiki"
+      ]
+    }
+  ],
+  "sigVectors": [
+    {
+      "note": "k256 valid low-S",
+      "didKey": "did:key:zQ3shWNsnPM9nHh7bgsA3EXqbY5dNZZPuMm95Eqqn2BcBCs15",
+      "unsignedHex": "a66470726576f664747970656d706c635f6f7065726174696f6e687365727669636573a16b617470726f746f5f706473a264747970657819417470726f746f506572736f6e616c4461746153657276657268656e64706f696e747668747470733a2f2f7064732e616c6963652e746573746b616c736f4b6e6f776e4173816f61743a2f2f616c6963652e746573746c726f746174696f6e4b6579738178396469643a6b65793a7a51337368574e736e504d396e4868376267734133455871625935644e5a5a50754d6d39354571716e324263424373313573766572696669636174696f6e4d6574686f6473a167617470726f746f78396469643a6b65793a7a51337368673971754b356e7674637771554e4d6666396f5438363454737148516a7162546d4a59444a726f44426e7633",
+      "sig": "IfGOcd4x8XF5WgwgbnQ5bODHk-NBbZGqY9xIQZNR_UsEhRMVtrfP8KcQTK0ZpbZyymjd1MFbq02MnM93r_1QRg",
+      "expectValid": true
+    },
+    {
+      "note": "p256 valid",
+      "didKey": "did:key:zDnaehvA6hBE9nQAuPUzL2R1TYSBnPaKfiM49YvbggRKTCYC2",
+      "unsignedHex": "a66470726576f664747970656d706c635f6f7065726174696f6e687365727669636573a16b617470726f746f5f706473a264747970657819417470726f746f506572736f6e616c4461746153657276657268656e64706f696e747668747470733a2f2f7064732e6361726f6c2e746573746b616c736f4b6e6f776e4173816f61743a2f2f6361726f6c2e746573746c726f746174696f6e4b6579738178396469643a6b65793a7a446e616568764136684245396e51417550557a4c325231545953426e50614b66694d34395976626767524b544359433273766572696669636174696f6e4d6574686f6473a167617470726f746f78396469643a6b65793a7a446e616551756b47724c3842655738776d717170526b4b5653374d56334d637139366b347a4d5773374e4e475a6d7575",
+      "sig": "KVAT5jPZuXfH4x9yeZHRAos7kGQMnNrz647km_qfUW3Q8bhB5g6JWV7JQN2R40-i-07wJQqaiGp2wQ4C9CJtYg",
+      "expectValid": true
+    },
+    {
+      "note": "k256 high-S must be rejected (low-S required)",
+      "didKey": "did:key:zQ3shWNsnPM9nHh7bgsA3EXqbY5dNZZPuMm95Eqqn2BcBCs15",
+      "unsignedHex": "a66470726576f664747970656d706c635f6f7065726174696f6e687365727669636573a16b617470726f746f5f706473a264747970657819417470726f746f506572736f6e616c4461746153657276657268656e64706f696e747668747470733a2f2f7064732e616c6963652e746573746b616c736f4b6e6f776e4173816f61743a2f2f616c6963652e746573746c726f746174696f6e4b6579738178396469643a6b65793a7a51337368574e736e504d396e4868376267734133455871625935644e5a5a50754d6d39354571716e324263424373313573766572696669636174696f6e4d6574686f6473a167617470726f746f78396469643a6b65793a7a51337368673971754b356e7674637771554e4d6666396f5438363454737148516a7162546d4a59444a726f44426e7633",
+      "sig": "IfGOcd4x8XF5WgwgbnQ5bODHk-NBbZGqY9xIQZNR_Uv7euzqSUgwD1jvs1LmWkmL8EX_Ee3s9O4zNY8VIDjw-w",
+      "expectValid": false
+    },
+    {
+      "note": "p256 high-S must be accepted (malleable)",
+      "didKey": "did:key:zDnaehvA6hBE9nQAuPUzL2R1TYSBnPaKfiM49YvbggRKTCYC2",
+      "unsignedHex": "a66470726576f664747970656d706c635f6f7065726174696f6e687365727669636573a16b617470726f746f5f706473a264747970657819417470726f746f506572736f6e616c4461746153657276657268656e64706f696e747668747470733a2f2f7064732e6361726f6c2e746573746b616c736f4b6e6f776e4173816f61743a2f2f6361726f6c2e746573746c726f746174696f6e4b6579738178396469643a6b65793a7a446e616568764136684245396e51417550557a4c325231545953426e50614b66694d34395976626767524b544359433273766572696669636174696f6e4d6574686f6473a167617470726f746f78396469643a6b65793a7a446e616551756b47724c3842655738776d717170526b4b5653374d56334d637139366b347a4d5773374e4e475a6d7575",
+      "sig": "KVAT5jPZuXfH4x9yeZHRAos7kGQMnNrz647km_qfUW3Q8bhB5g6JWV7JQN2R40-i-07wJQqaiGp2wQ4C9CJtYg",
+      "expectValid": true
+    },
+    {
+      "note": "wrong key rejected (p256 key against k256 op)",
+      "didKey": "did:key:zDnaehvA6hBE9nQAuPUzL2R1TYSBnPaKfiM49YvbggRKTCYC2",
+      "unsignedHex": "a66470726576f664747970656d706c635f6f7065726174696f6e687365727669636573a16b617470726f746f5f706473a264747970657819417470726f746f506572736f6e616c4461746153657276657268656e64706f696e747668747470733a2f2f7064732e616c6963652e746573746b616c736f4b6e6f776e4173816f61743a2f2f616c6963652e746573746c726f746174696f6e4b6579738178396469643a6b65793a7a51337368574e736e504d396e4868376267734133455871625935644e5a5a50754d6d39354571716e324263424373313573766572696669636174696f6e4d6574686f6473a167617470726f746f78396469643a6b65793a7a51337368673971754b356e7674637771554e4d6666396f5438363454737148516a7162546d4a59444a726f44426e7633",
+      "sig": "IfGOcd4x8XF5WgwgbnQ5bODHk-NBbZGqY9xIQZNR_UsEhRMVtrfP8KcQTK0ZpbZyymjd1MFbq02MnM93r_1QRg",
+      "expectValid": false
+    }
+  ]
+}

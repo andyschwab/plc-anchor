@@ -9,8 +9,14 @@
 //! `plc.directory` is the default, but any mirror (Eurosky, microcosm — REFERENCE.md §7) is a
 //! drop-in via `baseUrl`. The fetch transport is injectable so head selection is offline-testable.
 
+import { cidForOp, didForGenesisOp } from "./dagcbor.ts";
+import { readOp, verifyOpAuthorized } from "./opverify.ts";
+
 /** One entry of a DID's audit log: an op, its CID, the directory's timestamp, and whether a
- * later higher-priority op has nullified it (PLC recovery). */
+ * later higher-priority op has nullified it (PLC recovery). NOTE: `nullified` is the directory's
+ * *claim* — the witness discards it and re-derives nullification from the op contents
+ * (`deriveLiveChain` / `deriveNullified`), because a hostile directory can flip it (SECURITY-TODO
+ * item 1). It is retained only for diagnostics / the raw `directoryHead` view. */
 export interface AuditEntry {
   did: string;
   cid: string;
@@ -26,15 +32,134 @@ export interface DirectoryHead {
 }
 
 /**
- * The current head from an audit log: the last entry not nullified by a recovery. The log is
- * oldest-first, so scan from the end. `null` if the DID has no live op (empty log, or every op
- * nullified — e.g. a fully recovered-away branch).
+ * The head per the directory's *own* `nullified` claim: the last entry it doesn't flag nullified.
+ * This TRUSTS the directory and is used only for the raw diagnostic view (`DirectoryClient.head`);
+ * the witness's status check uses `deriveLiveChain`, which re-derives nullification from op
+ * contents rather than believing the flag (SECURITY-TODO item 1).
  */
 export function directoryHead(log: readonly AuditEntry[]): DirectoryHead | null {
   for (let i = log.length - 1; i >= 0; i -= 1) {
     if (!log[i].nullified) return { cid: log[i].cid, createdAt: log[i].createdAt };
   }
   return null;
+}
+
+// ── Locally re-derived nullification (SECURITY-TODO item 1) ──
+//
+// The `nullified` boolean from the HTTP response is untrusted: a hostile directory can flip it to
+// hide a live op (false `diverged`) or float a superseded/forged op as live (false
+// `confirmed`/`tentative-consistent`). So we discard it and reproduce PLC's recovery decision
+// from the op chain itself, mirroring the on-chain `state::apply_op` + `recovery::classify_next_op`
+// (byte-exact via `dagcbor`/`crypto`/`opverify`) and `@did-plc/lib`'s `assureValidNextOp`.
+
+/** 72h recovery window in ms — matches `recovery.cairo::RECOVERY_WINDOW_MS` / `@did-plc/lib`. */
+const RECOVERY_WINDOW_MS = 259_200_000;
+
+/** The re-derived live view of a DID's history: the CIDs on the currently-live chain (recomputed
+ * locally, never the directory's) and the live tip. */
+export interface LiveChain {
+  /** Locally-recomputed CIDs of the ops on the re-derived live chain. */
+  liveCids: Set<string>;
+  /** The live tip: its recomputed CID + the entry's directory `createdAt`. `null` if none. */
+  head: DirectoryHead | null;
+}
+
+/** One op on the re-derived live chain. `signerIndex` is the signer's priority index within its
+ * predecessor's rotation keys — the disputed-signer operand a later recovery needs (so a nullified
+ * op never has to be re-verified against a different key set), exactly `state.cairo`'s
+ * `OpRecord.signer_index`. */
+interface LiveOp {
+  cid: string;
+  createdAt: string;
+  rotationKeys: string[];
+  tombstone: boolean;
+  signerIndex: number;
+}
+
+/**
+ * Replay a directory audit log (oldest-first, INCLUDING nullified entries — the auditable form)
+ * to re-derive the currently-live chain, ignoring the directory's `nullified` claim entirely.
+ *
+ * For each op in order: recompute its CID, verify its embedded signature against the authorized
+ * key set (own keys for genesis, the fork-point op's keys otherwise), and — when it forks below
+ * the tip — apply PLC's recovery rule (a strictly-higher-priority key, within 72h of the first
+ * op it supersedes) to decide whether the fork is valid and what it nullifies. A structurally
+ * invalid, unauthorized, misordered, or out-of-window op cannot have been legitimately accepted,
+ * so replay stops there and everything from it on is treated as not-live.
+ *
+ * The 72h window is measured from the superseding op's own `createdAt` (the directory's
+ * acceptance-time clock — the same input PLC/`@did-plc/lib` used when it accepted the op), not the
+ * caller's wall clock, so a long-past valid recovery still reads as valid.
+ *
+ * `expectedDid`, when given, binds the log to a DID: the genesis op's derived `did:plc` fragment
+ * must match, else the directory served the wrong DID's history and nothing is live.
+ */
+export function deriveLiveChain(log: readonly AuditEntry[], expectedDid?: string): LiveChain {
+  const chain: LiveOp[] = [];
+
+  for (const entry of log) {
+    const op = readOp(entry.operation);
+    if (op === null) break; // not a structurally usable op
+
+    const cid = cidForOp(entry.operation);
+
+    if (chain.length === 0) {
+      // Genesis: prev must be null, self-authorized by its own rotation keys, and (if bound) its
+      // derived DID must be the one we asked for.
+      if (op.prev !== null) break;
+      const idx = verifyOpAuthorized(entry.operation, op.rotationKeys);
+      if (idx < 0) break;
+      if (expectedDid !== undefined && didForGenesisOp(entry.operation) !== expectedDid) break;
+      chain.push({ cid, createdAt: entry.createdAt, rotationKeys: op.rotationKeys, tombstone: op.tombstone, signerIndex: idx });
+      continue;
+    }
+
+    // Non-genesis: it must name a live op as `prev`.
+    if (op.prev === null) break; // a second genesis is malformed
+    const forkIndex = chain.findIndex((c) => c.cid === op.prev);
+    if (forkIndex < 0) break; // prev not on the live chain → misordered
+    const forkPoint = chain[forkIndex];
+    if (forkPoint.tombstone) break; // nothing may build on a tombstone
+
+    const signerIndex = verifyOpAuthorized(entry.operation, forkPoint.rotationKeys);
+    if (signerIndex < 0) break; // not signed by an authorized key
+    const nullifiedCount = chain.length - 1 - forkIndex;
+
+    if (nullifiedCount > 0) {
+      // Recovery: the proposed op forks below the tip, nullifying the ops after the fork point.
+      // Valid iff it out-ranks (strictly higher priority than) the FIRST nullified op's signer,
+      // and that op is within the 72h window (classify_next_op / assureValidNextOp).
+      const firstNullified = chain[forkIndex + 1];
+      if (signerIndex >= firstNullified.signerIndex) break; // recovery-weaker-key
+      const lapsed = Date.parse(entry.createdAt) - Date.parse(firstNullified.createdAt);
+      if (lapsed > RECOVERY_WINDOW_MS) break; // late-recovery (NaN ⇒ not late, matching the oracle)
+      chain.length = forkIndex + 1; // drop the nullified suffix
+    }
+
+    chain.push({ cid, createdAt: entry.createdAt, rotationKeys: op.rotationKeys, tombstone: op.tombstone, signerIndex });
+  }
+
+  const tip = chain[chain.length - 1];
+  return {
+    liveCids: new Set(chain.map((c) => c.cid)),
+    head: tip ? { cid: tip.cid, createdAt: tip.createdAt } : null,
+  };
+}
+
+/**
+ * The set of locally-recomputed CIDs the directory served that are NOT on the re-derived live
+ * chain — i.e. superseded by a valid recovery, or structurally invalid/unauthorized — regardless
+ * of the directory's `nullified` claim (SECURITY-TODO item 1). Keyed on recomputed CIDs, so a
+ * directory that also lies about an entry's `cid` cannot smuggle an op onto the live set.
+ */
+export function deriveNullified(log: readonly AuditEntry[]): Set<string> {
+  const { liveCids } = deriveLiveChain(log);
+  const nullified = new Set<string>();
+  for (const entry of log) {
+    const cid = cidForOp(entry.operation);
+    if (!liveCids.has(cid)) nullified.add(cid);
+  }
+  return nullified;
 }
 
 /** A `fetch`-shaped transport, injectable for tests. */

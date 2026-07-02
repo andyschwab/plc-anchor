@@ -12,9 +12,18 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProofStep } from "../witness-ts/src/merkle.ts";
-import type { AuditEntry } from "../witness-ts/src/directory.ts";
+import { directoryHead, type AuditEntry, type LiveChain } from "../witness-ts/src/directory.ts";
 import { type AnchorView, check, type CheckResult } from "../witness-ts/src/status.ts";
 import { MaliciousDirectory } from "./mirror.ts";
+
+// The scenario fixtures encode nullification via each entry's `nullified` label (the mirror's
+// served claim) rather than full signed recovery chains, so this suite drives the status ladder
+// with a flag-based live derivation. The witness's crypto re-derivation of `nullified` is covered
+// directly in witness-ts/test/nullified.test.ts.
+const flagLive = (log: readonly AuditEntry[]): LiveChain => ({
+  liveCids: new Set(log.filter((e) => !e.nullified).map((e) => e.cid)),
+  head: directoryHead(log),
+});
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(HERE, "scenarios.generated.json");
@@ -111,6 +120,7 @@ export async function runScenario(s: Scenario, fixture: Fixture): Promise<Scenar
   const actual = await check(s.anchor.did, anchorViewFor(s.anchor), new MaliciousDirectory(s.directory.auditLog), {
     now: () => fixture.now,
     skewHorizonMs: fixture.skewHorizonMs,
+    deriveLive: flagLive,
   });
   const pass = actual.status === s.expect.status && actual.reason === s.expect.reason;
   return { scenario: s, actual, pass };
