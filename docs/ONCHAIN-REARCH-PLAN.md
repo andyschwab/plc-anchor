@@ -1,6 +1,8 @@
 # On-chain rearchitecture plan — verify-on-read (RFC)
 
-**Status: ADOPTED (2026-07-02) — implemented, offline-green, pending v2 Sepolia→mainnet deploy.**
+**Status: ADOPTED & SHIPPED (2026-07-03).** Implemented, `make ci`-green, and deployed v2 to
+Sepolia (`0x06b16c52…`) and mainnet. Measured Sepolia import ≈ 2.33 STRK (~11.8× under the
+pre-rearch 27.6 STRK; see §7). Remaining cost mitigations are tracked follow-ups (§7), not blockers.
 This deliberately **reopened a `REFERENCE.md`-settled decision** ("verification runs as a Starknet
 contract"; "crypto is a corelib library call" — REFERENCE.md §1/§2/§8, echoed in `CLAUDE.md` *Do
 NOT relitigate*), driven by the measured mainnet cost evidence below. `REFERENCE.md` and `CLAUDE.md`
@@ -183,8 +185,32 @@ recovery-of-imported and equivocation/garbage cases).
   the `deriveAnchor` seam; write scenarios reframed (defender = read-side re-derivation);
   `anchor-self-fault` reframed (corrupt on-chain log ⇒ no confirmed head ⇒ tentative-consistent).
 
-**Open follow-ups (non-blocking):** delete the now-off-path Cairo `merkle`/`op_verify`/… modules +
-their `gen-merkle-vectors` once v2 is proven live (kept for now as the differential reference);
-optional storage-spam mitigation on the permissionless write path (operator-gating / fee friction —
-readers already reject junk); the future trustless-root read (finding 4c) becomes a Starknet
-storage proof over the op storage directly.
+**Measured v2 cost (Sepolia, 2026-07-03).** A live store-only `import` (tx
+`0x10031214…c0e571`, block 11 516 805) decomposed to **`l1_gas 0`, `l1_data_gas 5 952` (~free),
+`l2_gas 81 654 720`**, `actual_fee ≈ 2.33 STRK` — vs the pre-rearch **27.6 STRK** for the
+comparable import, a **~11.8× reduction** (and the same ~12× in L2 *units*, so it is not a
+gas-price artifact). This confirms the thesis: DA is ~free, the deleted EC verification was the
+cost. What remains (the 81.65M L2) is ordinary store-only execution — the fee-payer's account
+`__validate__`/`__execute__` (fixed per tx), the op-byte storage writes, and the one `sha256` DID
+derivation — **no leftover crypto hotspot**. Extrapolated to the ~19k roster (most DIDs 1–2 ops,
+so the average is well under 2.33) the backfill is affordable; the levers below are incremental
+(~10–30% each), not another order of magnitude.
+
+**Cost mitigations (deferred — each is a contract change ⇒ a redeploy, so profile 1-op vs 4-op to
+pick the lever *before* spending one; ideally decided before the 19k bulk import):**
+- **Cross-DID batch entrypoint** (`import_batch(Array<Array<ByteArray>>)` + sink batching) —
+  amortizes the fixed per-tx **account overhead** across many DIDs (one `__validate__`/`__execute__`
+  per batch instead of per DID). Wins only in proportion to how large that fixed fraction is.
+- **Caller-supplied DID** (drop the on-chain `sha256`) — `import(did, chain)` stores under a
+  caller-provided `did` without deriving it; the witness already re-derives the DID from the
+  genesis bytes and rejects a mismatch, so the binding stays verified read-side. Removes the only
+  remaining on-chain crypto; helps every DID (not amortized). Changes the `import` signature (sink).
+- **Per-op write trims** (free, safe) — emit **one** `Stored` event per `import` (not per op) and
+  read `now_ms()` **once** per import (all ops in a tx share the block time), dropping the per-op
+  event + `chains.len()` read. Fold in with whichever lever wins the redeploy.
+
+**Other open follow-ups (non-blocking):** delete the now-off-path Cairo `merkle`/`op_verify`/…
+modules + their `gen-merkle-vectors` once v2 is proven live (kept for now as the differential
+reference); optional storage-spam mitigation on the permissionless write path (operator-gating /
+fee friction — readers already reject junk); the future trustless-root read (finding 4c) becomes a
+Starknet storage proof over the op storage directly.
