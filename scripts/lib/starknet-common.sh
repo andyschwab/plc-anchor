@@ -74,3 +74,17 @@ account_address() {
   [ -f "$ACCOUNTS_FILE" ] && command -v jq >/dev/null 2>&1 || return 1
   jq -r --arg a "$ACCOUNT" '[.[] | .[$a]?.address // empty] | first // empty' "$ACCOUNTS_FILE" 2>/dev/null
 }
+
+# Best-effort: the operator account's private key from the sncast accounts file (needs jq). The
+# sncast `oz` accounts file stores the key in plaintext under `.private_key`; same lookup shape as
+# `account_address` (iterate the network buckets, match by account name).
+account_private_key() {
+  [ -f "$ACCOUNTS_FILE" ] && command -v jq >/dev/null 2>&1 || return 1
+  jq -r --arg a "$ACCOUNT" '[.[] | .[$a]?.private_key // empty] | first // empty' "$ACCOUNTS_FILE" 2>/dev/null
+}
+
+# The deployed anchor address for $NETWORK, from the committed deployments/<net>.json (needs jq).
+anchor_contract_address() {
+  [ -f "$DEPLOYMENTS_FILE" ] && command -v jq >/dev/null 2>&1 || return 1
+  jq -r '.contractAddress // empty' "$DEPLOYMENTS_FILE" 2>/dev/null
+}

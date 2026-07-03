@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-nullified-vectors gen-nullified-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy deploy-sepolia wallet-create wallet-deploy wallet-info rust-build rust-test witness-test console-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-nullified-vectors gen-nullified-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy deploy-sepolia wallet-create wallet-deploy wallet-info ingest rust-build rust-test witness-test console-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
 
 # Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
 # (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
@@ -108,6 +108,9 @@ wallet-deploy: ## Deploy the operator account on-chain for NETWORK (after fundin
 wallet-info: ## Show accounts + operator balance for NETWORK=sepolia|mainnet
 	NETWORK=$(NETWORK) scripts/wallet.sh list
 	NETWORK=$(NETWORK) scripts/wallet.sh balance
+
+ingest: ## Run ingest against NETWORK=sepolia|mainnet, resolving all live-sink env from one switch. Pass flags via ARGS=
+	NETWORK=$(NETWORK) scripts/ingest.sh $(ARGS)
 
 cairo-test: ## Run Cairo tests (drisl conformance + plc_core op_verify gate; reports gas estimates)
 	cd cairo && $(CAIRO_TEST)

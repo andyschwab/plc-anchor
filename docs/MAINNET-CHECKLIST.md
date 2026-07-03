@@ -51,15 +51,18 @@ new class/address with an empty roster — the standard redeploy migration; re-i
 - [x] **Confirm cost.** Sepolia v2 import (tx `0x10031214…c0e571`) ≈ **2.33 STRK** vs 27.6 STRK
       pre-rearch = **~11.8×** (`l1_gas 0`, `l1_data_gas 5 952`, `l2_gas 81.65M`). Recorded in
       `ONCHAIN-REARCH-PLAN.md` §7 with the mitigation levers for the bulk backfill.
-- [x] **Mainnet.** v2 deployed. **TODO: commit the v2 mainnet address** to `deployments/mainnet.json`
-      (still records the old `0x04db…`) + set `secrets/mainnet.env` `ANCHOR_CONTRACT_ADDRESS`.
+- [x] **Mainnet.** v2 deployed (`0x03add24…`) and committed to `deployments/mainnet.json`. Code
+      defaults auto-resolve from `deployments/<net>.json`, so witness/console/CLI point at v2
+      automatically; `scripts/ingest.sh` reads the same file for the write path.
 - [~] Re-run canary onboarding + witness/adversarial-live against the mainnet v2 address; restart
-      the 72h clock. Code defaults now auto-resolve from `deployments/<net>.json` (no hardcoded
-      address), so committing the mainnet JSON points witness/console/CLI at v2 automatically.
+      the 72h clock. Onboard with `NETWORK=mainnet scripts/ingest.sh --did … --submit` — the
+      single-switch wrapper resolves the anchor (deployments JSON) **and** the operator account
+      (sncast `plc-mainnet`) together, so the two can't drift out of sync (that mismatch — mainnet
+      anchor, Sepolia operator — was the `ContractNotFound` on `estimate_fee`).
 
 **✅ Gate:** v2 store-only contract live on Sepolia **and** mainnet; Sepolia canary reads back
-byte-identical + non-alarming; import fee confirms **~11.8×**. **Remaining:** commit the v2 mainnet
-address to `deployments/mainnet.json`, then proceed to Phase 4.
+byte-identical + non-alarming; import fee confirms **~11.8×**. **Remaining:** land the mainnet
+canary import via the wrapper, then proceed to Phase 4.
 
 ---
 
@@ -159,10 +162,14 @@ Prove the write→read→witness loop on mainnet with **one** DID before any inf
 **Start the 72h clock here** — a `confirmed` head (needed for the `diverged` headline) requires a
 DID observed ≥72h; imported history is settled/tentative until then.
 
-- [ ] Export the mainnet operator secrets into the env (`STARKNET_RPC`, `ANCHOR_CONTRACT_ADDRESS`,
-      `STARKNET_ACCOUNT_ADDRESS`, `STARKNET_ACCOUNT_PRIVATE_KEY` — the key from the sncast file).
-- [ ] Onboard one known DID (whole resolved history as a settled `import`, the 4a-correct path):
-      `cargo run -p ingest --features live -- --did did:plc:<canary> --submit`.
+- [ ] Onboard one known DID (whole resolved history as a settled `import`, the 4a-correct path)
+      with the single-switch wrapper — it resolves the anchor from `deployments/mainnet.json` and
+      the operator address+key from the sncast `plc-mainnet` account, so there is nothing to
+      hand-swap (a partial swap — mainnet anchor + a Sepolia operator left in the shell — is the
+      classic `ContractNotFound` on `estimate_fee`):
+      `NETWORK=mainnet scripts/ingest.sh --did did:plc:<canary> --submit`.
+      *(The raw form `STARKNET_*=… cargo run -p ingest --features live -- --did … --submit` still
+      works but ignores `NETWORK` and trusts four hand-set env vars — prefer the wrapper.)*
 - [ ] `witness check <did> --rpc <mainnet-rpc> --contract <mainnet-addr>` → `tentative-consistent`
       (head byte-identical to the directory's published head — the resolver cross-check, live).
 - [ ] `WITNESS_LIVE_RPC=<mainnet> WITNESS_LIVE_CONTRACT=<mainnet-addr> WITNESS_LIVE_DID=<did>
