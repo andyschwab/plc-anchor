@@ -26,6 +26,11 @@ starknet_accounts.json
 .idea/
 .vscode/
 
-# mainnet/testnet operator secrets — never commit (Phase 5)
-secrets/
+# mainnet/testnet operator secrets — never commit (Phase 5). Ignore the real per-network env
+# files + everything else under secrets/, but keep the tracked templates + README so the
+# structure stays version-controlled and symmetric across networks.
+secrets/*
+!secrets/*.env.example
+!secrets/README.md
 *.env
+!*.env.example
