@@ -13,14 +13,25 @@
 //! recorded Sepolia deployment. Reading a **mainnet** DID REQUIRES an explicit mainnet contract
 //! (flag or env) — the Sepolia default reads the wrong network and would mis-report.
 
+import { readFileSync } from "node:fs";
 import { AnchorReader } from "./starknet.ts";
 import { DirectoryClient } from "./directory.ts";
 import { check, type CheckResult } from "./status.ts";
 
-/** The Sepolia anchor (post-4a; `deployments/sepolia.json`) — carries the proof views. Used
- * only when neither --contract nor $ANCHOR_CONTRACT_ADDRESS is given (a testnet/dev default;
- * mainnet callers must pass the mainnet address explicitly). */
-const DEFAULT_CONTRACT = "0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3";
+/** The recorded Sepolia anchor address (`deployments/sepolia.json`), read at load so a redeploy
+ * never leaves a stale hardcoded default. Used only when neither --contract nor
+ * $ANCHOR_CONTRACT_ADDRESS is given (a testnet/dev default; mainnet callers must pass the mainnet
+ * address explicitly). Empty if the deployment file isn't reachable (e.g. the lib is run outside
+ * the repo) — then a contract must be supplied. */
+function recordedSepoliaContract(): string {
+  try {
+    const url = new URL("../../deployments/sepolia.json", import.meta.url);
+    return JSON.parse(readFileSync(url, "utf8")).contractAddress ?? "";
+  } catch {
+    return "";
+  }
+}
+const DEFAULT_CONTRACT = recordedSepoliaContract();
 const DEFAULT_DIRECTORY = "https://plc.directory";
 
 interface Args {
