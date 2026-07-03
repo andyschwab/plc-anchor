@@ -78,8 +78,7 @@ pub mod anchor {
     use core::poseidon::poseidon_hash_span;
     use drisl::cid::derive_did_fragment;
     use starknet::storage::{
-        Map, MutableVecTrait, StoragePathEntry, StoragePointerReadAccess, StoragePointerWriteAccess,
-        Vec, VecTrait,
+        Map, MutableVecTrait, StoragePathEntry, StoragePointerReadAccess, Vec, VecTrait,
     };
     use super::{IAnchor, OpEntry};
 
