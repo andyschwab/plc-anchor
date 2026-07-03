@@ -18,6 +18,10 @@ export interface CheckOutcome {
 /** Anything that can resolve a DID to its graduated status. `witness.ts` provides the real one. */
 export interface StatusChecker {
   check(did: string): Promise<CheckOutcome>;
+  /** Called once at the start of a `refreshAll()` pass, before any `check()` — lets the checker
+   * reset any per-cycle caching (e.g. the shared confirmed/tentative root reads). Optional so
+   * mocks in tests don't need to implement it. */
+  beginCycle?(): void;
 }
 
 export class RefreshService {
@@ -45,6 +49,7 @@ export class RefreshService {
 
   /** Refresh every active (non-removed) DID against the anchor. Returns the count now `diverged`. */
   async refreshAll(): Promise<number> {
+    this.#checker.beginCycle?.();
     for (const entry of this.#store.listActive()) {
       await this.refresh(entry.did);
     }

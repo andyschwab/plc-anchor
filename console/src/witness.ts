@@ -4,18 +4,26 @@
 //! resolution (tests mock the interface; this file is loaded only at runtime). Reuses the
 //! library's `check()` verbatim — the never-false-`diverged` invariant stays there, unduplicated.
 
-import { AnchorReader, check, DirectoryClient } from "../../witness-ts/src/index.ts";
+import { AnchorReader, CachingAnchorView, check, DirectoryClient } from "../../witness-ts/src/index.ts";
 import type { AuditEntry, IdentityResolver } from "./enrich.ts";
 import type { CheckOutcome, StatusChecker } from "./refresh.ts";
 
-/** Wraps the witness `check(did)` for the refresher. */
+/** Wraps the witness `check(did)` for the refresher.
+ *
+ * `confirmedRoot`/`tentativeRoot` are contract-wide values shared by every DID in a refresh
+ * cycle, so reads go through a `CachingAnchorView` that memoizes them for the cycle — `beginCycle`
+ * resets it, called once per `refreshAll()` rather than once per DID (RPC cost optimization). */
 export class WitnessChecker implements StatusChecker {
-  readonly #anchor: AnchorReader;
+  readonly #anchor: CachingAnchorView;
   readonly #directory: DirectoryClient;
 
   constructor(rpcUrl: string, contractAddress: string, directoryUrl?: string) {
-    this.#anchor = AnchorReader.http(rpcUrl, contractAddress);
+    this.#anchor = new CachingAnchorView(AnchorReader.http(rpcUrl, contractAddress));
     this.#directory = new DirectoryClient(directoryUrl);
+  }
+
+  beginCycle(): void {
+    this.#anchor.reset();
   }
 
   async check(did: string): Promise<CheckOutcome> {

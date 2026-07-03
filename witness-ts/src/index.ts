@@ -33,3 +33,4 @@ export {
   type DirectorySource,
   type Status,
 } from "./status.ts";
+export { CachingAnchorView } from "./caching-anchor.ts";
