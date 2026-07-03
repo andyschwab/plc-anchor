@@ -56,10 +56,12 @@ pub trait IAnchor<TContractState> {
     fn is_anchored(self: @TContractState, did: ByteArray) -> bool;
     /// The full stored op log for `did` (oldest-first, including any superseded ops), each with
     /// its block-time stamp (ms) and provenance flag. `[]` if not anchored. This is the reader's
-    /// sole input from the anchor: it recomputes each op's CID from `signed`, cross-references
-    /// the op body content-addressed, re-derives the live chain + confirmed head (72h window
-    /// against `created_at`), and compares to the directory. RPC-trusted for the bytes (finding
-    /// 4c: a trustless read needs a Starknet storage proof against the L1-settled state root).
+    /// sole input from the anchor: it **decodes** each op's `signed` bytes itself (`decodeDagCbor`),
+    /// re-derives the live chain + confirmed head (sigs/linkage/72h recovery against `created_at`),
+    /// and compares to the directory — deriving the head from the anchor's own bytes, independent
+    /// of the directory, so a hostile directory can't suppress the alarm (SECURITY-TODO 4d).
+    /// RPC-trusted for the bytes (finding 4c: a trustless read needs a Starknet storage proof
+    /// against the L1-settled state root).
     fn chain(self: @TContractState, did: ByteArray) -> Array<OpEntry>;
 }
 
