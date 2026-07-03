@@ -2,11 +2,11 @@
   "network": "mainnet",
   "contract": "anchor",
   "package": "plc_core",
-  "classHash": "0x513df4e369d9acb836b0972835279345ff7f9d1180390124669944f1220c4c1",
-  "contractAddress": "0x0020d90a511673cffcdd96471efa609a5260a353fcad217fe9034871e5125886",
-  "deployTx": "0x045bcd3e7d1051b8acbe85c736442723368393dcf3ebe94a1290b0d70faf7482",
+  "classHash": "0x0513df4e369d9acb836b0972835279345ff7f9d1180390124669944f1220c4c1",
+  "contractAddress": "0x03add24b78ab50d532dd78435d473bc61b990925f171071b0afdefe464f1e124",
+  "deployTx": "0x0599ded438ba511861985c2ddd37316aa008eaadcd904292d57093d7ababdbde",
   "account": "plc-mainnet",
-  "deployedAt": "2026-07-03T09:33:57Z",
-  "explorer": "https://starkscan.co/contract/0x0020d90a511673cffcdd96471efa609a5260a353fcad217fe9034871e5125886",
+  "deployedAt": "2026-07-03T09:46:15Z",
+  "explorer": "https://starkscan.co/contract/0x03add24b78ab50d532dd78435d473bc61b990925f171071b0afdefe464f1e124",
   "note": "anchor is not upgradeable; a redeploy is a new address with an empty roster (re-import DIDs)."
 }
