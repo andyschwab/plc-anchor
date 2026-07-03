@@ -188,14 +188,12 @@ pub mod anchor {
         /// Append one op to a DID's log with the current block time and the given provenance,
         /// and emit the running op count.
         fn push_op(ref self: ContractState, key: felt252, signed: ByteArray, imported: bool) {
-            self
-                .chains
-                .entry(key)
-                .push(StoredOp { signed, created_at: now_ms(), imported });
+            self.chains.entry(key).push(StoredOp { signed, created_at: now_ms(), imported });
             self
                 .emit(
                     Stored {
-                        did_key: key, op_count: self.chains.entry(key).len().try_into().unwrap(),
+                        did_key: key,
+                        op_count: self.chains.entry(key).len().try_into().unwrap(),
                         imported,
                     },
                 );

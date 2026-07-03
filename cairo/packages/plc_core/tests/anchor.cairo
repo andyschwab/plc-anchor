@@ -107,9 +107,7 @@ fn store_only_accepts_unverified_bytes() {
 fn unknown_did_reads_empty() {
     let state = contract_state_for_testing();
     assert!(!AnchorImpl::is_anchored(@state, "did:plc:doesnotexist000000000"), "not anchored");
-    assert!(
-        AnchorImpl::chain(@state, "did:plc:doesnotexist000000000").len() == 0, "empty chain",
-    );
+    assert!(AnchorImpl::chain(@state, "did:plc:doesnotexist000000000").len() == 0, "empty chain");
 }
 
 #[test]
