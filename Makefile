@@ -18,9 +18,13 @@ help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Install/refresh toolchain deps (asdf tools, cargo, npm)
+setup: ## Install/refresh toolchain deps (asdf tools, cargo, conformance npm deps)
 	@command -v asdf >/dev/null && asdf install || echo "asdf not found — see CLAUDE.md install notes"
 	cargo fetch
+	@# The conformance codegen + differential scripts (gen-plc-vectors, gen-adversarial-scenarios,
+	@# check.mjs, …) import @ipld/dag-cbor / @did-plc/lib / @atproto/crypto / multiformats, so
+	@# `make ci` needs conformance/node_modules. witness-ts/console are zero-dep (Node builtins).
+	@command -v npm >/dev/null && (cd conformance && npm ci) || echo "npm not found — install Node ≥22 (conformance codegen deps skipped)"
 	@echo "setup: toolchains ready (restart shell if asdf shims were just added)"
 
 # ---- Conformance codegen -----------------------------------------------------
