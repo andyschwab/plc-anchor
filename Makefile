@@ -6,7 +6,7 @@
 # `source ~/.zshrc`). CI installs them per-job.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-nullified-vectors gen-nullified-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy deploy-sepolia wallet-create wallet-deploy wallet-info rust-build rust-test witness-test console-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
+.PHONY: help setup gen-vectors gen-vectors-check gen-plc-corpus gen-plc-vectors gen-plc-vectors-check gen-op-verify-vectors gen-op-verify-vectors-check gen-recovery-vectors gen-recovery-vectors-check gen-merkle-vectors gen-merkle-vectors-check gen-nullified-vectors gen-nullified-vectors-check gen-selectors gen-selectors-check gen-adversarial-scenarios gen-adversarial-scenarios-check cairo-build cairo-test deploy deploy-sepolia wallet-create wallet-deploy wallet-info ingest secrets rust-build rust-test witness-test console-test adversarial adversarial-check adversarial-live conformance fmt ci clean test-backend test-snforge test-offline
 
 # Cairo test backend (see cairo/TESTING.md). The committed default is `offline`
 # (Scarb's builtin `cairo-test`, no registry needed); a real dev box can switch to
@@ -18,9 +18,13 @@ help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Install/refresh toolchain deps (asdf tools, cargo, npm)
+setup: ## Install/refresh toolchain deps (asdf tools, cargo, conformance npm deps)
 	@command -v asdf >/dev/null && asdf install || echo "asdf not found — see CLAUDE.md install notes"
 	cargo fetch
+	@# The conformance codegen + differential scripts (gen-plc-vectors, gen-adversarial-scenarios,
+	@# check.mjs, …) import @ipld/dag-cbor / @did-plc/lib / @atproto/crypto / multiformats, so
+	@# `make ci` needs conformance/node_modules. witness-ts/console are zero-dep (Node builtins).
+	@command -v npm >/dev/null && (cd conformance && npm ci) || echo "npm not found — install Node ≥22 (conformance codegen deps skipped)"
 	@echo "setup: toolchains ready (restart shell if asdf shims were just added)"
 
 # ---- Conformance codegen -----------------------------------------------------
@@ -104,6 +108,12 @@ wallet-deploy: ## Deploy the operator account on-chain for NETWORK (after fundin
 wallet-info: ## Show accounts + operator balance for NETWORK=sepolia|mainnet
 	NETWORK=$(NETWORK) scripts/wallet.sh list
 	NETWORK=$(NETWORK) scripts/wallet.sh balance
+
+ingest: ## Run ingest against NETWORK=sepolia|mainnet, resolving all live-sink env from one switch. Pass flags via ARGS=
+	NETWORK=$(NETWORK) scripts/ingest.sh $(ARGS)
+
+secrets: ## Sync NETWORK=sepolia|mainnet secrets to its runtime. CMD=push-fly|push-gh|show (default show)
+	NETWORK=$(NETWORK) scripts/secrets.sh $(or $(CMD),show)
 
 cairo-test: ## Run Cairo tests (drisl conformance + plc_core op_verify gate; reports gas estimates)
 	cd cairo && $(CAIRO_TEST)

@@ -37,4 +37,4 @@ pub use pipeline::{onboard_via_import, process_batch, Indexer, Stats};
 pub use sink::{AnchorSink, Delta, DryRunSink};
 pub use source::{fetch_audit_log, FixtureSource, HttpExportSource, OpSource};
 #[cfg(feature = "live")]
-pub use starknet_sink::{StarknetConfig, StarknetSink};
+pub use starknet_sink::{StarknetConfig, StarknetSink, StoredOpView};

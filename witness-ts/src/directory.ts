@@ -52,16 +52,21 @@ export function directoryHead(log: readonly AuditEntry[]): DirectoryHead | null 
 // from the op chain itself, mirroring the on-chain `state::apply_op` + `recovery::classify_next_op`
 // (byte-exact via `dagcbor`/`crypto`/`opverify`) and `@did-plc/lib`'s `assureValidNextOp`.
 
-/** 72h recovery window in ms — matches `recovery.cairo::RECOVERY_WINDOW_MS` / `@did-plc/lib`. */
-const RECOVERY_WINDOW_MS = 259_200_000;
+/** 72h recovery window in ms — matches `recovery.cairo::RECOVERY_WINDOW_MS` / `@did-plc/lib`.
+ * Also the anchor's confirmed-head horizon (an op is immutable once block-time + this < now). */
+export const RECOVERY_WINDOW_MS = 259_200_000;
 
 /** The re-derived live view of a DID's history: the CIDs on the currently-live chain (recomputed
  * locally, never the directory's) and the live tip. */
 export interface LiveChain {
   /** Locally-recomputed CIDs of the ops on the re-derived live chain. */
   liveCids: Set<string>;
-  /** The live tip: its recomputed CID + the entry's directory `createdAt`. `null` if none. */
+  /** The live tip: its recomputed CID + the entry's `createdAt`. `null` if none. */
   head: DirectoryHead | null;
+  /** The live chain in order, each op's recomputed CID + its entry `createdAt` — the input the
+   * anchor's confirmed-head derivation needs (the block-time 72h window; `status.ts`). Optional so
+   * a flag-based `deriveLive` stub can omit it. */
+  ops?: { cid: string; createdAt: string }[];
 }
 
 /** One op on the re-derived live chain. `signerIndex` is the signer's priority index within its
@@ -74,27 +79,45 @@ interface LiveOp {
   rotationKeys: string[];
   tombstone: boolean;
   signerIndex: number;
+  /** Provenance (SECURITY-TODO 4a): `true` for a settled/imported op — a recovery may not nullify
+   * it. Always `false` for directory-served ops (the guard is then inert); set for anchor replay. */
+  imported: boolean;
+}
+
+/** A replayable op: a directory `AuditEntry` satisfies this, and the anchor path constructs the
+ * same shape from on-chain bytes (op body = `decodeDagCbor(signed)`, `createdAt` = the anchor's
+ * block time, `imported` = its provenance flag). */
+export interface ReplayEntry {
+  operation: unknown;
+  createdAt: string;
+  /** Settled/imported provenance (anchor replay only). Absent ⇒ live, guard inert. */
+  imported?: boolean;
 }
 
 /**
- * Replay a directory audit log (oldest-first, INCLUDING nullified entries — the auditable form)
- * to re-derive the currently-live chain, ignoring the directory's `nullified` claim entirely.
+ * Replay an op log (oldest-first, INCLUDING nullified/superseded entries — the auditable form) to
+ * re-derive the currently-live chain, ignoring any `nullified` claim entirely. Used for BOTH the
+ * directory audit log and the anchor's on-chain op log (which is structurally the same: an
+ * append-only log where a recovery is just another appended entry — see `anchor.cairo`).
  *
  * For each op in order: recompute its CID, verify its embedded signature against the authorized
  * key set (own keys for genesis, the fork-point op's keys otherwise), and — when it forks below
  * the tip — apply PLC's recovery rule (a strictly-higher-priority key, within 72h of the first
- * op it supersedes) to decide whether the fork is valid and what it nullifies. A structurally
- * invalid, unauthorized, misordered, or out-of-window op cannot have been legitimately accepted,
- * so replay stops there and everything from it on is treated as not-live.
+ * op it supersedes) to decide whether the fork is valid and what it nullifies. A recovery may not
+ * nullify a **settled/imported** op (`entry.imported`; SECURITY-TODO 4a) — the read-side mirror of
+ * `state::apply_op`'s `recovery-of-imported` guard, inert on directory logs (which carry no
+ * imported flag). A structurally invalid, unauthorized, misordered, or out-of-window op cannot
+ * have been legitimately accepted, so replay stops there and everything from it on is not-live.
  *
- * The 72h window is measured from the superseding op's own `createdAt` (the directory's
- * acceptance-time clock — the same input PLC/`@did-plc/lib` used when it accepted the op), not the
- * caller's wall clock, so a long-past valid recovery still reads as valid.
+ * The 72h window is measured from the superseding op's own `createdAt` — for the directory the
+ * acceptance-time clock (the same input `@did-plc/lib` used; finding 4b); for the anchor the
+ * independent **block time** — not the caller's wall clock, so a long-past valid recovery still
+ * reads as valid.
  *
  * `expectedDid`, when given, binds the log to a DID: the genesis op's derived `did:plc` fragment
- * must match, else the directory served the wrong DID's history and nothing is live.
+ * must match, else the log is the wrong DID's history and nothing is live.
  */
-export function deriveLiveChain(log: readonly AuditEntry[], expectedDid?: string): LiveChain {
+export function deriveLiveChain(log: readonly ReplayEntry[], expectedDid?: string): LiveChain {
   const chain: LiveOp[] = [];
 
   for (const entry of log) {
@@ -102,6 +125,7 @@ export function deriveLiveChain(log: readonly AuditEntry[], expectedDid?: string
     if (op === null) break; // not a structurally usable op
 
     const cid = cidForOp(entry.operation);
+    const imported = entry.imported ?? false;
 
     if (chain.length === 0) {
       // Genesis: prev must be null, self-authorized by its own rotation keys, and (if bound) its
@@ -110,7 +134,7 @@ export function deriveLiveChain(log: readonly AuditEntry[], expectedDid?: string
       const idx = verifyOpAuthorized(entry.operation, op.rotationKeys);
       if (idx < 0) break;
       if (expectedDid !== undefined && didForGenesisOp(entry.operation) !== expectedDid) break;
-      chain.push({ cid, createdAt: entry.createdAt, rotationKeys: op.rotationKeys, tombstone: op.tombstone, signerIndex: idx });
+      chain.push({ cid, createdAt: entry.createdAt, rotationKeys: op.rotationKeys, tombstone: op.tombstone, signerIndex: idx, imported });
       continue;
     }
 
@@ -130,6 +154,10 @@ export function deriveLiveChain(log: readonly AuditEntry[], expectedDid?: string
       // Valid iff it out-ranks (strictly higher priority than) the FIRST nullified op's signer,
       // and that op is within the 72h window (classify_next_op / assureValidNextOp).
       const firstNullified = chain[forkIndex + 1];
+      // A recovery may not nullify settled/imported history (SECURITY-TODO 4a): the read-side
+      // mirror of `state::apply_op`'s `recovery-of-imported`. Imported ops always form the chain's
+      // prefix, so the first nullified being imported is sufficient. Inert on directory logs.
+      if (firstNullified.imported) break; // recovery-of-imported
       if (signerIndex >= firstNullified.signerIndex) break; // recovery-weaker-key
       // Window uses the directory's `createdAt` (finding 4b). This is FAITHFUL PLC, not added
       // trust: `@did-plc/lib`'s `assureValidNextOp` measures the window against
@@ -147,13 +175,14 @@ export function deriveLiveChain(log: readonly AuditEntry[], expectedDid?: string
       chain.length = forkIndex + 1; // drop the nullified suffix
     }
 
-    chain.push({ cid, createdAt: entry.createdAt, rotationKeys: op.rotationKeys, tombstone: op.tombstone, signerIndex });
+    chain.push({ cid, createdAt: entry.createdAt, rotationKeys: op.rotationKeys, tombstone: op.tombstone, signerIndex, imported });
   }
 
   const tip = chain[chain.length - 1];
   return {
     liveCids: new Set(chain.map((c) => c.cid)),
     head: tip ? { cid: tip.cid, createdAt: tip.createdAt } : null,
+    ops: chain.map((c) => ({ cid: c.cid, createdAt: c.createdAt })),
   };
 }
 

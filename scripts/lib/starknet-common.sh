@@ -26,12 +26,14 @@ resolve_network() {
       ACCOUNT="${SNCAST_ACCOUNT:-plc-sepolia}"
       PUBLIC_RPC="https://starknet-sepolia.drpc.org"
       EXPLORER="https://sepolia.starkscan.co"
+      FLY_APP="${FLY_APP:-didmarc-console}"
       ;;
     mainnet)
       PROFILE="mainnet"
       ACCOUNT="${SNCAST_ACCOUNT:-plc-mainnet}"
       PUBLIC_RPC="https://starknet-mainnet.drpc.org"
       EXPLORER="https://starkscan.co"
+      FLY_APP="${FLY_APP:-didmarc-console-prod}"
       ;;
     "")
       echo "!! set NETWORK=sepolia|mainnet" >&2
@@ -47,7 +49,7 @@ resolve_network() {
   REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   DEPLOYMENTS_FILE="$REPO_ROOT/deployments/$NETWORK.json"
   ACCOUNTS_FILE="${SNCAST_ACCOUNTS_FILE:-$HOME/.starknet_accounts/starknet_open_zeppelin_accounts.json}"
-  export NETWORK PROFILE ACCOUNT PUBLIC_RPC RPC EXPLORER REPO_ROOT DEPLOYMENTS_FILE ACCOUNTS_FILE
+  export NETWORK PROFILE ACCOUNT PUBLIC_RPC RPC EXPLORER FLY_APP REPO_ROOT DEPLOYMENTS_FILE ACCOUNTS_FILE
 }
 
 # Require a typed confirmation before any mainnet write.
@@ -73,4 +75,18 @@ require_sncast() {
 account_address() {
   [ -f "$ACCOUNTS_FILE" ] && command -v jq >/dev/null 2>&1 || return 1
   jq -r --arg a "$ACCOUNT" '[.[] | .[$a]?.address // empty] | first // empty' "$ACCOUNTS_FILE" 2>/dev/null
+}
+
+# Best-effort: the operator account's private key from the sncast accounts file (needs jq). The
+# sncast `oz` accounts file stores the key in plaintext under `.private_key`; same lookup shape as
+# `account_address` (iterate the network buckets, match by account name).
+account_private_key() {
+  [ -f "$ACCOUNTS_FILE" ] && command -v jq >/dev/null 2>&1 || return 1
+  jq -r --arg a "$ACCOUNT" '[.[] | .[$a]?.private_key // empty] | first // empty' "$ACCOUNTS_FILE" 2>/dev/null
+}
+
+# The deployed anchor address for $NETWORK, from the committed deployments/<net>.json (needs jq).
+anchor_contract_address() {
+  [ -f "$DEPLOYMENTS_FILE" ] && command -v jq >/dev/null 2>&1 || return 1
+  jq -r '.contractAddress // empty' "$DEPLOYMENTS_FILE" 2>/dev/null
 }

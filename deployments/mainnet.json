@@ -2,11 +2,11 @@
   "network": "mainnet",
   "contract": "anchor",
   "package": "plc_core",
-  "classHash": "0x19a28cac869a2fdc3f75453a3cb42173dd7b1eecdec9ab9cad5d128761d434b",
-  "contractAddress": "0x04db57b605f64e9ffac02c423d864dfe37d8c40c8f18203a55a6c402cfc1d9aa",
-  "deployTx": "0x045d7118894140e6fc4ec7fe140a4b9d798aac0e72df59333489879387d9d5ab",
+  "classHash": "0x0513df4e369d9acb836b0972835279345ff7f9d1180390124669944f1220c4c1",
+  "contractAddress": "0x03add24b78ab50d532dd78435d473bc61b990925f171071b0afdefe464f1e124",
+  "deployTx": "0x0599ded438ba511861985c2ddd37316aa008eaadcd904292d57093d7ababdbde",
   "account": "plc-mainnet",
-  "deployedAt": "2026-07-02T17:17:48Z",
-  "explorer": "https://starkscan.co/contract/0x04db57b605f64e9ffac02c423d864dfe37d8c40c8f18203a55a6c402cfc1d9aa",
+  "deployedAt": "2026-07-03T09:46:15Z",
+  "explorer": "https://starkscan.co/contract/0x03add24b78ab50d532dd78435d473bc61b990925f171071b0afdefe464f1e124",
   "note": "anchor is not upgradeable; a redeploy is a new address with an empty roster (re-import DIDs)."
 }

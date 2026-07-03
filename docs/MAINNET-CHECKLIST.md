@@ -12,28 +12,57 @@ every phase ends in a **✅ confirm gate** you must satisfy before moving on.
 
 ---
 
-## Progress (2026-07-02) — PAUSED at Phase 4 pending rearchitecture decision
+## Progress (2026-07-03) — verify-on-read v2 LIVE (Sepolia + mainnet); Phases 4–8 next
 
-The protocol is **live on Starknet mainnet** end-to-end. Phases 0–3 done; console
-productionization (4–8) deliberately **not started** — see why below.
+The protocol first reached mainnet on the pre-rearchitecture (in-contract-verifying) contract.
+Fee measurement showed **per-DID import ≈ 6.9 STRK/op, ~100% in-contract EC verification** (not
+storage/DA, which is ~free) — six figures to verify the full 18 991-DID roster on-chain. The
+**verify-on-read rearchitecture** ([`ONCHAIN-REARCH-PLAN.md`](ONCHAIN-REARCH-PLAN.md)) moved
+verification read-side; the **v2 store-only contract is now deployed to Sepolia (`0x06b16c52…`) and
+mainnet** (Phase R done). **Measured Sepolia import ≈ 2.33 STRK vs 27.6 STRK pre-rearch — ~11.8×**
+(`l1_gas 0`, `l1_data_gas` ~free, `l2_gas 81.65M`; residual is ordinary store-only execution).
+Cost-mitigation levers for the bulk backfill are tracked in `ONCHAIN-REARCH-PLAN.md` §7 — profile
+1-op vs 4-op and decide *before* importing the 19k roster (each lever is a redeploy).
+**Outstanding:** commit the v2 **mainnet** address to `deployments/mainnet.json` (still records the
+old `0x04db…`), then the console productionization (Phases 4–8 below).
 
 - **Phase 1 ✅** — `plc-mainnet` operator wallet live & funded (deployed tx `0x5d92f3e2…`).
-- **Phase 2 ✅** — `anchor` deployed: `0x04db57b605f64e9ffac02c423d864dfe37d8c40c8f18203a55a6c402cfc1d9aa`
-  (class `0x19a28cac…`), empty-root verified, `deployments/mainnet.json` committed (`0055484`).
-- **Phase 3 ✅** — canary `did:plc:rzeldxi4pe24uahas3z65wnp` anchored (tx `0x78e8fc85…`);
-  `witness check` → `tentative-consistent`; `make adversarial-live` green. **72h clock started
-  ~2026-07-02 17:20 UTC** → confirmed head ~2026-07-05 (Phase 8 validation).
+- **Phase 2 ✅ (v1, superseded)** — pre-rearch `anchor` deployed:
+  `0x04db57b605f64e9ffac02c423d864dfe37d8c40c8f18203a55a6c402cfc1d9aa`. Stays live/correct until v2
+  cutover; superseded by the store-only v2 (Phase R).
+- **Phase 3 ✅ (v1)** — canary `did:plc:rzeldxi4pe24uahas3z65wnp` anchored & witnessed
+  `tentative-consistent`. Re-run against v2 in Phase R.
 - **Secrets:** single local source of truth in `secrets/mainnet.env` (gitignored); operator key
   stays only in the sncast accounts file. RPC = keyed Alchemy mainnet 0.10.x (verified `SN_MAIN`).
 
-**Why paused:** measuring real fees on-chain (receipt gas decomposition) showed **per-DID import
-cost ≈ 6.9 STRK/op and is ~100% Cairo *execution* gas — the in-contract signature verification —
-not storage/DA (which is ~free).** The full 18 991-DID roster would cost hundreds of thousands of
-STRK to *verify on-chain*, disproportionate for a backup witness. Before standing up the prod
-console + flipping `Active` on the full roster (Phases 4/7), we are evaluating a
-**verify-on-read rearchitecture** ([`ONCHAIN-REARCH-PLAN.md`](ONCHAIN-REARCH-PLAN.md)) that moves
-verification off the expensive on-chain path. The current mainnet contract stays live and correct
-meanwhile.
+---
+
+## Phase R — verify-on-read v2 cutover (do before Phase 4)
+
+The v2 contract is **store-only** (`import`/`submit_op`/`chain`, no in-contract crypto). It is a
+new class/address with an empty roster — the standard redeploy migration; re-import from genesis
+(now *much* cheaper). The witness/ingest/console code already targets v2.
+
+- [x] On a Scarb-equipped box: `make ci` green (Cairo included — 44 `plc_core` + 9 `drisl`).
+- [x] **Sepolia first.** `NETWORK=sepolia scripts/deploy.sh` → v2 `0x06b16c52…` (class `0x513df4e…`),
+      `deployments/sepolia.json` committed. Canary `did:plc:rzeldxi4pe24uahas3z65wnp` re-imported.
+- [x] Sepolia validation: `live_e2e` byte-identical storage; `witness check` non-alarming;
+      `adversarial-live` behaves. (The confirmed-`diverged` branch needs the canary ≥72h — re-run then.)
+- [x] **Confirm cost.** Sepolia v2 import (tx `0x10031214…c0e571`) ≈ **2.33 STRK** vs 27.6 STRK
+      pre-rearch = **~11.8×** (`l1_gas 0`, `l1_data_gas 5 952`, `l2_gas 81.65M`). Recorded in
+      `ONCHAIN-REARCH-PLAN.md` §7 with the mitigation levers for the bulk backfill.
+- [x] **Mainnet.** v2 deployed (`0x03add24…`) and committed to `deployments/mainnet.json`. Code
+      defaults auto-resolve from `deployments/<net>.json`, so witness/console/CLI point at v2
+      automatically; `scripts/ingest.sh` reads the same file for the write path.
+- [~] Re-run canary onboarding + witness/adversarial-live against the mainnet v2 address; restart
+      the 72h clock. Onboard with `NETWORK=mainnet scripts/ingest.sh --did … --submit` — the
+      single-switch wrapper resolves the anchor (deployments JSON) **and** the operator account
+      (sncast `plc-mainnet`) together, so the two can't drift out of sync (that mismatch — mainnet
+      anchor, Sepolia operator — was the `ContractNotFound` on `estimate_fee`).
+
+**✅ Gate:** v2 store-only contract live on Sepolia **and** mainnet; Sepolia canary reads back
+byte-identical + non-alarming; import fee confirms **~11.8×**. **Remaining:** land the mainnet
+canary import via the wrapper, then proceed to Phase 4.
 
 ---
 
@@ -61,16 +90,16 @@ Goal: stop juggling critical bits. Each secret has **exactly one home** and one 
 - **The operator private key lives only in sncast's accounts file** (`~/.starknet_accounts/…`,
   already `.gitignore`d). It is never typed twice, never in an env file, never in GitHub. The
   sync script reads it from there with `jq` when it needs to set the Fly secret.
-- **Everything else per network** lives in a gitignored `secrets/<network>.env`
-  (`STARKNET_RPC`, `ANCHOR_CONTRACT_ADDRESS`, `STARKNET_ACCOUNT_ADDRESS`, `CONSOLE_ADMIN_TOKEN`).
-  `ANCHOR_CONTRACT_ADDRESS` is copied from `deployments/<network>.json` after each deploy.
-- **`scripts/secrets.sh`** (built in Phase 5) maps `NETWORK → Fly app` and pushes the right subset:
+- **Only two values per network** live in a gitignored `secrets/<network>.env`: `STARKNET_RPC`
+  (the keyed endpoint) and `CONSOLE_ADMIN_TOKEN` (generated once). The two addresses
+  (`ANCHOR_CONTRACT_ADDRESS`, `STARKNET_ACCOUNT_ADDRESS`) are **not** hand-copied here — the sync
+  tool derives them at push time from `deployments/<network>.json` and the sncast account, so a
+  redeploy can't leave a stale copy. (Templates: `secrets/<network>.env.example`, tracked.)
+- **`scripts/secrets.sh`** maps `NETWORK → Fly app` and pushes the right subset:
   - `NETWORK=mainnet scripts/secrets.sh push-fly` → `fly secrets import` to `didmarc-console-prod`
   - `NETWORK=sepolia scripts/secrets.sh push-gh` → `gh secret set` for the `e2e-sepolia.yml` job
-    **(testnet only — mainnet is never pushed to GitHub, so CI can never spend real funds)**
+    **(testnet only — push-gh refuses mainnet, so CI can never spend real funds)**
   - `NETWORK=<net> scripts/secrets.sh show` → presence-only audit, no values printed
-
-`secrets/` and `*.env` get added to `.gitignore` in Phase 5.
 
 ---
 
@@ -118,9 +147,9 @@ The wallet both deploys the contract and pays for `ingest --submit`. One funded 
       Declares the class, deploys an instance (no constructor), writes `deployments/mainnet.json`.
 - [ ] Verify the printed **Contract Address** on `https://starkscan.co/contract/<addr>` (deployed,
       class hash matches).
-- [ ] Copy `contractAddress` from `deployments/mainnet.json` into `secrets/mainnet.env` as
-      `ANCHOR_CONTRACT_ADDRESS`.
-- [ ] Commit `deployments/mainnet.json` (public data — addresses/hashes only, no keys).
+- [ ] Commit `deployments/mainnet.json` (public data — addresses/hashes only, no keys). This is the
+      canonical anchor address; `scripts/ingest.sh` and `scripts/secrets.sh` read it from here, so
+      there is **no** `ANCHOR_CONTRACT_ADDRESS` to hand-copy into `secrets/mainnet.env`.
 - [ ] Sanity read against mainnet: an empty-roster head/root view returns cleanly (no DIDs yet).
 
 **✅ Gate:** `deployments/mainnet.json` committed; contract verified on-chain; empty-roster read OK.
@@ -133,10 +162,14 @@ Prove the write→read→witness loop on mainnet with **one** DID before any inf
 **Start the 72h clock here** — a `confirmed` head (needed for the `diverged` headline) requires a
 DID observed ≥72h; imported history is settled/tentative until then.
 
-- [ ] Export the mainnet operator secrets into the env (`STARKNET_RPC`, `ANCHOR_CONTRACT_ADDRESS`,
-      `STARKNET_ACCOUNT_ADDRESS`, `STARKNET_ACCOUNT_PRIVATE_KEY` — the key from the sncast file).
-- [ ] Onboard one known DID (whole resolved history as a settled `import`, the 4a-correct path):
-      `cargo run -p ingest --features live -- --did did:plc:<canary> --submit`.
+- [ ] Onboard one known DID (whole resolved history as a settled `import`, the 4a-correct path)
+      with the single-switch wrapper — it resolves the anchor from `deployments/mainnet.json` and
+      the operator address+key from the sncast `plc-mainnet` account, so there is nothing to
+      hand-swap (a partial swap — mainnet anchor + a Sepolia operator left in the shell — is the
+      classic `ContractNotFound` on `estimate_fee`):
+      `NETWORK=mainnet scripts/ingest.sh --did did:plc:<canary> --submit`.
+      *(The raw form `STARKNET_*=… cargo run -p ingest --features live -- --did … --submit` still
+      works but ignores `NETWORK` and trusts four hand-set env vars — prefer the wrapper.)*
 - [ ] `witness check <did> --rpc <mainnet-rpc> --contract <mainnet-addr>` → `tentative-consistent`
       (head byte-identical to the directory's published head — the resolver cross-check, live).
 - [ ] `WITNESS_LIVE_RPC=<mainnet> WITNESS_LIVE_CONTRACT=<mainnet-addr> WITNESS_LIVE_DID=<did>
@@ -170,20 +203,27 @@ Keep `didmarc-console` (Sepolia) exactly as-is. Stand up a **separate** prod app
 
 ---
 
-## Phase 5 — Secrets tooling
+## Phase 5 — Secrets tooling  ✅ built
 
-- [ ] Add `secrets/` and `*.env` to `.gitignore`.
-- [ ] Write `scripts/secrets.sh` (reuse `scripts/lib/starknet-common.sh` for `resolve_network`
-      and the `NETWORK → app` map: sepolia→`didmarc-console`, mainnet→`didmarc-console-prod`):
-      - `push-fly` — load `secrets/<network>.env`, pull the operator key from the sncast accounts
-        file (`account_address`/jq), `fly secrets import` to the network's app.
-      - `push-gh` — **sepolia only** (`confirm_mainnet`-style refusal for mainnet): `gh secret set`
-        the four `e2e-sepolia.yml` secrets + the `WITNESS_LIVE_DID` var.
-      - `show` — presence-only audit (`fly secrets list` names, never values).
+- [x] `.gitignore`: `secrets/*` ignored; tracked `*.env.example` + `secrets/README.md` kept so the
+      structure is version-controlled and symmetric across networks.
+- [x] `scripts/secrets.sh` (reuses `scripts/lib/starknet-common.sh` `resolve_network` + the
+      `NETWORK → FLY_APP` map: sepolia→`didmarc-console`, mainnet→`didmarc-console-prod`):
+      - `push-fly` — `fly secrets import` the 5 console secrets to the network's app. RPC + admin
+        token come from `secrets/<net>.env`; the anchor address, operator address, and **operator
+        key** are DERIVED at push time (`anchor_contract_address` / `account_address` /
+        `account_private_key`), so nothing is hand-copied and a redeploy can't ship a stale value.
+      - `push-gh` — **sepolia only** (refuses mainnet): `gh secret set` the four `e2e-sepolia.yml`
+        secrets + optional `WITNESS_LIVE_DID` repo variable.
+      - `show` — presence-only audit (local sources + `fly secrets list` / `gh secret list` names,
+        never a value).
+      Also `make ingest` / `make secrets` wrap the two scripts (`ARGS=` / `CMD=`).
 - [ ] Dry-run `NETWORK=sepolia scripts/secrets.sh show` against the existing app to validate the
       app map before trusting it for mainnet.
 
-**✅ Gate:** one command re-syncs each environment's secrets; the key still has a single home.
+**✅ Gate:** one command re-syncs each environment's secrets; the operator key still has a single
+home (sncast) and the two addresses derive from their canonical sources. **Remaining:** the live
+`show` dry-run against the real Sepolia app (needs flyctl + auth locally).
 
 ---
 
@@ -235,6 +275,8 @@ Keep `didmarc-console` (Sepolia) exactly as-is. Stand up a **separate** prod app
 
 ## Deferred (explicitly not blocking go-live)
 
-Tracked in `HISTORY.md` "Open follow-ups": batched settled `import` for long chains
-(`import_append`), trustless root reads (L1 storage proof, SECURITY-TODO 4c), precise skew bound,
-paymaster/AA cost allocation (MVP = one project-funded account). None gate V1.
+Tracked in `HISTORY.md` "Open follow-ups" / `ONCHAIN-REARCH-PLAN.md` §7: verify-on-read cost
+mitigations for the bulk backfill (`import_batch`, caller-supplied DID to drop the on-chain
+`sha256`, per-op write trims — decide via a 1-op-vs-4-op profile before importing the 19k roster),
+trustless root reads (L1 storage proof, SECURITY-TODO 4c), precise skew bound, paymaster/AA cost
+allocation (MVP = one project-funded account). None gate V1.

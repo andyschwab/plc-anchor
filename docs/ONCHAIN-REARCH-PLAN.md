@@ -1,10 +1,31 @@
 # On-chain rearchitecture plan — verify-on-read (RFC)
 
-**Status:** proposal, not adopted. This deliberately **reopens a `REFERENCE.md`-settled
-decision** ("verification runs as a Starknet contract"; "crypto is a corelib library call" —
-REFERENCE.md §1/§2/§8, echoed in `CLAUDE.md` *Do NOT relitigate*). The driver is new **measured
-mainnet cost evidence** (below). Adopting it requires a `REFERENCE.md` amendment and sign-off —
-do not silently implement.
+**Status: ADOPTED & SHIPPED (2026-07-03).** Implemented, `make ci`-green, and deployed v2 to
+Sepolia (`0x06b16c52…`) and mainnet. Measured Sepolia import ≈ 2.33 STRK (~11.8× under the
+pre-rearch 27.6 STRK; see §7). Remaining cost mitigations are tracked follow-ups (§7), not blockers.
+This deliberately **reopened a `REFERENCE.md`-settled decision** ("verification runs as a Starknet
+contract"; "crypto is a corelib library call" — REFERENCE.md §1/§2/§8, echoed in `CLAUDE.md` *Do
+NOT relitigate*), driven by the measured mainnet cost evidence below. `REFERENCE.md` and `CLAUDE.md`
+carry the amendment banners; this file is the rationale of record.
+
+**As-built deltas from this proposal (see §7):** (1) the reader validates the anchor chain by
+**decoding the on-chain bytes itself** — a new strict DRISL/dag-cbor decoder in `witness-ts`
+(`decodeDagCbor`), the inverse of the existing encoder, so the confirmed head is derived from the
+anchor's own bytes **independent of the directory**; (2) the on-chain **Merkle root/proofs are
+dropped** (the reader validates the whole per-DID chain, so per-DID inclusion proofs are
+redundant); (3) the contract keeps a **cheap `sha256` DID derivation** (not EC crypto — negligible
+cost) so the `import`/`submit_op` signatures and the `ingest` sink are unchanged; (4) the Cairo
+`op_verify`/`recovery`/`state`/`merkle` modules are **retained as the differential-green PLC
+reference** the read side mirrors (deleting them is a follow-up, not this change).
+
+> **Design-review correction (2026-07-03).** An earlier build validated the anchor chain by
+> *content-addressed cross-reference* against op bodies fetched from the directory (delta 1, to
+> avoid the decoder). That is **unsound for the core threat**: an equivocating directory serves a
+> forged log and so never serves the anchored head's body, which silently lowers (or empties) the
+> witness's derived confirmed head → `diverged` is suppressed exactly when it should fire. The
+> witness must derive the anchor's head from bytes only the *anchor* controls, so the decoder is
+> not optional — it is the fix. (The suppression is a false *negative*, so it never breaks
+> "never a false `diverged`", but it guts the guarantee against a hostile directory.)
 
 **Author context:** written 2026-07-02, immediately after the V1 mainnet bring-up (Phases 1–3 of
 [`MAINNET-CHECKLIST.md`] live: contract `0x04db…d9aa`, one canary DID anchored & witnessed).
@@ -129,3 +150,67 @@ The current mainnet contract stays live and correct in the meantime; this is a v
 against the adversarial suite; (2) measure a "store-only" import on a testnet v2 to confirm the
 10–50× cut; (3) amend REFERENCE.md; (4) v2 contract + re-import. None of this blocks leaving the
 current V1 witness running as-is.
+
+## 7. As-built (2026-07-02)
+
+Implemented on `claude/rearchitecture-rfc-review-3ra7en`, **offline-green** (`witness-test`,
+`console-test`, `rust-test`, `adversarial`); the Cairo contract + tests are written but need a
+`make cairo-test` on a Scarb-equipped box (the sandbox has no toolchain), then the v2 deploy.
+
+**§5.1 crux (read-side recovery adjudication) — reuses the existing validator.** The reader
+*already* re-derives PLC recovery for the directory (`deriveLiveChain`, differential-green vs
+`@did-plc/lib`). So the anchor chain runs through the **same** validator: `deriveLiveChain` gained
+an inert `imported` guard (the read-side mirror of `state::apply_op`'s `recovery-of-imported`) and
+now returns its live ops; `deriveAnchorHeads` (`status.ts`) **decodes each on-chain op's bytes**
+(`decodeDagCbor`), feeds them to `deriveLiveChain` with `createdAt` = the anchor's block time, and
+derives the confirmed head (latest live op past the 72h window) — entirely from the anchor's bytes,
+no directory input. The **one net-new consensus module is the strict decoder** (`decodeDagCbor`,
+the inverse of `encodeDagCbor`); it is what makes the derivation independent of the directory (see
+the design-review correction in §1). Pinned in `witness-ts/test/dagcbor.test.ts` (decode∘encode over
+the corpus + strictness) and `nullified.test.ts` (real signed chains, incl. read-side
+recovery-of-imported and equivocation/garbage cases).
+
+**What shipped, by file:**
+- `cairo/packages/plc_core/src/anchor.cairo` — store-only: `import_genesis`/`import`/`submit_op`
+  push bytes (block-time + `imported`); new `chain(did)` view; dropped head/root/proof views + all
+  EC verification. `tests/anchor.cairo` rewritten to the storage contract.
+- `witness-ts` — `dagcbor.ts` (**new strict `decodeDagCbor`**, the inverse of the encoder);
+  `directory.ts` (generalized `deriveLiveChain` + `imported` guard + live ops); `status.ts`
+  (`deriveAnchorHeads` decodes on-chain bytes → directory-independent; chain-based `AnchorView`,
+  `deriveAnchor` seam); `starknet.ts` (`chain(did)` read via `decodeChain`, proof/root reads
+  removed); `merkle.ts` deleted; `index.ts`. Tests: `dagcbor.test.ts` (new).
+- `ingest` — `starknet_sink.rs` gains `call_chain`/`StoredOpView`; sink calldata unchanged;
+  `gen_selectors` → `{is_anchored, chain}`; `live_e2e.rs` asserts byte-identical storage.
+- `adversarial` + `conformance/src/gen-adversarial-scenarios.mjs` — de-Merkled; read scenarios use
+  the `deriveAnchor` seam; write scenarios reframed (defender = read-side re-derivation);
+  `anchor-self-fault` reframed (corrupt on-chain log ⇒ no confirmed head ⇒ tentative-consistent).
+
+**Measured v2 cost (Sepolia, 2026-07-03).** A live store-only `import` (tx
+`0x10031214…c0e571`, block 11 516 805) decomposed to **`l1_gas 0`, `l1_data_gas 5 952` (~free),
+`l2_gas 81 654 720`**, `actual_fee ≈ 2.33 STRK` — vs the pre-rearch **27.6 STRK** for the
+comparable import, a **~11.8× reduction** (and the same ~12× in L2 *units*, so it is not a
+gas-price artifact). This confirms the thesis: DA is ~free, the deleted EC verification was the
+cost. What remains (the 81.65M L2) is ordinary store-only execution — the fee-payer's account
+`__validate__`/`__execute__` (fixed per tx), the op-byte storage writes, and the one `sha256` DID
+derivation — **no leftover crypto hotspot**. Extrapolated to the ~19k roster (most DIDs 1–2 ops,
+so the average is well under 2.33) the backfill is affordable; the levers below are incremental
+(~10–30% each), not another order of magnitude.
+
+**Cost mitigations (deferred — each is a contract change ⇒ a redeploy, so profile 1-op vs 4-op to
+pick the lever *before* spending one; ideally decided before the 19k bulk import):**
+- **Cross-DID batch entrypoint** (`import_batch(Array<Array<ByteArray>>)` + sink batching) —
+  amortizes the fixed per-tx **account overhead** across many DIDs (one `__validate__`/`__execute__`
+  per batch instead of per DID). Wins only in proportion to how large that fixed fraction is.
+- **Caller-supplied DID** (drop the on-chain `sha256`) — `import(did, chain)` stores under a
+  caller-provided `did` without deriving it; the witness already re-derives the DID from the
+  genesis bytes and rejects a mismatch, so the binding stays verified read-side. Removes the only
+  remaining on-chain crypto; helps every DID (not amortized). Changes the `import` signature (sink).
+- **Per-op write trims** (free, safe) — emit **one** `Stored` event per `import` (not per op) and
+  read `now_ms()` **once** per import (all ops in a tx share the block time), dropping the per-op
+  event + `chains.len()` read. Fold in with whichever lever wins the redeploy.
+
+**Other open follow-ups (non-blocking):** delete the now-off-path Cairo `merkle`/`op_verify`/…
+modules + their `gen-merkle-vectors` once v2 is proven live (kept for now as the differential
+reference); optional storage-spam mitigation on the permissionless write path (operator-gating /
+fee friction — readers already reject junk); the future trustless-root read (finding 4c) becomes a
+Starknet storage proof over the op storage directly.

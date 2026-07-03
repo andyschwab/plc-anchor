@@ -15,6 +15,7 @@
 //! correctly yields a non-alarming status, and the runner says so rather than failing.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { AnchorReader } from "../witness-ts/src/starknet.ts";
 import { directoryHead, type AuditEntry, DirectoryClient, type LiveChain } from "../witness-ts/src/directory.ts";
@@ -30,7 +31,10 @@ const flagLive = (log: readonly AuditEntry[]): LiveChain => ({
 });
 
 const RPC = process.env.WITNESS_LIVE_RPC;
-const CONTRACT = process.env.WITNESS_LIVE_CONTRACT ?? "0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3";
+// Default to the recorded Sepolia deployment (tracks redeploys); override with WITNESS_LIVE_CONTRACT.
+const recordedSepolia = (): string =>
+  JSON.parse(readFileSync(new URL("../deployments/sepolia.json", import.meta.url), "utf8")).contractAddress;
+const CONTRACT = process.env.WITNESS_LIVE_CONTRACT ?? recordedSepolia();
 const LIVE_DID = process.env.WITNESS_LIVE_DID;
 
 const skipLive = RPC ? false : "set WITNESS_LIVE_RPC to run the live adversarial read";
@@ -49,6 +53,19 @@ async function checkAgainstMirror(did: string, logsByDid: Map<string, AuditEntry
   }
 }
 
+/** Verify-on-read: the anchor exposes no head/root view, so derive its confirmed + tentative
+ * heads the way `check()` does — re-derive from the on-chain `chain(did)` op log, resolving each
+ * op body content-addressed against the HONEST directory (real plc.directory). Reads the derived
+ * heads straight out of `check`'s evidence so this stays in lockstep with the real ladder. */
+async function anchorHeads(did: string): Promise<{ confirmedHead: string; tentativeHead: string }> {
+  const anchor = AnchorReader.http(RPC as string, CONTRACT);
+  const r = await check(did, anchor, new DirectoryClient());
+  return {
+    confirmedHead: r.evidence.anchorConfirmedHead,
+    tentativeHead: r.evidence.anchorTentativeHead,
+  };
+}
+
 // Always-runnable (no anchored DID needed): the malicious mirror can't manufacture coverage. An
 // unanchored DID short-circuits to `absent` before the directory is even consulted — proving the
 // real anchor read and the real fetch wiring are both live.
@@ -60,8 +77,7 @@ test("live: an unanchored DID is `absent` no matter what the mirror serves", { s
 
 test("live: an honest mirror for the anchored DID is never an alarm", { skip: skipDid }, async (t) => {
   const did = LIVE_DID as string;
-  const anchor = AnchorReader.http(RPC as string, CONTRACT);
-  const [confirmedHead, tentativeHead] = await Promise.all([anchor.confirmedHead(did), anchor.headCid(did)]);
+  const { confirmedHead, tentativeHead } = await anchorHeads(did);
   const head = confirmedHead || tentativeHead;
   t.diagnostic(`anchor: confirmedHead=${confirmedHead || "(none)"} tentativeHead=${tentativeHead}`);
 
@@ -76,8 +92,7 @@ test("live: an honest mirror for the anchored DID is never an alarm", { skip: sk
 
 test("live: an equivocating mirror (old, omits the anchor head) — diverged iff confirmed", { skip: skipDid }, async (t) => {
   const did = LIVE_DID as string;
-  const anchor = AnchorReader.http(RPC as string, CONTRACT);
-  const confirmedHead = await anchor.confirmedHead(did);
+  const { confirmedHead } = await anchorHeads(did);
 
   // The mirror serves an old forged chain that never contains the anchor's head.
   const forged = [entry(did, "bafyreiequivocationforgedheadneverhashedfromarealopxxxxxx", "2020-01-01T00:00:00Z")];
@@ -98,8 +113,7 @@ test("live: an equivocating mirror (old, omits the anchor head) — diverged iff
 
 test("live: a vanishing DID (mirror 404) — diverged iff confirmed", { skip: skipDid }, async (t) => {
   const did = LIVE_DID as string;
-  const anchor = AnchorReader.http(RPC as string, CONTRACT);
-  const confirmedHead = await anchor.confirmedHead(did);
+  const { confirmedHead } = await anchorHeads(did);
 
   // The mirror lists nothing for the DID → DirectoryClient sees a 404 → empty log.
   const r = await checkAgainstMirror(did, new Map());

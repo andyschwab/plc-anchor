@@ -37,9 +37,18 @@ import { SETTINGS_DEFAULTS, SettingsStore, validateSettings, type ConsoleSetting
 import { createConsoleServer, type SettingsPort, type WorkerActions } from "./server.ts";
 import { DirectoryResolver, WitnessChecker } from "./witness.ts";
 
-// The post-4a Sepolia anchor — an explicit DEV convenience only, never the production path.
-// Fail-closed: production must set ANCHOR_CONTRACT_ADDRESS (see resolveContractAddress).
-const SEPOLIA_ANCHOR = "0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3";
+// The recorded Sepolia anchor (`deployments/sepolia.json`, read at load so a redeploy never leaves
+// a stale default) — an explicit DEV convenience only, never the production path. Fail-closed:
+// production must set ANCHOR_CONTRACT_ADDRESS (see resolveContractAddress).
+function recordedSepoliaAnchor(): string {
+  try {
+    const url = new URL("../../deployments/sepolia.json", import.meta.url);
+    return JSON.parse(readFileSync(url, "utf8")).contractAddress ?? "";
+  } catch {
+    return "";
+  }
+}
+const SEPOLIA_ANCHOR = recordedSepoliaAnchor();
 const bool = (v: string | undefined): boolean => /^(1|true)$/i.test(v?.trim() ?? "");
 const num = (v: string | undefined, dflt: number): number => {
   const n = Number(v);
