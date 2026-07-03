@@ -25,3 +25,5 @@ starknet_accounts.json
 *.swp
 .idea/
 .vscode/
+
+secrets/*.env
