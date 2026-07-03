@@ -26,7 +26,9 @@ use crate::sink::{AnchorSink, Delta};
 /// repo: `STARKNET_RPC`, `ANCHOR_CONTRACT_ADDRESS`, `STARKNET_ACCOUNT_ADDRESS`,
 /// `STARKNET_ACCOUNT_PRIVATE_KEY`. Optional tuning (read in `StarknetSink::new`):
 /// `STARKNET_MAX_L2_GAS` — the per-tx L2 gas ceiling the sink keeps requests under
-/// (default 1.2e9; see `DEFAULT_MAX_L2_GAS`).
+/// (default 1.2e9; see `DEFAULT_MAX_L2_GAS`); `STARKNET_ESTIMATE_BLOCK=latest` — estimate/nonce
+/// against the accepted block instead of `pre_confirmed` (use when an RPC won't surface a
+/// freshly-deployed contract in its pre-confirmed view → `ContractNotFound` on estimate).
 pub struct StarknetConfig {
     /// JSON-RPC endpoint (spec 0.10.x).
     pub rpc_url: String,
@@ -102,8 +104,18 @@ impl StarknetSink {
             chain_id,
             ExecutionEncoding::New,
         );
-        // Estimate against the pending block so back-to-back submits see the prior tx's nonce.
-        account.set_block_id(BlockId::Tag(BlockTag::PreConfirmed));
+        // Block the account estimates / reads its nonce against. Default `pre_confirmed` so
+        // back-to-back submits see the prior tx's nonce — but some RPCs (e.g. an Alchemy 0.10.x-rc
+        // endpoint right after a fresh deploy) don't surface a just-deployed contract in their
+        // pre-confirmed view, so `estimate_fee` fails with `ContractNotFound` even though the
+        // contract is in `latest`. Set `STARKNET_ESTIMATE_BLOCK=latest` to estimate against the
+        // accepted block instead (safe here: the sink waits for each tx to be accepted before the
+        // next, so `latest` already reflects the prior submit's nonce). Default keeps prior behavior.
+        let estimate_block = match std::env::var("STARKNET_ESTIMATE_BLOCK") {
+            Ok(v) if v.eq_ignore_ascii_case("latest") => BlockTag::Latest,
+            _ => BlockTag::PreConfirmed,
+        };
+        account.set_block_id(BlockId::Tag(estimate_block));
         let max_l2_gas = std::env::var("STARKNET_MAX_L2_GAS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
