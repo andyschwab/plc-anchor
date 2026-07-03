@@ -270,16 +270,21 @@ fn single_did_submit(
     eprintln!("ingest: submitting to anchor {:#x}", sink.contract());
     let stats = ingest::onboard_via_import(entries, did, &mut sink, cursor)?;
     print_stats(&stats);
-    // Confirm the on-chain effect. Reads target the latest accepted block; give it a beat to
-    // surface there after acceptance.
+    // Confirm the on-chain effect. Verify-on-read: the contract stores raw bytes (no head/root
+    // views), so echo the stored op log — count, block-time stamp, provenance. Reads target the
+    // latest accepted block; give it a beat to surface there after acceptance.
     if sink.wait_anchored(did)? {
-        let head = sink.call_byte_array_view("head_cid", did.as_bytes())?;
+        let chain = sink.call_chain(did)?;
         eprintln!(
-            "ingest: on-chain head_cid = {}",
-            String::from_utf8_lossy(&head)
+            "ingest: on-chain op log = {} op(s){}",
+            chain.len(),
+            chain.last().map_or(String::new(), |op| format!(
+                ", tip {} bytes (imported={}, created_at={})",
+                op.signed.len(),
+                op.imported,
+                op.created_at
+            ))
         );
-        let root = sink.call_byte_array_view("tentative_root", &[])?;
-        eprintln!("ingest: tentative_root = {}", hex::encode(root));
     } else {
         eprintln!(
             "ingest: tx accepted, but {did} not yet visible at the latest block — re-check shortly"

@@ -1,19 +1,24 @@
 // Generator for the DIDMARC adversarial-validation scenarios (testnet adversarial suite).
 //
 // Builds REAL signed did:plc chains with @did-plc/lib (the same authoritative stack the
-// conformance corpus trusts), applies an attacker's twist, computes the anchor's real
-// sha256-Merkle commitment (root + inclusion proof, byte-identical to merkle.cairo /
-// witness-ts/src/merkle.ts), and emits a fully self-describing fixture: data + prose + the
-// expected outcome. Deterministic (fixed keys) so the fixture is byte-stable and CI drift-checks.
+// conformance corpus trusts), applies an attacker's twist, and emits a fully self-describing
+// fixture: data + prose + the expected outcome. Under verify-on-read the anchor exposes only the
+// heads the witness re-derives from its on-chain op log (no Merkle commitment), so a read scenario
+// records those heads directly. Deterministic (fixed keys) so the fixture is byte-stable and CI
+// drift-checks.
 //
 // Two scenario classes:
 //   - read  — a malicious/faulty PLC mirror; the defender is the witness `check()` (run offline
 //             against this fixture). Covers every branch of the §4 status ladder.
-//   - write — a malicious submission to the permissionless endpoint; the defender is the
-//             contract (plc_core::verify / recovery) or the off-chain ingest integrity gate.
-//             Ground-truthed HERE against @did-plc/lib `assureValidNextOp` (the same oracle the
-//             contract is differential-green against, pinned by recovery_vectors_generated.cairo);
-//             this generator THROWS if the oracle ever accepts an op it should reject.
+//   - write — a malicious submission to the permissionless endpoint. Under verify-on-read the
+//             contract stores bytes without judging them, so such an op CAN land on-chain — but it
+//             is inert: the witness's read-side re-derivation (`deriveLiveChain` /
+//             `deriveAnchorHeads`, mirroring @did-plc/lib `assureValidNextOp`) refuses to treat it
+//             as live or confirmed, so it never reaches a resolver. (Integrity-mismatch is caught
+//             even earlier, by the off-chain ingest gate, before submission.) Ground-truthed HERE
+//             against @did-plc/lib — the same oracle the witness re-derivation is differential-green
+//             against (witness-ts/test/nullified.test.ts); this generator THROWS if the oracle ever
+//             accepts an op it should reject.
 //
 // Output: adversarial/scenarios.generated.json. Re-run: make gen-adversarial-scenarios.
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -22,7 +27,6 @@ import { encode } from "@ipld/dag-cbor";
 import { CID } from "multiformats";
 import { sha256 as mfSha256 } from "multiformats/hashes/sha2";
 import { base32 } from "multiformats/bases/base32";
-import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,78 +34,11 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const outPath = join(here, "..", "..", "adversarial", "scenarios.generated.json");
 
-// ── The pinned Merkle format (mirrors merkle.cairo / witness-ts/src/merkle.ts) ───────────────
-// Re-implemented here with raw node:crypto, independent of the witness — the offline runner
-// verifies these proofs with witness-ts's verifyProof, so generator-builds / witness-verifies
-// is itself the differential check that the resolver-side format agrees with the anchor.
-const sha256 = (buf) => createHash("sha256").update(buf).digest();
-const utf8 = (s) => Buffer.from(s, "utf8");
-const hex = (buf) => Buffer.from(buf).toString("hex");
-const ZERO_ROOT = "00".repeat(32);
-const LEAF_PREFIX = Buffer.from([0x00]);
-const NODE_PREFIX = Buffer.from([0x01]);
-const leafHash = (did, head) => sha256(Buffer.concat([LEAF_PREFIX, utf8(did), utf8(head)]));
-const nodeHash = (l, r) => sha256(Buffer.concat([NODE_PREFIX, l, r]));
-const emptyRoot = () => sha256(Buffer.alloc(0));
-
-function merkleRoot(leaves) {
-  if (leaves.length === 0) return emptyRoot();
-  let level = leaves;
-  while (level.length > 1) {
-    const next = [];
-    for (let i = 0; i < level.length; ) {
-      if (i + 1 < level.length) {
-        next.push(nodeHash(level[i], level[i + 1]));
-        i += 2;
-      } else {
-        next.push(level[i]); // promote odd node (RFC 6962)
-        i += 1;
-      }
-    }
-    level = next;
-  }
-  return level[0];
-}
-
-function merkleProof(leaves, index) {
-  const proof = [];
-  let level = leaves;
-  let idx = index;
-  while (level.length > 1) {
-    if (idx % 2 === 1) {
-      proof.push({ sibling: level[idx - 1], siblingIsLeft: true });
-    } else if (idx + 1 < level.length) {
-      proof.push({ sibling: level[idx + 1], siblingIsLeft: false });
-    }
-    const next = [];
-    for (let i = 0; i < level.length; ) {
-      if (i + 1 < level.length) {
-        next.push(nodeHash(level[i], level[i + 1]));
-        i += 2;
-      } else {
-        next.push(level[i]);
-        i += 1;
-      }
-    }
-    level = next;
-    idx = Math.floor(idx / 2);
-  }
-  return proof;
-}
-
-// Commit { did -> head } the way the anchor does (did-sorted leaves) and return the root plus
-// the inclusion proof for `subjectDid`'s head. Sibling DIDs give the tree real depth so the
-// proof exercises multi-level verifyProof, not the single-leaf degenerate case.
-function commit(map, subjectDid) {
-  const entries = Object.entries(map).sort((a, b) => Buffer.compare(utf8(a[0]), utf8(b[0])));
-  const leaves = entries.map(([did, head]) => leafHash(did, head));
-  const idx = entries.findIndex(([did]) => did === subjectDid);
-  if (idx < 0) throw new Error(`subject ${subjectDid} not in commitment`);
-  return {
-    root: hex(merkleRoot(leaves)),
-    proof: merkleProof(leaves, idx).map((s) => ({ sibling: hex(s.sibling), siblingIsLeft: s.siblingIsLeft })),
-  };
-}
+// Verify-on-read (docs/ONCHAIN-REARCH-PLAN.md): the anchor stores raw op bytes only and the
+// witness re-derives the confirmed/tentative head from them — there is no on-chain Merkle
+// commitment. So a read-scenario's anchor supplies the DERIVED heads directly; the runner injects
+// them via `check`'s `deriveAnchor` seam (`adversarial/harness.ts`). The crypto re-derivation over
+// real on-chain bytes is pinned separately in witness-ts/test/nullified.test.ts (`deriveAnchorHeads`).
 
 const cidOf = async (op) => (await CID.create(1, 0x71, await mfSha256.digest(encode(op)))).toString(base32);
 
@@ -127,13 +64,6 @@ const A = await cidOf(opA);
 const B = await cidOf(opB);
 const F = await cidOf(opForged);
 
-// Fixed sibling subjects so the commitment tree has depth (proofs are multi-level, not trivial).
-const SIBLINGS = {
-  "did:plc:7iza6de2dwap2sbkpav7c6c6": "bafyreigenesissiblingbobxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb",
-  "did:plc:44tn5dyjrgw57aqqwm4z2tzp": "bafyreigenesissiblingcarolxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxc",
-  "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz": "bafyreigenesissiblingdavexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxd",
-};
-
 // A pinned clock for deterministic, reproducible runs.
 const NOW = Date.parse("2026-06-30T00:00:00.000Z");
 const SKEW_HORIZON_MS = 14 * 24 * 60 * 60 * 1000;
@@ -147,32 +77,15 @@ const auditEntry = (cid, operation, createdAtMs, nullified = false) => ({
   operation,
 });
 
-// Build a read-side scenario's anchor view. Modes:
-//   normal               — commit confirmed + tentative heads (real roots + proofs).
-//   confirmedHead === ""  — nothing confirmed yet (empty confirmed tier); commit tentative only.
-//   anchored: false       — the DID is not anchored at all (coverage gap).
-//   faultProof: true      — confirmed head + a real proof, but a WRONG root, so the anchor's own
-//                           inclusion proof fails to verify (an anchor-side integrity problem).
-function anchorView({ confirmedHead, tentativeHead, anchored = true, faultProof = false }) {
-  if (!anchored) {
-    return { did, anchored: false, confirmedHead: "", tentativeHead: "", confirmedRoot: ZERO_ROOT, confirmedProof: [], tentativeRoot: ZERO_ROOT, tentativeProof: [] };
-  }
-  const t = commit({ [did]: tentativeHead, ...SIBLINGS }, did);
-  if (confirmedHead === "") {
-    return { did, anchored, confirmedHead: "", tentativeHead, confirmedRoot: hex(emptyRoot()), confirmedProof: [], tentativeRoot: t.root, tentativeProof: t.proof };
-  }
-  const c = commit({ [did]: confirmedHead, ...SIBLINGS }, did);
+// Build a read-side scenario's anchor view: just the heads the witness re-derives from the
+// on-chain op log (confirmed = immutable past the 72h window, tentative = live tip) plus whether
+// the DID is anchored at all. No roots/proofs — verify-on-read has no on-chain commitment.
+function anchorView({ confirmedHead, tentativeHead, anchored = true }) {
   return {
     did,
     anchored,
-    confirmedHead,
-    tentativeHead,
-    // faultProof keeps the (correct) proof for the head but pairs it with a root it can't
-    // reconstruct, so verifyProof fails — the witness can't trust its own confirmed head.
-    confirmedRoot: faultProof ? ZERO_ROOT : c.root,
-    confirmedProof: c.proof,
-    tentativeRoot: t.root,
-    tentativeProof: t.proof,
+    confirmedHead: anchored ? confirmedHead : "",
+    tentativeHead: anchored ? tentativeHead : "",
   };
 }
 
@@ -191,7 +104,7 @@ const readScenarios = [
     directory: { auditLog: [auditEntry(G, genesis, Date.parse("2026-01-01T00:00:00Z")), auditEntry(B, opB, Date.parse("2026-02-01T00:00:00Z"))] },
     expect: { status: "confirmed", reason: "confirmed-head-match" },
     lesson:
-      "The witness re-derives the anchor's confirmed root from an independently-fetched inclusion proof and finds the directory's live head is byte-identical. This is `confirmed` — the DMARC `pass`. A resolver can treat the directory's answer as cryptographically backed.",
+      "The witness re-derives the anchor's confirmed head from its on-chain op log and finds the directory's live head is byte-identical. This is `confirmed` — the DMARC `pass`. A resolver can treat the directory's answer as cryptographically backed.",
   },
   {
     id: "young-did",
@@ -242,7 +155,7 @@ const readScenarios = [
     directory: { auditLog: [auditEntry(G, genesis, Date.parse("2024-01-01T00:00:00Z")), auditEntry(F, opForged, Date.parse("2024-01-02T00:00:00Z"))] },
     expect: { status: "diverged", reason: "confirmed-head-absent" },
     lesson:
-      "The witness verifies the confirmed head against an independently-fetched root, then finds it NOWHERE in the mirror's live chain — and the mirror's head is far too old to be lag. This is the sole actionable alarm — `diverged`, the DMARC `reject`. A resolver acts on it unilaterally: no PLC-side coordination, no trust in the mirror.",
+      "The witness re-derives the confirmed head from the anchor's on-chain op log, then finds it NOWHERE in the mirror's live chain — and the mirror's head is far too old to be lag. This is the sole actionable alarm — `diverged`, the DMARC `reject`. A resolver acts on it unilaterally: no PLC-side coordination, no trust in the mirror.",
   },
   {
     id: "vanishing-did",
@@ -279,19 +192,20 @@ const readScenarios = [
   },
   {
     id: "anchor-self-fault",
-    title: "Anchor self-fault — the witness distrusts its own unproven head",
-    threat: "Not a directory attack — a humility check. If the anchor returns a confirmed head whose inclusion proof does NOT reconstruct the independently-fetched root (a node bug, a stale read, a malicious RPC), the witness must not blame the directory for it.",
+    title: "Anchor self-fault — a corrupt on-chain log yields no confirmed head, never an alarm",
+    threat: "Not a directory attack — a humility check. Under verify-on-read the witness re-derives the anchor's confirmed head from the on-chain op log. If that log is unreadable/unvalidatable (a node bug, a stale or malicious RPC serving garbage bytes, an unlinkable chain), the re-derivation yields NO confirmed head — and the witness must not turn its own inability to confirm into a `diverged` accusation against the directory.",
     class: "read",
     benign: true,
     setup: [
-      `DID ${did} is anchored and the anchor claims a confirmed head — but its own inclusion proof fails to verify against the confirmed root the resolver fetched.`,
+      `DID ${did} is anchored, but the anchor's on-chain op log does not re-derive to any confirmed head (corrupt/unvalidatable bytes, or nothing past the 72h window).`,
       "The directory, meanwhile, serves a totally different and old history.",
     ],
-    anchor: anchorView({ confirmedHead: A, tentativeHead: A, faultProof: true }),
+    // No derivable confirmed head — exactly what deriveAnchorHeads returns over an unvalidatable log.
+    anchor: anchorView({ confirmedHead: "", tentativeHead: "" }),
     directory: { auditLog: [auditEntry("bafyreiunrelatedoldheadxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", {}, Date.parse("2020-01-01T00:00:00Z"))] },
-    expect: { status: "tentative-consistent", reason: "anchor-proof-unverified" },
+    expect: { status: "tentative-consistent", reason: "within-window-uncommitted" },
     lesson:
-      "Even with a directory that looks divergent, an UNPROVEN anchor head yields `tentative-consistent`, not `diverged`. The witness alarms only on what it can cryptographically stand behind — an anchor-side fault is the anchor's problem, never grounds to accuse the directory.",
+      "With no confirmed head to stand behind — whether because the DID is young or because the anchor's own on-chain state is corrupt — the witness returns `tentative-consistent`, never `diverged`, even against a directory that looks divergent. It alarms only on what it can re-derive and verify; an anchor-side fault is the anchor's problem, never grounds to accuse the directory.",
   },
   {
     id: "coverage-gap",
@@ -358,10 +272,12 @@ await assertRejected("weaker-key-recovery", recentChain, recByK2);
 await assertRejected("late-recovery", agedChain, recByK0);
 // 4a — recovery of imported history. The SAME recovery on the real aged chain is rejected by the
 // oracle as late (opA's authored window closed), so rejecting it is correct. But the anchor stamps
-// imported ops with the import time, not their real authored time, so its late-recovery check
-// can't see that age — its in-contract defender is instead the provenance rule
-// (recovery-of-imported), proven in Cairo by tests::anchor::recovery_cannot_nullify_imported_history.
-// Same oracle fact, different in-contract defender depending on op provenance.
+// imported ops with the import time, not their real authored time, so a plain late-recovery check
+// can't see that age — the read-side defender is instead the provenance rule (recovery-of-imported),
+// enforced by `deriveLiveChain`'s imported guard and pinned by
+// witness-ts/test/nullified.test.ts (`deriveAnchorHeads` … read-side) — the exact read-side mirror
+// of the Cairo tests::anchor::recovery_cannot_nullify_imported_history. Same oracle fact, different
+// defender depending on op provenance.
 await assertRejected("recovery-of-imported (oracle rejects on real age)", agedChain, recByK0);
 // Forged signature: a well-formed append whose signature has been tampered.
 await assertRejected("forged-signature", recentChain, forgedSig);
@@ -385,11 +301,11 @@ const writeScenarios = [
     verdict: {
       rejected: true,
       reason: "invalid-sig",
-      defender: "plc_core::op_verify / sig_verify (in-contract)",
-      provenance: "Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted.",
+      defender: "witness read-side re-derivation (`deriveLiveChain` → `opverify`/`crypto`)",
+      provenance: "Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the witness re-derivation is differential-green against (witness-ts/test/nullified.test.ts); this generator throws if such an op is ever accepted. Stored on-chain permissionlessly, the forged op simply never appears on the re-derived live chain.",
     },
     lesson:
-      "Authorization is the op's EMBEDDED signature, verified in-contract against the fork-point's rotation keys — never the Starknet fee-payer. The transaction can be paid by anyone; the op still has to be signed by a real PLC key. The forgery is rejected before any state changes (`invalid-sig`).",
+      "Authorization is the op's EMBEDDED signature, verified read-side against the fork-point's rotation keys — never the Starknet fee-payer. The transaction can be paid by anyone and the bytes can even be stored on-chain; the op still has to be signed by a real PLC key, so the witness's re-derivation drops the forgery (`invalid-sig`) and it never reaches a resolver.",
   },
   {
     id: "weaker-key-recovery",
@@ -403,11 +319,11 @@ const writeScenarios = [
     verdict: {
       rejected: true,
       reason: "recovery-weaker-key",
-      defender: "plc_core::recovery (in-contract)",
-      provenance: "Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted.",
+      defender: "witness read-side re-derivation (`deriveLiveChain`)",
+      provenance: "Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the witness re-derivation is differential-green against (witness-ts/test/nullified.test.ts); this generator throws if such an op is ever accepted. If stored on-chain it stays off the re-derived live chain.",
     },
     lesson:
-      "PLC recovery only flows downward in priority: a fork is valid only if signed by a key of STRICTLY higher priority than the disputed op's signer. The weaker key cannot override the stronger one, so the contract rejects (`recovery-weaker-key`) — the key hierarchy is enforced on-chain, not assumed.",
+      "PLC recovery only flows downward in priority: a fork is valid only if signed by a key of STRICTLY higher priority than the disputed op's signer. The weaker key cannot override the stronger one, so the witness's re-derivation drops it (`recovery-weaker-key`) — the key hierarchy is enforced by re-derivation, not assumed.",
   },
   {
     id: "late-recovery",
@@ -421,11 +337,11 @@ const writeScenarios = [
     verdict: {
       rejected: true,
       reason: "late-recovery",
-      defender: "plc_core::recovery (in-contract)",
-      provenance: "Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted.",
+      defender: "witness read-side re-derivation (`deriveLiveChain`)",
+      provenance: "Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the witness re-derivation is differential-green against (witness-ts/test/nullified.test.ts); this generator throws if such an op is ever accepted. If stored on-chain it stays off the re-derived live chain.",
     },
     lesson:
-      "Even the strongest key can't rewrite history indefinitely. Once an op has survived the 72h window it is immutable, and a fork below it is rejected (`late-recovery`). This is the window that makes the confirmed tier meaningful — and it's enforced on the directory-assigned clock, the same input PLC uses.",
+      "Even the strongest key can't rewrite history indefinitely. Once an op has survived the 72h window it is immutable, and a fork below it is dropped by the witness's re-derivation (`late-recovery`). This is the window that makes the confirmed tier meaningful — enforced on the directory-assigned clock, the same input PLC uses.",
   },
   {
     id: "recovery-of-imported",
@@ -441,9 +357,9 @@ const writeScenarios = [
     verdict: {
       rejected: true,
       reason: "recovery-of-imported",
-      defender: "plc_core::state::apply_op (in-contract)",
+      defender: "witness read-side re-derivation (`deriveLiveChain` imported guard)",
       provenance:
-        "Two-part. (1) On the REAL aged chain, `@did-plc/lib` `assureValidNextOp` rejects this recovery as late (opA's authored window closed) — so rejecting it is correct, and this generator throws if the oracle ever accepts it. (2) The anchor cannot see that age — it stamped opA at import time — so its in-contract defender is the provenance rule, not the window check: `state::apply_op` refuses a recovery that nullifies an imported op. Proven by `plc_core::tests::anchor::recovery_cannot_nullify_imported_history`, contrasted with `recovery_through_contract` where a LIVE-observed opA (honest block-time clock) remains recoverable.",
+        "Two-part. (1) On the REAL aged chain, `@did-plc/lib` `assureValidNextOp` rejects this recovery as late (opA's authored window closed) — so rejecting it is correct, and this generator throws if the oracle ever accepts it. (2) The witness cannot see that age — the op is stamped at import time — so the read-side defender is the provenance rule, not the window check: `deriveLiveChain` refuses a recovery that nullifies an op flagged `imported`. Pinned by witness-ts/test/nullified.test.ts (`deriveAnchorHeads` … recovery-of-imported, read-side), the exact mirror of the Cairo `tests::anchor::recovery_cannot_nullify_imported_history`; contrasted with a LIVE-observed opA (honest block-time clock), which remains recoverable.",
     },
     lesson:
       "The 72h late-recovery check has a blind spot: it measures against the anchor's clock, which for backfilled history is the import time, not the op's real authored time. That blind spot IS the 4a capture — a rotated-out higher-priority key re-opening a window that closed years ago. The fix marks imported ops SETTLED (a recovery may not nullify them), so the window is honored only for live-observed ops whose block-time stamp approximates their real authored time. Onboarding via `import` (not op-by-op `submit_op`) is what preserves that provenance. (SECURITY-TODO 4a.)",

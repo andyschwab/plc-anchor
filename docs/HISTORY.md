@@ -262,24 +262,94 @@ The roster starts empty; re-import DIDs from genesis (the already-proven path).
 
 ---
 
+## Rearchitecture — verify-on-read (2026-07-02)
+
+After the mainnet bring-up, receipt gas decomposition showed per-DID `import` cost was **~100%
+in-contract EC verification** (secp256k1/r1), with storage/DA effectively free — six figures of STRK
+to re-run crypto the op log already self-certifies, for a backup witness. So **verification moved
+from write-time (the contract) to read-time (the witness)**. RFC + evidence + as-built:
+[`ONCHAIN-REARCH-PLAN.md`](ONCHAIN-REARCH-PLAN.md); `REFERENCE.md`/`CLAUDE.md` carry amendment
+banners.
+
+**What changed**
+- **Contract → store-only** (`anchor.cairo`). `import_genesis`/`import`/`submit_op` push raw op
+  bytes (block-time stamp + `imported` flag); no `secp256k1`/`secp256r1`, no `op_decode`/`recovery`,
+  no fork adjudication, no Merkle root/proof. New `chain(did)` view returns the raw log. Only the
+  cheap `sha256` DID derivation remains (keys storage; not verification). Signatures of
+  `import`/`submit_op` are unchanged, so the `ingest` sink is untouched.
+- **Witness → verify-on-read** (`witness-ts`). The reader already re-derived PLC recovery for the
+  *directory* (`deriveLiveChain`, differential-green vs `@did-plc/lib`); the anchor chain now runs
+  through the **same** validator. `deriveLiveChain` gained an inert `imported` guard (read-side
+  mirror of `state::apply_op`'s `recovery-of-imported`) and returns its live ops; `deriveAnchorHeads`
+  (`status.ts`) **decodes each on-chain op's bytes** (new strict `decodeDagCbor`, the inverse of the
+  encoder), feeds them to `deriveLiveChain` with `createdAt` = the anchor's block time, and derives
+  the confirmed head (latest live op past the 72h window) — **entirely from the anchor's own bytes,
+  no directory input** (see the security correction below). `merkle.ts` deleted. Pinned in
+  `dagcbor.test.ts` (decode∘encode over the corpus + strictness) and `nullified.test.ts` (real
+  signed chains, incl. recovery-of-imported + equivocation/garbage).
+- **Adversarial/conformance** de-Merkled; read scenarios drive the `deriveAnchor` seam; write
+  scenarios reframed (the malicious op can be *stored* permissionlessly but is inert — the read-side
+  re-derivation drops it); `anchor-self-fault` reframed (a corrupt on-chain log ⇒ no confirmed head
+  ⇒ `tentative-consistent`, never a false `diverged`).
+
+**Preserved:** non-equivocation (identical bytes on the public chain), trustlessness (reader
+re-derives everything), the independent **block-time** confirmed head, and "never a false
+`diverged`". **Load-bearing decisions:** (1) the witness DECODES the on-chain bytes itself (new
+strict `decodeDagCbor`) so the confirmed head is derived independent of the directory — the one
+net-new consensus module, and the security-critical one (see below); (2) drop the on-chain Merkle
+root — the reader validates the whole per-DID chain, so per-DID proofs are redundant (the future
+trustless-root read, finding 4c, becomes a storage proof over the op storage); (3) keep the Cairo
+`op_verify`/`recovery`/`state`/`merkle` modules as the differential-green PLC **reference** the read
+side mirrors (deletion deferred).
+
+**Security correction (2026-07-03) — why the decoder is not optional.** An interim build had the
+witness validate the anchor chain by *content-addressed cross-reference* against op bodies fetched
+from the directory (to avoid writing a decoder). That is unsound against the primary threat: an
+equivocating directory serves a forged log and therefore never serves the anchored head's op body,
+so `deriveAnchorHeads` couldn't resolve/validate the real head and silently lowered the derived
+confirmed head to the last op the equivocator agreed on — which is by construction on the
+directory's chain → `tentative-consistent`, **suppressing the `diverged` alarm exactly when it
+should fire.** (The old in-contract design didn't have this: the contract computed the confirmed
+head from validated state, independent of the directory.) The suppression is a false *negative*, so
+it never violates "never a false `diverged`", but it guts the guarantee against a hostile directory.
+The fix is to derive the head from bytes only the *anchor* controls — hence `decodeDagCbor`. Caught
+in design review before the v2 mainnet cutover; the offline scenarios missed it because they inject
+the anchor head via the `deriveAnchor` seam, so `nullified.test.ts` now exercises the real decode
+path (equivocation/garbage) and `adversarial/live.test.ts` derives heads through `check()`.
+
+**Status: SHIPPED (2026-07-03).** `make ci`-green (Cairo included: 44 `plc_core` + 9 `drisl`);
+v2 deployed to **Sepolia** (`0x06b16c52…`, class `0x513df4e…`) and **mainnet**, canary re-imported
+and witnessed. **Measured cost:** a Sepolia store-only import ran ≈ **2.33 STRK** (`l1_gas 0`,
+`l1_data_gas 5 952` ~free, `l2_gas 81.65M`) vs the pre-rearch **27.6 STRK** — **~11.8×**, confirming
+the thesis (DA free; the deleted EC verification was the cost). The residual L2 is ordinary
+store-only execution (account overhead + op-byte storage + one `sha256`), no leftover hotspot;
+further cuts are the tracked cost-mitigation follow-ups below (each a redeploy — profile first).
+
 ## Open follow-ups (deliberately deferred)
 
 - **Off-chain prover service** (roster-scale memoization of the inclusion proofs the contract
   serves at read time; identical format). Mode-2-adjacent infra.
 - **Precise skew bound** + its re-evaluation trigger — V1 ships the conservative collapse; this
   is the documented successor (resolvers depend on the exact rule, so it's pinned when settled).
-- **Item 6 remainder** — live Fly bring-up + a fresh **mainnet** contract deploy, cost allocation
-  (paymaster/AA; MVP = one funded account), and governance (`REFERENCE.md` §6/§7). The console
-  MVP itself has landed (above).
+- **Item 6 remainder** — console **live Fly bring-up** + the prod (mainnet) console app + cost
+  allocation (paymaster/AA; MVP = one funded account) + governance (`REFERENCE.md` §6/§7). The
+  console MVP itself has landed (above); the **v2 contract is already deployed to Sepolia + mainnet**
+  (this is the console productionization, `MAINNET-CHECKLIST.md` Phases 4–8), not the contract.
 - **Generalization seam** (`REFERENCE.md` §5a) — the `merkle` leaf is separator-less, sound only
   because did:plc is fixed-width; add a length prefix *before* admitting variable-width subjects.
-- **Batched settled import for long chains** — `import` re-verifies every op's signature in one
-  transaction, so a long history (roughly ≥5–6 ops) can exceed the sequencer's per-tx L2 gas cap
-  (~1.21e9 on Sepolia; the ingest sink clamps the request under it and errors clearly past it).
-  Most did:plc chains are short and import fine. A robust fix for the long tail is an
-  `import_append(did, signed)` entrypoint that appends a **settled** op (same provenance as
-  `import`, so the 4a guard holds) across several transactions — a contract change, hence a
-  redeploy. Deferred until a real chain hits the ceiling.
+- **Cost mitigations for the roster backfill (deferred; verify-on-read).** v2 import is ≈ 2.33
+  STRK/DID (measured, 4-op); ~19k DIDs is affordable (most are 1–2 ops, so the average is lower),
+  but three levers cut it further. Each is a contract change ⇒ a redeploy, so **profile 1-op vs
+  4-op** (`l2_gas(1) ≈` fixed floor; `(l2_gas(4)−l2_gas(1))/3 ≈` per-op) to pick the lever
+  *before* spending one — ideally before the bulk import. (a) **`import_batch(Array<chain>)`** —
+  amortizes the fixed per-tx account `__validate__`/`__execute__` across many DIDs (one per batch,
+  not per DID); (b) **caller-supplied DID** — `import(did, chain)` stores under a caller-provided
+  `did` and drops the on-chain `sha256` (the witness already re-derives + verifies the DID↔genesis
+  binding read-side), removing the only remaining on-chain crypto; (c) **per-op write trims**
+  (free) — one `Stored` event + one `now_ms()` per `import` instead of per op. The old
+  `import_append` note (splitting a long chain across txs to dodge the per-tx L2 *verification* cap)
+  is **obsolete**: v2 does no per-op verification, so long chains fit in one `import`.
+  (`ONCHAIN-REARCH-PLAN.md` §7.)
 - **Trustless root reads (SECURITY-TODO 4c)** — the witness reads the anchor root via
   `starknet_call`, which trusts the RPC; a fully trustless read verifies a **Starknet storage
   proof against the L1-settled state root** (read the Starknet core contract on Ethereum +

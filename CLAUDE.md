@@ -10,12 +10,15 @@ DID's **complete, current, non-equivocated** history, exposed as a graduated sta
 (`confirmed`/`tentative-consistent`/`diverged`/`absent`) any resolver or PDS enforces
 **unilaterally**, no network coordination required. plc.directory stays canonical; we verify
 per-DID via one **permissionless Starknet endpoint** (`import` from genesis; `submit_op` to
-append — the latter a **backstop**, not the V1 headline), commit a proven DID→document root,
-and let checkers cross-check the directory against it. Verification runs as a Starknet
-contract — the network proves the blocks and settles to Ethereum; no bespoke prover,
-(initially) no sequencer. **V1 is the witness only**; availability and
-canonical-source-in-a-partition are later modes (REFERENCE.md §1a). Not a PLC replacement.
-(REFERENCE.md §1–2.)
+append — the latter a **backstop**, not the V1 headline) that **stores the raw op log**
+(block-timestamped, non-equivocable), and let checkers cross-check the directory against it.
+**Verify-on-read (adopted 2026-07-02):** the contract runs **no** signature/CID verification and
+no fork adjudication — the witness re-derives each DID's live/confirmed head from the on-chain
+bytes read-side (measured mainnet cost was ~100% in-contract EC verification of a self-certifying
+log; [`docs/ONCHAIN-REARCH-PLAN.md`](docs/ONCHAIN-REARCH-PLAN.md)). Starknet still proves the
+blocks and settles to Ethereum; no bespoke prover, (initially) no sequencer. **V1 is the witness
+only**; availability and canonical-source-in-a-partition are later modes (REFERENCE.md §1a). Not a
+PLC replacement. (REFERENCE.md §1–2.)
 
 ## Commands (via the root `Makefile`)
 
@@ -39,17 +42,18 @@ run there — the offline builtin gives `#[test]` with no proc macro. Tests are 
 ## Layout
 
 - `cairo/` — Scarb **workspace**: `packages/drisl` (keystone: DRISL/dCBOR42 + DASL CID) and
-  `packages/plc_core` (contracts: op_verify, recovery, state, the anchor endpoint,
-  governance).
+  `packages/plc_core` (the store-only `anchor` endpoint + `op_verify`/`recovery`/`state`/`merkle`,
+  now the differential-green PLC **reference** the read side mirrors, off the write path).
 - `Cargo.toml` + `ingest/` `oracle/` — one Rust **workspace** (shared lockfile pins
   `atproto-dasl`). `ingest` = the firehose sync indexer; `oracle` = the DRISL/CID
   differential authority.
 - `conformance/` — vendored DASL vectors + the TS oracle sidecar (`@did-plc/lib`) +
   provenance.
 - `witness-ts/` — the V1 witness/resolver library (TypeScript; build order item 5). Runs on
-  Node ≥22 (type-stripping, no build step); `make witness-test`. The resolver-side
-  `verifyProof` is pinned byte-identical to `merkle.cairo` via the shared `gen-merkle-vectors`
-  JSON fixture.
+  Node ≥22 (type-stripping, no build step); `make witness-test`. Verify-on-read: it re-derives
+  each DID's live/confirmed head from the anchor's on-chain op log (`deriveLiveChain` /
+  `deriveAnchorHeads`, differential-green vs `@did-plc/lib` via `nullified.test.ts`) — the
+  consensus-critical read path.
 - `console/` — the Layer-2 admin console (item 6): roster policy + the §4 status dashboard, as
   **glue** over `ingest` (writes) and `witness-ts` (reads) — no consensus logic. TypeScript,
   Node ≥22, `node:sqlite` store; `make console-test`. `site/` is the static `didmarc.dev`
@@ -69,20 +73,30 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 
 ## Do NOT relitigate (settled — see the cited REFERENCE.md sections)
 
+> **Verify-on-read amendment (adopted 2026-07-02).** The contract is now a **store-only,
+> block-timestamped, append-only op log**; all signature/CID verification + fork adjudication run
+> **read-side** in the witness. Bullets touched by this are marked *(amended)* below. Rationale &
+> migration: [`docs/ONCHAIN-REARCH-PLAN.md`](docs/ONCHAIN-REARCH-PLAN.md); design baseline updated
+> in `REFERENCE.md` (§1/§2/§3/§4/§8 amendment banner).
+
 - **V1 is the witness ("atproto identity DMARC"), not the escape hatch.** plc.directory
   stays canonical; the product is the read-side graduated status
   (`confirmed`/`tentative-consistent`/`diverged`/`absent`) a resolver/PDS enforces
   unilaterally. The permissionless write path is a backstop. Availability (Mode 2) and
   canonical-source-in-a-partition (Mode 3) are explicitly later, not V1. (§1a)
-- **The approach:** per-DID, lazy, on-chain verification via a permissionless endpoint; no
-  bulk genesis replay; no in-protocol membership; public Starknet first. (§2)
+- **The approach:** per-DID, lazy verification via a permissionless endpoint; no
+  bulk genesis replay; no in-protocol membership; public Starknet first. *(amended: the
+  verification is read-side over the on-chain op log, not in-contract.)* (§2)
 - **Appchain is deferred and not tracked for V1.** V1 ships on public Starknet (§2). An
   appchain is a far-future option only if credible neutrality ever demands owning the
   sequencer; it is not an open question gating any current work. Don't reopen it absent that
   driver. (§6)
-- **Crypto is a corelib library call** — `sha256`/`secp256k1`/`secp256r1` syscalls, because
-  verification runs in a contract. No pure-Cairo crypto, no Garaga unless an exotic curve
-  appears. (§8)
+- **Crypto runs read-side** *(amended: was "a corelib library call because verification runs in a
+  contract")* — the witness verifies secp256k1/r1 ECDSA + sha256 CIDs over the raw on-chain bytes
+  using `node:crypto`. The contract uses only Cairo corelib `sha256` for DID derivation; no
+  `secp256k1`/`secp256r1` on the write path. The Cairo `sig_verify`/`op_verify`/`recovery` modules
+  remain as the differential-green PLC **reference** the read side mirrors, not on the write path.
+  No Garaga. (§8)
 - **Blessed CID set only:** CIDv1, sha2-256 (0x12, 32B), dag-cbor (0x71) / raw (0x55),
   dCBOR42 canonical. Reject everything else. (§5)
 - **Map key ordering:** implement CBOR-encoded-bytewise ordering (RFC 8949 §4.2.1), not a
@@ -91,24 +105,29 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 - **Signed vs unsigned — do not conflate:** DID/CID derivation hashes the *signed* op (sig
   field included); signature verification is over the *unsigned* op (sig removed, then
   DRISL-encoded). Two distinct byte strings; conflating them fails every check. (§5)
-- **Two-tier roots:** confirmed (past 72h, immutable) vs tentative tip. (§4)
+- **Two tiers:** confirmed (past 72h, immutable) vs tentative tip. *(amended: derived read-side
+  by the witness from the on-chain log + block-time stamps; no on-chain Merkle root/proof.)* (§4)
 - **Recovery:** lower-index rotation key nullifies within 72h. (§5)
 - **Imported history is settled; the 72h window is for live-observed ops only.** Ops entering
-  via `import`/`import_genesis` carry `imported: true`; a recovery may not nullify one
-  (`state::apply_op` → `recovery-of-imported`). The block-time stamp only approximates authored
-  time for ops the anchor saw live; giving backfilled history a live window let a rotated-out
-  key capture a DID (SECURITY-TODO 4a). Onboard via `import`, not op-by-op `submit_op`. (§5)
-- **Authorization = the op's embedded signature, verified in-contract.** The Starknet
-  transaction signer / fee payer is irrelevant and may be anyone — that is the
-  permissionless property. Native AA + paymasters are for gas/UX only, never authorization.
-  Do not require the PLC key to be the Starknet account signer. (§2)
+  via `import`/`import_genesis` carry `imported: true`; a recovery may not nullify one.
+  *(amended: enforced read-side by `deriveLiveChain`'s imported guard — the mirror of
+  `state::apply_op` → `recovery-of-imported`; the contract stores the flag, the witness enforces
+  it.)* The block-time stamp only approximates authored time for ops the anchor saw live; giving
+  backfilled history a live window let a rotated-out key capture a DID (SECURITY-TODO 4a). Onboard
+  via `import`, not op-by-op `submit_op`. (§5)
+- **Authorization = the op's embedded signature** *(amended: verified read-side by the witness,
+  not in-contract)*. The Starknet transaction signer / fee payer is irrelevant and may be anyone —
+  that is the permissionless property. Native AA + paymasters are for gas/UX only, never
+  authorization. Do not require the PLC key to be the Starknet account signer. (§2)
 - **Membership = off-chain policy** over the permissionless endpoint (Layer 2). (§2, §6b)
 - **Frozen core scoped narrowly**, freeze on a maturity gate not a calendar. (§6b)
 
 ## Guardrails
 
-- Consensus-critical modules (`drisl`, `op_verify`, `recovery`) must be **differential-green**
-  against the references (`atproto-dasl`, `@did-plc/lib`) before merge.
+- Consensus-critical modules — the Cairo `drisl` (still on the write path for DID derivation) and
+  the **witness read path** (`witness-ts` `deriveLiveChain`/`deriveAnchorHeads`/`crypto`/`dagcbor`,
+  and the `op_verify`/`recovery` Cairo reference) — must be **differential-green** against the
+  references (`atproto-dasl`, `@did-plc/lib`) before merge.
 - **Never weaken or hand-edit a conformance vector to make a test pass.** Regenerate from
   source and bump the pin (`conformance/README.md`).
 - Pin the differential authorities in lockfiles; bump deliberately.
@@ -117,19 +136,23 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 ## Build order & status (REFERENCE.md §3)
 
 Build order is dependency order, not priority order: the V1 *product* is the witness (item 5),
-built last because it stands on 1–4. **Items 1–5 have landed**, each differential-green against
-the references; the **post-4a** `anchor` contract is deployed to Sepolia
-(`0x01e3cd42e8481a40b366ef32940e8bc050fd79c924c9b838a6dc0338a08fc5c3`, `deployments/sepolia.json`
-— supersedes the pre-4a `0x00816c…`). Roster starts empty on a fresh deploy; re-import DIDs.
+built last because it stands on 1–4. **Items 1–5 have landed.** The **verify-on-read**
+rearchitecture (store-only contract; read-side verification) is `make ci`-green and **deployed v2
+to Sepolia (`0x06b16c52…`) and mainnet** (`import`/`submit_op`/`chain`; new class/address, empty
+roster, re-import). Measured Sepolia import ≈ **2.33 STRK (~11.8× under pre-rearch)**; residual is
+ordinary store-only execution, further cuts are tracked cost-mitigation follow-ups
+(`docs/ONCHAIN-REARCH-PLAN.md` §7). The prior in-contract-verifying instances (Sepolia `0x01e3cd…`,
+mainnet `0x04db…`) are superseded by v2. Roster starts empty on a fresh deploy; re-import DIDs.
+**(Update `deployments/mainnet.json` to the v2 mainnet address — it still records the old `0x04db…`.)**
 
 | # | Item | Where | Status |
 |---|---|---|---|
 | 1 | DRISL + DASL CID (keystone) | `cairo/packages/drisl` | ✅ |
-| 2 | PLC op verification + 72h recovery | `cairo/packages/plc_core` | ✅ |
-| 3 | State commitment + the `import`/`submit_op` endpoint | `cairo/packages/plc_core` (`anchor`) | ✅ |
+| 2 | PLC op verification + 72h recovery (now the read-side **reference**) | `cairo/packages/plc_core`, `witness-ts` | ✅ |
+| 3 | Store-only `import`/`submit_op`/`chain` endpoint (verify-on-read) | `cairo/packages/plc_core` (`anchor`) | ✅ deployed v2 (Sepolia + mainnet) |
 | 4 | Sync indexer (firehose → deltas) | `ingest/` | ✅ |
-| 5 | **Witness / resolver library — the V1 product** | `witness-ts/` | ✅ feature-complete, offline-green |
-| 6 | Layer-2 admin console (roster policy + state dashboard) | `console/`, `site/` | 🚧 MVP built, offline-green; pending live deploy + mainnet |
+| 5 | **Witness / resolver library — the V1 product** | `witness-ts/` | ✅ feature-complete, `make ci`-green |
+| 6 | Layer-2 admin console (roster policy + state dashboard) | `console/`, `site/` | 🚧 MVP built; pending console live deploy + prod app (Phases 4–8) |
 
 What landed per item, the load-bearing decisions, the open follow-ups, and the V1 live-bring-up
 checklist all live in **[`docs/HISTORY.md`](docs/HISTORY.md)**. The design baseline is

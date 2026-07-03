@@ -19,7 +19,7 @@ The governing invariant (Phase 5 plan §0): **never a false `diverged`.** A fals
 | 4 | read | Equivocation — a mirror omits a confirmed op | `diverged` 🚨 | `diverged` | ✅ pass |
 | 5 | read | Vanishing DID — a mirror erases an anchored identity | `diverged` 🚨 | `diverged` | ✅ pass |
 | 6 | read | Window-edge skew — a contradiction that benign skew could explain (the §0 wall) | `tentative-consistent` ✅ | `tentative-consistent` | ✅ pass |
-| 7 | read | Anchor self-fault — the witness distrusts its own unproven head | `tentative-consistent` ✅ | `tentative-consistent` | ✅ pass |
+| 7 | read | Anchor self-fault — a corrupt on-chain log yields no confirmed head, never an alarm | `tentative-consistent` ✅ | `tentative-consistent` | ✅ pass |
 | 8 | read | Coverage gap — the DID isn't anchored at all | `absent` ➖ | `absent` | ✅ pass |
 | 9 | write | Forged signature — an unsigned op submitted as authentic | `rejected` ⛔ | `invalid-sig` | ✅ enforced |
 | 10 | write | Weaker-key recovery — a low-priority key tries to override a higher one | `rejected` ⛔ | `recovery-weaker-key` | ✅ enforced |
@@ -52,12 +52,11 @@ _Clock pinned to 2026-06-30T00:00:00.000Z; skew horizon 14 days._
 
 **Witness evidence.**
 
-- anchor confirmed head: `bafyreigxuanmkaq2522…`
+- anchor confirmed head (re-derived from the on-chain op log): `bafyreigxuanmkaq2522…`
 - anchor tentative head: `bafyreigxuanmkaq2522…`
 - directory head: `bafyreigxuanmkaq2522…`
-- confirmed-head inclusion proof verified against an independently-fetched root: ✓
 
-**What this means.** The witness re-derives the anchor's confirmed root from an independently-fetched inclusion proof and finds the directory's live head is byte-identical. This is `confirmed` — the DMARC `pass`. A resolver can treat the directory's answer as cryptographically backed.
+**What this means.** The witness re-derives the anchor's confirmed head from its on-chain op log and finds the directory's live head is byte-identical. This is `confirmed` — the DMARC `pass`. A resolver can treat the directory's answer as cryptographically backed.
 
 ## 2. Young DID — anchored, but nothing is immutable yet
 
@@ -79,10 +78,9 @@ _Clock pinned to 2026-06-30T00:00:00.000Z; skew horizon 14 days._
 
 **Witness evidence.**
 
-- anchor confirmed head: `—`
+- anchor confirmed head (re-derived from the on-chain op log): `—`
 - anchor tentative head: `bafyreienfqk6fwpkku5…`
 - directory head: `bafyreienfqk6fwpkku5…`
-- confirmed-head inclusion proof verified against an independently-fetched root: ✗
 
 **What this means.** With nothing confirmed, the strongest honest answer is `tentative-consistent`, never an alarm. The anchor refuses to assert immutability it hasn't earned yet — there is no hard `reject-unless-confirmed` gate (REFERENCE.md §4).
 
@@ -107,10 +105,9 @@ _Clock pinned to 2026-06-30T00:00:00.000Z; skew horizon 14 days._
 
 **Witness evidence.**
 
-- anchor confirmed head: `bafyreienfqk6fwpkku5…`
+- anchor confirmed head (re-derived from the on-chain op log): `bafyreienfqk6fwpkku5…`
 - anchor tentative head: `bafyreienfqk6fwpkku5…`
 - directory head: `bafyreigxuanmkaq2522…`
-- confirmed-head inclusion proof verified against an independently-fetched root: ✓
 
 **What this means.** The histories AGREE on everything the anchor has proven — the only difference is newer ops the anchor hasn't caught up to. `tentative-consistent`, not an alarm. This restraint is what earns the alarm its credibility: `diverged` means something precisely because lag does not trigger it.
 
@@ -134,12 +131,11 @@ _Clock pinned to 2026-06-30T00:00:00.000Z; skew horizon 14 days._
 
 **Witness evidence.**
 
-- anchor confirmed head: `bafyreigxuanmkaq2522…`
+- anchor confirmed head (re-derived from the on-chain op log): `bafyreigxuanmkaq2522…`
 - anchor tentative head: `bafyreigxuanmkaq2522…`
 - directory head: `bafyreia4eeiy5olozti…`
-- confirmed-head inclusion proof verified against an independently-fetched root: ✓
 
-**What this means.** The witness verifies the confirmed head against an independently-fetched root, then finds it NOWHERE in the mirror's live chain — and the mirror's head is far too old to be lag. This is the sole actionable alarm — `diverged`, the DMARC `reject`. A resolver acts on it unilaterally: no PLC-side coordination, no trust in the mirror.
+**What this means.** The witness re-derives the confirmed head from the anchor's on-chain op log, then finds it NOWHERE in the mirror's live chain — and the mirror's head is far too old to be lag. This is the sole actionable alarm — `diverged`, the DMARC `reject`. A resolver acts on it unilaterally: no PLC-side coordination, no trust in the mirror.
 
 ## 5. Vanishing DID — a mirror erases an anchored identity
 
@@ -157,10 +153,9 @@ _(empty audit log — the mirror serves nothing for this DID)_
 
 **Witness evidence.**
 
-- anchor confirmed head: `bafyreigxuanmkaq2522…`
+- anchor confirmed head (re-derived from the on-chain op log): `bafyreigxuanmkaq2522…`
 - anchor tentative head: `bafyreigxuanmkaq2522…`
 - directory head: `—`
-- confirmed-head inclusion proof verified against an independently-fetched root: ✓
 
 **What this means.** An anchored DID cannot be silently erased. The anchor still proves a confirmed head the (empty) directory serves nothing for, and an absent directory head is not within any skew horizon → `diverged`. Censorship by omission is exactly what the anchor makes detectable.
 
@@ -184,21 +179,20 @@ _(empty audit log — the mirror serves nothing for this DID)_
 
 **Witness evidence.**
 
-- anchor confirmed head: `bafyreigxuanmkaq2522…`
+- anchor confirmed head (re-derived from the on-chain op log): `bafyreigxuanmkaq2522…`
 - anchor tentative head: `bafyreigxuanmkaq2522…`
 - directory head: `bafyreia4eeiy5olozti…`
-- confirmed-head inclusion proof verified against an independently-fetched root: ✓
 
 **What this means.** Same contradiction as `equivocation`, but the directory's head is recent enough that clock skew could explain it — so the witness defers with `skew-pending`, NOT `diverged`. This is the governing invariant made executable: when skew can plausibly explain a disagreement, never alarm. Re-evaluate once the window closes.
 
-## 7. Anchor self-fault — the witness distrusts its own unproven head
+## 7. Anchor self-fault — a corrupt on-chain log yields no confirmed head, never an alarm
 
-> **Verdict: `tentative-consistent`** ✅ — reason `anchor-proof-unverified`
+> **Verdict: `tentative-consistent`** ✅ — reason `within-window-uncommitted`
 
-**Threat.** Not a directory attack — a humility check. If the anchor returns a confirmed head whose inclusion proof does NOT reconstruct the independently-fetched root (a node bug, a stale read, a malicious RPC), the witness must not blame the directory for it.
+**Threat.** Not a directory attack — a humility check. Under verify-on-read the witness re-derives the anchor's confirmed head from the on-chain op log. If that log is unreadable/unvalidatable (a node bug, a stale or malicious RPC serving garbage bytes, an unlinkable chain), the re-derivation yields NO confirmed head — and the witness must not turn its own inability to confirm into a `diverged` accusation against the directory.
 
 **Setup.**
-- DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored and the anchor claims a confirmed head — but its own inclusion proof fails to verify against the confirmed root the resolver fetched.
+- DID did:plc:6dhcuzar5ggiqcptlt5qly5u is anchored, but the anchor's on-chain op log does not re-derive to any confirmed head (corrupt/unvalidatable bytes, or nothing past the 72h window).
 - The directory, meanwhile, serves a totally different and old history.
 
 **What the directory serves.**
@@ -209,12 +203,11 @@ _(empty audit log — the mirror serves nothing for this DID)_
 
 **Witness evidence.**
 
-- anchor confirmed head: `bafyreienfqk6fwpkku5…`
-- anchor tentative head: `bafyreienfqk6fwpkku5…`
+- anchor confirmed head (re-derived from the on-chain op log): `—`
+- anchor tentative head: `—`
 - directory head: `bafyreiunrelatedoldh…`
-- confirmed-head inclusion proof verified against an independently-fetched root: ✗
 
-**What this means.** Even with a directory that looks divergent, an UNPROVEN anchor head yields `tentative-consistent`, not `diverged`. The witness alarms only on what it can cryptographically stand behind — an anchor-side fault is the anchor's problem, never grounds to accuse the directory.
+**What this means.** With no confirmed head to stand behind — whether because the DID is young or because the anchor's own on-chain state is corrupt — the witness returns `tentative-consistent`, never `diverged`, even against a directory that looks divergent. It alarms only on what it can re-derive and verify; an anchor-side fault is the anchor's problem, never grounds to accuse the directory.
 
 ## 8. Coverage gap — the DID isn't anchored at all
 
@@ -234,16 +227,15 @@ _(empty audit log — the mirror serves nothing for this DID)_
 
 **Witness evidence.**
 
-- anchor confirmed head: `—`
+- anchor confirmed head (re-derived from the on-chain op log): `—`
 - anchor tentative head: `—`
 - directory head: `—`
-- confirmed-head inclusion proof verified against an independently-fetched root: ✗
 
 **What this means.** `absent` is the DMARC `p=none`: no coverage, no claim. The witness never fabricates confidence for a DID outside its roster — a resolver knows precisely where the protection applies and where it doesn't.
 
 ## 9. Forged signature — an unsigned op submitted as authentic
 
-> **Verdict: `rejected`** ⛔ — reason `invalid-sig` · defender: plc_core::op_verify / sig_verify (in-contract)
+> **Verdict: `rejected`** ⛔ — reason `invalid-sig` · defender: witness read-side re-derivation (`deriveLiveChain` → `opverify`/`crypto`)
 
 **Threat.** Anyone can call the permissionless endpoint and pay the gas (that's the design). So an attacker submits a well-formed op for a victim DID with a signature they don't hold the key for.
 
@@ -251,13 +243,13 @@ _(empty audit log — the mirror serves nothing for this DID)_
 - forks at opA on did:plc:pcnytiamasqdcm6cwddqmzy3, presented as a normal append
 - signature: tampered (does not verify under any of the DID's rotation keys)
 
-**Verdict.** Rejected by **plc_core::op_verify / sig_verify (in-contract)** with `invalid-sig`. Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted.
+**Verdict.** Rejected by **witness read-side re-derivation (`deriveLiveChain` → `opverify`/`crypto`)** with `invalid-sig`. Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the witness re-derivation is differential-green against (witness-ts/test/nullified.test.ts); this generator throws if such an op is ever accepted. Stored on-chain permissionlessly, the forged op simply never appears on the re-derived live chain.
 
-**What this means.** Authorization is the op's EMBEDDED signature, verified in-contract against the fork-point's rotation keys — never the Starknet fee-payer. The transaction can be paid by anyone; the op still has to be signed by a real PLC key. The forgery is rejected before any state changes (`invalid-sig`).
+**What this means.** Authorization is the op's EMBEDDED signature, verified read-side against the fork-point's rotation keys — never the Starknet fee-payer. The transaction can be paid by anyone and the bytes can even be stored on-chain; the op still has to be signed by a real PLC key, so the witness's re-derivation drops the forgery (`invalid-sig`) and it never reaches a resolver.
 
 ## 10. Weaker-key recovery — a low-priority key tries to override a higher one
 
-> **Verdict: `rejected`** ⛔ — reason `recovery-weaker-key` · defender: plc_core::recovery (in-contract)
+> **Verdict: `rejected`** ⛔ — reason `recovery-weaker-key` · defender: witness read-side re-derivation (`deriveLiveChain`)
 
 **Threat.** An attacker who holds only a LOW-priority rotation key (e.g. a leaked device key) tries to fork the history and nullify an op signed by a HIGHER-priority key — a recovery they aren't entitled to make.
 
@@ -265,13 +257,13 @@ _(empty audit log — the mirror serves nothing for this DID)_
 - forks at genesis on did:plc:pcnytiamasqdcm6cwddqmzy3, nullifying opA (which was signed by rotation key index 1)
 - signed by rotation key index 2 — strictly lower priority than the key it tries to override
 
-**Verdict.** Rejected by **plc_core::recovery (in-contract)** with `recovery-weaker-key`. Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted.
+**Verdict.** Rejected by **witness read-side re-derivation (`deriveLiveChain`)** with `recovery-weaker-key`. Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the witness re-derivation is differential-green against (witness-ts/test/nullified.test.ts); this generator throws if such an op is ever accepted. If stored on-chain it stays off the re-derived live chain.
 
-**What this means.** PLC recovery only flows downward in priority: a fork is valid only if signed by a key of STRICTLY higher priority than the disputed op's signer. The weaker key cannot override the stronger one, so the contract rejects (`recovery-weaker-key`) — the key hierarchy is enforced on-chain, not assumed.
+**What this means.** PLC recovery only flows downward in priority: a fork is valid only if signed by a key of STRICTLY higher priority than the disputed op's signer. The weaker key cannot override the stronger one, so the witness's re-derivation drops it (`recovery-weaker-key`) — the key hierarchy is enforced by re-derivation, not assumed.
 
 ## 11. Late recovery — a valid key, but after the 72h window
 
-> **Verdict: `rejected`** ⛔ — reason `late-recovery` · defender: plc_core::recovery (in-contract)
+> **Verdict: `rejected`** ⛔ — reason `late-recovery` · defender: witness read-side re-derivation (`deriveLiveChain`)
 
 **Threat.** An attacker holds a high-priority key and attempts a legitimate-looking recovery — but the op being disputed is already older than the 72h recovery window, so the recovery is no longer permitted.
 
@@ -279,13 +271,13 @@ _(empty audit log — the mirror serves nothing for this DID)_
 - forks at genesis on did:plc:pcnytiamasqdcm6cwddqmzy3, signed by the highest-priority key (index 0)
 - the disputed op was created more than 72h ago — outside the recovery window
 
-**Verdict.** Rejected by **plc_core::recovery (in-contract)** with `late-recovery`. Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the contract is differential-green against (recovery_vectors_generated.cairo); this generator throws if such an op is ever accepted.
+**Verdict.** Rejected by **witness read-side re-derivation (`deriveLiveChain`)** with `late-recovery`. Ground-truthed at fixture-generation time against `@did-plc/lib` `assureValidNextOp` — the same oracle the witness re-derivation is differential-green against (witness-ts/test/nullified.test.ts); this generator throws if such an op is ever accepted. If stored on-chain it stays off the re-derived live chain.
 
-**What this means.** Even the strongest key can't rewrite history indefinitely. Once an op has survived the 72h window it is immutable, and a fork below it is rejected (`late-recovery`). This is the window that makes the confirmed tier meaningful — and it's enforced on the directory-assigned clock, the same input PLC uses.
+**What this means.** Even the strongest key can't rewrite history indefinitely. Once an op has survived the 72h window it is immutable, and a fork below it is dropped by the witness's re-derivation (`late-recovery`). This is the window that makes the confirmed tier meaningful — enforced on the directory-assigned clock, the same input PLC uses.
 
 ## 12. Recovery of imported history — a rotated-out key exploits the import-time clock (4a)
 
-> **Verdict: `rejected`** ⛔ — reason `recovery-of-imported` · defender: plc_core::state::apply_op (in-contract)
+> **Verdict: `rejected`** ⛔ — reason `recovery-of-imported` · defender: witness read-side re-derivation (`deriveLiveChain` imported guard)
 
 **Threat.** The 4a capture. A DID's history is IMPORTED (settled backfill), and the anchor stamps every op with the import time — not its real authored time (`createdAt` is not in the signed op). So for 72h after onboarding the whole history looks freshly authored. A higher-priority rotation key that was long ago ROTATED AWAY — the custodial→self-hosted migration leaves exactly such a key, no longer the DID's controller — forks below the real history and nullifies it, capturing the anchored DID inside that window.
 
@@ -294,7 +286,7 @@ _(empty audit log — the mirror serves nothing for this DID)_
 - signed by a strictly-higher-priority key (index 0) — in the field, a rotated-out custodial key no longer controlling the DID
 - the anchor's import-time stamp makes opA look fresh, so the 72h late-recovery check ALONE would accept this and let the DID be captured
 
-**Verdict.** Rejected by **plc_core::state::apply_op (in-contract)** with `recovery-of-imported`. Two-part. (1) On the REAL aged chain, `@did-plc/lib` `assureValidNextOp` rejects this recovery as late (opA's authored window closed) — so rejecting it is correct, and this generator throws if the oracle ever accepts it. (2) The anchor cannot see that age — it stamped opA at import time — so its in-contract defender is the provenance rule, not the window check: `state::apply_op` refuses a recovery that nullifies an imported op. Proven by `plc_core::tests::anchor::recovery_cannot_nullify_imported_history`, contrasted with `recovery_through_contract` where a LIVE-observed opA (honest block-time clock) remains recoverable.
+**Verdict.** Rejected by **witness read-side re-derivation (`deriveLiveChain` imported guard)** with `recovery-of-imported`. Two-part. (1) On the REAL aged chain, `@did-plc/lib` `assureValidNextOp` rejects this recovery as late (opA's authored window closed) — so rejecting it is correct, and this generator throws if the oracle ever accepts it. (2) The witness cannot see that age — the op is stamped at import time — so the read-side defender is the provenance rule, not the window check: `deriveLiveChain` refuses a recovery that nullifies an op flagged `imported`. Pinned by witness-ts/test/nullified.test.ts (`deriveAnchorHeads` … recovery-of-imported, read-side), the exact mirror of the Cairo `tests::anchor::recovery_cannot_nullify_imported_history`; contrasted with a LIVE-observed opA (honest block-time clock), which remains recoverable.
 
 **What this means.** The 72h late-recovery check has a blind spot: it measures against the anchor's clock, which for backfilled history is the import time, not the op's real authored time. That blind spot IS the 4a capture — a rotated-out higher-priority key re-opening a window that closed years ago. The fix marks imported ops SETTLED (a recovery may not nullify them), so the window is honored only for live-observed ops whose block-time stamp approximates their real authored time. Onboarding via `import` (not op-by-op `submit_op`) is what preserves that provenance. (SECURITY-TODO 4a.)
 

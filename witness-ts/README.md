@@ -14,23 +14,26 @@ email receiver enables DMARC.
 > contradiction of already-confirmed history. See `REFERENCE.md` §4 and `docs/HISTORY.md`
 > (item 5).
 
+> **Verify-on-read** (`docs/ONCHAIN-REARCH-PLAN.md`). The anchor contract stores raw op bytes;
+> the witness re-derives each DID's live/confirmed head from them here — exactly as it already
+> re-derives the directory's — and rejects any bogus chain read-side. There is no on-chain Merkle
+> proof to verify; the anchor's contribution is non-equivocation + an independent block-time stamp.
+
 ## What's here
 
-- **`src/merkle.ts`** — sha256-Merkle inclusion-proof **verification**, pinned byte-identical
-  to the contract's tree (`cairo/packages/plc_core/src/merkle.cairo`) via the shared
-  `gen-merkle-vectors` fixture. This is the trust primitive: recompute the root from a proof
-  and compare it to a root fetched independently, so the proof server stays untrusted.
-- **`src/starknet.ts`** — hand-encoded `starknet_call` reads of the anchor views
-  (`tentative_root` / `confirmed_root` / `head_cid` / `tentative_proof` / …), mirroring
-  `ingest`'s ByteArray ABI codec (no SDK); selectors precomputed from the `starknet` crate
-  (`src/selectors.ts`, Node has no Keccak).
-- **`src/directory.ts`** — the PLC audit-log client + head selection (the directory's
-  `createdAt` clock, for the skew check).
-- **`src/status.ts`** — the graduated-status `check(did)` ladder
-  (`confirmed`/`tentative-consistent`/`diverged`/`absent`). `diverged` fires only when the
-  anchor's confirmed head is absent from the directory's live chain AND the directory head is
-  older than a conservative skew horizon (default 14d) — every recent/edge case is
-  `skew-pending` (`tentative-consistent`), honoring the never-false-`diverged` invariant.
+- **`src/directory.ts`** — `deriveLiveChain`, the PLC chain validator (signatures + linkage + 72h
+  recovery + the `imported`/settled guard), differential-green vs `@did-plc/lib`. Runs over BOTH
+  the directory audit log and the anchor's on-chain op log. Plus the audit-log client + head
+  selection (the directory's `createdAt` clock, for the skew check).
+- **`src/starknet.ts`** — hand-encoded `starknet_call` read of the anchor's `chain(did)` view (raw
+  ops + block-time stamps + provenance) via `decodeChain`, mirroring `ingest`'s ByteArray ABI codec
+  (no SDK); selectors precomputed from the `starknet` crate (`src/selectors.ts`, Node has no Keccak).
+- **`src/status.ts`** — `deriveAnchorHeads` (re-derive the anchor's confirmed/tentative head from
+  its on-chain op log: op bodies cross-referenced content-addressed, block-time 72h window) + the
+  graduated-status `check(did)` ladder (`confirmed`/`tentative-consistent`/`diverged`/`absent`).
+  `diverged` fires only when the anchor's confirmed head is absent from the directory's live chain
+  AND the directory head is older than a conservative skew horizon (default 14d) — every recent/edge
+  case is `skew-pending` (`tentative-consistent`), honoring the never-false-`diverged` invariant.
 - **`src/cli.ts`** — the `witness` CLI; `test/live.test.ts` — a gated live read against the
   Sepolia deployment (runs only with `WITNESS_LIVE_RPC` set).
 
@@ -63,6 +66,8 @@ npm test          # node --test  (the drift gate; no external deps needed)
 npm run typecheck # tsc --noEmit  (needs `npm install` for @types/node)
 ```
 
-The Merkle format is **pinned**: `make gen-merkle-vectors` regenerates both the Cairo test
-fixture and `test/vectors/merkle-vectors.json` from one source; CI fails on drift. Do not edit
-the generated fixture or the leaf/node format by hand — a divergence here is a fork.
+The read-side re-derivation is **pinned** against `@did-plc/lib`: `make gen-nullified-vectors`
+regenerates `test/vectors/nullified-vectors.json` (real signed chains, ground-truthed), and
+`nullified.test.ts` drives both the directory and anchor derivations (`deriveLiveChain` /
+`deriveAnchorHeads`, incl. read-side recovery-of-imported) against it. CI fails on drift. Do not
+edit generated fixtures by hand — a divergence here is a fork.

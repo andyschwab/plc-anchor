@@ -10,12 +10,14 @@
 //!   link      — `prev` linkage via the predecessor's base32 CID string.
 //!   recovery  — 72h higher-priority-key nullification decision (§4, §5).
 //!
-//! Phase 3 (next) — state commitment + anchor endpoint:
-//!   state      — per-DID head + confirmed/tentative DID→document roots (§4); `apply_op`
-//!                composes the Phase 2 primitives above into the non-genesis append/recovery
-//!                decision (the single integrated verification path the anchor consumes).
-//!   merkle     — sha256 Merkle commitment over the DID→head map (§4, P3.2).
-//!   anchor     — the permissionless endpoint: `import`/`submit_op` (§2).
+//! Phase 3 — anchor endpoint (VERIFY-ON-READ, docs/ONCHAIN-REARCH-PLAN.md):
+//!   anchor     — the permissionless **store-only** endpoint: `import`/`submit_op`/`chain`. It
+//!                stores raw op bytes (block-time + provenance) and runs NO verification; the
+//!                witness re-derives validity read-side (`witness-ts`). Uses only `drisl` for DID
+//!                derivation.
+//!   state / merkle / op_verify / recovery / sig_verify / key_parse / op_decode — retained as the
+//!                differential-green PLC **reference** the read side mirrors; no longer on the
+//!                contract's write path.
 //!   governance — multisig + timelock + one-way freeze flag (§6b).
 
 pub mod anchor;
