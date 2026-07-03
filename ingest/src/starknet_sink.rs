@@ -139,33 +139,13 @@ impl StarknetSink {
                 entry_point_selector: get_selector_from_name("chain")?,
                 calldata: byte_array_calldata(did.as_bytes()),
             },
+            // Read the latest ACCEPTED block, not pre-confirmed. These are post-acceptance
+            // confirmation reads; a pre-confirmed snapshot on some nodes can be internally
+            // inconsistent (a storage `Map` slot updated while the backing `Vec`-length slot still
+            // reads stale).
             BlockId::Tag(BlockTag::Latest),
         ))?;
         decode_chain(&felts)
-    }
-
-    /// Read a `ByteArray`-returning view as raw bytes. A generic helper for any single-`ByteArray`
-    /// view; exposed for the E2E harness to assert on-chain effects.
-    pub fn call_byte_array_view(&self, function: &str, args: &[u8]) -> Result<Vec<u8>> {
-        use starknet::core::types::FunctionCall;
-        let calldata = if args.is_empty() {
-            Vec::new()
-        } else {
-            byte_array_calldata(args)
-        };
-        let felts = self.runtime.block_on(self.account.provider().call(
-            FunctionCall {
-                contract_address: self.contract,
-                entry_point_selector: get_selector_from_name(function)?,
-                calldata,
-            },
-            // Read the latest ACCEPTED block, not pre-confirmed. These are post-acceptance
-            // confirmation reads; a pre-confirmed snapshot on some nodes is internally
-            // inconsistent (a storage `Map` slot updated while the `Vec`-length slot backing
-            // `tentative_root` still reads stale), which surfaced a spurious empty root.
-            BlockId::Tag(BlockTag::Latest),
-        ))?;
-        byte_array_from_felts(&felts)
     }
 
     /// Read the `is_anchored(did)` bool view.
@@ -177,7 +157,7 @@ impl StarknetSink {
                 entry_point_selector: get_selector_from_name("is_anchored")?,
                 calldata: byte_array_calldata(did.as_bytes()),
             },
-            // Latest accepted block — consistent snapshot (see `call_byte_array_view`).
+            // Latest accepted block — consistent snapshot (see `call_chain`).
             BlockId::Tag(BlockTag::Latest),
         ))?;
         Ok(felts.first().copied().unwrap_or(Felt::ZERO) != Felt::ZERO)
@@ -314,7 +294,7 @@ impl AnchorSink for StarknetSink {
 /// `[num_full_words, word_0, …, word_{n-1}, pending_word, pending_word_len]`, where each full
 /// word is 31 bytes big-endian and the pending word is the trailing `len % 31` bytes big-endian
 /// (RFC-agnostic — this is Cairo's `core::byte_array::ByteArray` serde, confirmed against the
-/// contract's `tentative_root` output).
+/// contract's `chain` view output).
 fn byte_array_calldata(bytes: &[u8]) -> Vec<Felt> {
     let full = bytes.len() / 31;
     let rem = bytes.len() % 31;
