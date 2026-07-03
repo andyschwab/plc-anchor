@@ -137,19 +137,22 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 
 Build order is dependency order, not priority order: the V1 *product* is the witness (item 5),
 built last because it stands on 1–4. **Items 1–5 have landed.** The **verify-on-read**
-rearchitecture (store-only contract; read-side verification) is offline-green and pending a fresh
-Sepolia→mainnet **v2 deploy** (`import`/`submit_op`/`chain`; a new class/address, empty roster,
-re-import). The prior in-contract-verifying instances (Sepolia `0x01e3cd…`, mainnet `0x04db…`) are
-superseded by v2. Roster starts empty on a fresh deploy; re-import DIDs.
+rearchitecture (store-only contract; read-side verification) is `make ci`-green and **deployed v2
+to Sepolia (`0x06b16c52…`) and mainnet** (`import`/`submit_op`/`chain`; new class/address, empty
+roster, re-import). Measured Sepolia import ≈ **2.33 STRK (~11.8× under pre-rearch)**; residual is
+ordinary store-only execution, further cuts are tracked cost-mitigation follow-ups
+(`docs/ONCHAIN-REARCH-PLAN.md` §7). The prior in-contract-verifying instances (Sepolia `0x01e3cd…`,
+mainnet `0x04db…`) are superseded by v2. Roster starts empty on a fresh deploy; re-import DIDs.
+**(Update `deployments/mainnet.json` to the v2 mainnet address — it still records the old `0x04db…`.)**
 
 | # | Item | Where | Status |
 |---|---|---|---|
 | 1 | DRISL + DASL CID (keystone) | `cairo/packages/drisl` | ✅ |
 | 2 | PLC op verification + 72h recovery (now the read-side **reference**) | `cairo/packages/plc_core`, `witness-ts` | ✅ |
-| 3 | Store-only `import`/`submit_op`/`chain` endpoint (verify-on-read) | `cairo/packages/plc_core` (`anchor`) | ✅ offline; pending v2 deploy |
+| 3 | Store-only `import`/`submit_op`/`chain` endpoint (verify-on-read) | `cairo/packages/plc_core` (`anchor`) | ✅ deployed v2 (Sepolia + mainnet) |
 | 4 | Sync indexer (firehose → deltas) | `ingest/` | ✅ |
-| 5 | **Witness / resolver library — the V1 product** | `witness-ts/` | ✅ feature-complete, offline-green |
-| 6 | Layer-2 admin console (roster policy + state dashboard) | `console/`, `site/` | 🚧 MVP built, offline-green; pending live deploy + mainnet |
+| 5 | **Witness / resolver library — the V1 product** | `witness-ts/` | ✅ feature-complete, `make ci`-green |
+| 6 | Layer-2 admin console (roster policy + state dashboard) | `console/`, `site/` | 🚧 MVP built; pending console live deploy + prod app (Phases 4–8) |
 
 What landed per item, the load-bearing decisions, the open follow-ups, and the V1 live-bring-up
 checklist all live in **[`docs/HISTORY.md`](docs/HISTORY.md)**. The design baseline is

@@ -12,15 +12,19 @@ every phase ends in a **✅ confirm gate** you must satisfy before moving on.
 
 ---
 
-## Progress (2026-07-02) — RESUMING: verify-on-read v2 cutover, then Phases 4–8
+## Progress (2026-07-03) — verify-on-read v2 LIVE (Sepolia + mainnet); Phases 4–8 next
 
-The protocol reached mainnet end-to-end on the pre-rearchitecture (in-contract-verifying) contract
-(Phases 1–3 below). Fee measurement then showed **per-DID import ≈ 6.9 STRK/op, ~100% in-contract
-EC verification** — not storage/DA (~free) — so the full 18 991-DID roster would cost six figures
-to verify on-chain, for a backup witness. The **verify-on-read rearchitecture**
-([`ONCHAIN-REARCH-PLAN.md`](ONCHAIN-REARCH-PLAN.md)) is now **adopted and implemented** (store-only
-contract; the witness re-derives validity read-side). Before Phases 4–8 we deploy the **v2**
-contract (a new class/address — same migration path as any redeploy) via **Phase R** below.
+The protocol first reached mainnet on the pre-rearchitecture (in-contract-verifying) contract.
+Fee measurement showed **per-DID import ≈ 6.9 STRK/op, ~100% in-contract EC verification** (not
+storage/DA, which is ~free) — six figures to verify the full 18 991-DID roster on-chain. The
+**verify-on-read rearchitecture** ([`ONCHAIN-REARCH-PLAN.md`](ONCHAIN-REARCH-PLAN.md)) moved
+verification read-side; the **v2 store-only contract is now deployed to Sepolia (`0x06b16c52…`) and
+mainnet** (Phase R done). **Measured Sepolia import ≈ 2.33 STRK vs 27.6 STRK pre-rearch — ~11.8×**
+(`l1_gas 0`, `l1_data_gas` ~free, `l2_gas 81.65M`; residual is ordinary store-only execution).
+Cost-mitigation levers for the bulk backfill are tracked in `ONCHAIN-REARCH-PLAN.md` §7 — profile
+1-op vs 4-op and decide *before* importing the 19k roster (each lever is a redeploy).
+**Outstanding:** commit the v2 **mainnet** address to `deployments/mainnet.json` (still records the
+old `0x04db…`), then the console productionization (Phases 4–8 below).
 
 - **Phase 1 ✅** — `plc-mainnet` operator wallet live & funded (deployed tx `0x5d92f3e2…`).
 - **Phase 2 ✅ (v1, superseded)** — pre-rearch `anchor` deployed:
@@ -39,26 +43,23 @@ The v2 contract is **store-only** (`import`/`submit_op`/`chain`, no in-contract 
 new class/address with an empty roster — the standard redeploy migration; re-import from genesis
 (now *much* cheaper). The witness/ingest/console code already targets v2.
 
-- [ ] On a Scarb-equipped box: `make ci` green (esp. `cairo-build` + `cairo-test` — the sandbox
-      that wrote this change has no Cairo toolchain, so this is the first real compile of the v2
-      contract + rewritten `tests/anchor.cairo`).
-- [ ] **Sepolia first.** `NETWORK=sepolia scripts/deploy.sh` → new v2 class/address; write
-      `deployments/sepolia.json`; commit. Re-import the corpus canary
-      (`cargo run -p ingest --features live -- --did <canary> --submit`).
-- [ ] Sepolia validation: `cargo test -p ingest --features live --test live_e2e -- --ignored`
-      (asserts byte-identical on-chain storage via `chain`); `witness check <canary>` →
-      `tentative-consistent`; `WITNESS_LIVE_RPC=<sepolia> make adversarial-live` behaves.
-- [ ] **Confirm cost.** Read the import `actual_fee` on Sepolia v2 and verify the ~10–50× drop vs
-      the pre-rearch numbers (the whole point). Record it.
-- [ ] **Mainnet.** `NETWORK=mainnet … scripts/deploy.sh` → v2 class/address; update
-      `deployments/mainnet.json` + `secrets/mainnet.env` `ANCHOR_CONTRACT_ADDRESS`; commit.
-- [ ] Re-run Phase 3's canary onboarding + witness/adversarial-live against the mainnet v2 address;
-      restart the 72h confirmed-head clock. Point `witness-ts`/`console`/CLI defaults at the v2
-      address.
+- [x] On a Scarb-equipped box: `make ci` green (Cairo included — 44 `plc_core` + 9 `drisl`).
+- [x] **Sepolia first.** `NETWORK=sepolia scripts/deploy.sh` → v2 `0x06b16c52…` (class `0x513df4e…`),
+      `deployments/sepolia.json` committed. Canary `did:plc:rzeldxi4pe24uahas3z65wnp` re-imported.
+- [x] Sepolia validation: `live_e2e` byte-identical storage; `witness check` non-alarming;
+      `adversarial-live` behaves. (The confirmed-`diverged` branch needs the canary ≥72h — re-run then.)
+- [x] **Confirm cost.** Sepolia v2 import (tx `0x10031214…c0e571`) ≈ **2.33 STRK** vs 27.6 STRK
+      pre-rearch = **~11.8×** (`l1_gas 0`, `l1_data_gas 5 952`, `l2_gas 81.65M`). Recorded in
+      `ONCHAIN-REARCH-PLAN.md` §7 with the mitigation levers for the bulk backfill.
+- [x] **Mainnet.** v2 deployed. **TODO: commit the v2 mainnet address** to `deployments/mainnet.json`
+      (still records the old `0x04db…`) + set `secrets/mainnet.env` `ANCHOR_CONTRACT_ADDRESS`.
+- [~] Re-run canary onboarding + witness/adversarial-live against the mainnet v2 address; restart
+      the 72h clock. Code defaults now auto-resolve from `deployments/<net>.json` (no hardcoded
+      address), so committing the mainnet JSON points witness/console/CLI at v2 automatically.
 
-**✅ Gate:** v2 store-only contract live on Sepolia **and** mainnet; canary reads back
-byte-identical + `tentative-consistent`; import fee confirms the drop; deployment JSONs committed.
-Then proceed to Phase 4 with the v2 mainnet address.
+**✅ Gate:** v2 store-only contract live on Sepolia **and** mainnet; Sepolia canary reads back
+byte-identical + non-alarming; import fee confirms **~11.8×**. **Remaining:** commit the v2 mainnet
+address to `deployments/mainnet.json`, then proceed to Phase 4.
 
 ---
 
@@ -260,6 +261,8 @@ Keep `didmarc-console` (Sepolia) exactly as-is. Stand up a **separate** prod app
 
 ## Deferred (explicitly not blocking go-live)
 
-Tracked in `HISTORY.md` "Open follow-ups": batched settled `import` for long chains
-(`import_append`), trustless root reads (L1 storage proof, SECURITY-TODO 4c), precise skew bound,
-paymaster/AA cost allocation (MVP = one project-funded account). None gate V1.
+Tracked in `HISTORY.md` "Open follow-ups" / `ONCHAIN-REARCH-PLAN.md` §7: verify-on-read cost
+mitigations for the bulk backfill (`import_batch`, caller-supplied DID to drop the on-chain
+`sha256`, per-op write trims — decide via a 1-op-vs-4-op profile before importing the 19k roster),
+trustless root reads (L1 storage proof, SECURITY-TODO 4c), precise skew bound, paymaster/AA cost
+allocation (MVP = one project-funded account). None gate V1.
