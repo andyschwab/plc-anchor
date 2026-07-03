@@ -13,9 +13,10 @@
 //! `starknet_call` at `block latest` returns whatever state the queried node *claims*; it is NOT
 //! accompanied by a proof against the L1-settled Starknet state root. Under verify-on-read the
 //! witness reads the DID's raw op log (`chain`) and re-derives everything from those bytes
-//! (`status.ts` → `deriveLiveChain`), so the op *contents* are content-addressed and trustless
-//! from any source — but **whether this is the DID's true/complete log comes from this RPC**. A
-//! witness pointed at a single untrusted RPC trusts that RPC for the log. Non-equivocation is real
+//! (`status.ts` → decode + `deriveLiveChain`), so the op *contents* are self-certifying (each op's
+//! CID and signature are checked) — but **whether this is the DID's true/complete log comes from
+//! this RPC**. A witness pointed at a single untrusted RPC trusts that RPC for the log.
+//! Non-equivocation is real
 //! at the settlement layer (Starknet has one canonical state, settled to Ethereum); exposing it
 //! *trustlessly* to a resolver would require verifying a Starknet **storage proof** against the L1
 //! state root — deferred, Mode-2-adjacent infra. Until then: **run your own full node, or trust

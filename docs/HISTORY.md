@@ -281,11 +281,12 @@ banners.
   *directory* (`deriveLiveChain`, differential-green vs `@did-plc/lib`); the anchor chain now runs
   through the **same** validator. `deriveLiveChain` gained an inert `imported` guard (read-side
   mirror of `state::apply_op`'s `recovery-of-imported`) and returns its live ops; `deriveAnchorHeads`
-  (`status.ts`) builds entries from the on-chain ops — bodies cross-referenced **content-addressed**
-  (recomputed CID → op body the witness already fetches; a body whose hash ≠ the on-chain CID can't
-  be substituted), `createdAt` = the anchor's block time — and derives the confirmed head (latest
-  live op past the 72h window). No new consensus module; `merkle.ts` deleted. Pinned in
-  `nullified.test.ts` on real signed chains (incl. read-side recovery-of-imported).
+  (`status.ts`) **decodes each on-chain op's bytes** (new strict `decodeDagCbor`, the inverse of the
+  encoder), feeds them to `deriveLiveChain` with `createdAt` = the anchor's block time, and derives
+  the confirmed head (latest live op past the 72h window) — **entirely from the anchor's own bytes,
+  no directory input** (see the security correction below). `merkle.ts` deleted. Pinned in
+  `dagcbor.test.ts` (decode∘encode over the corpus + strictness) and `nullified.test.ts` (real
+  signed chains, incl. recovery-of-imported + equivocation/garbage).
 - **Adversarial/conformance** de-Merkled; read scenarios drive the `deriveAnchor` seam; write
   scenarios reframed (the malicious op can be *stored* permissionlessly but is inert — the read-side
   re-derivation drops it); `anchor-self-fault` reframed (a corrupt on-chain log ⇒ no confirmed head
@@ -293,12 +294,28 @@ banners.
 
 **Preserved:** non-equivocation (identical bytes on the public chain), trustlessness (reader
 re-derives everything), the independent **block-time** confirmed head, and "never a false
-`diverged`". **Load-bearing decisions:** (1) content-addressed cross-reference instead of a new
-on-chain DRISL decoder — reuses the existing validator, adds no consensus surface; (2) drop the
-on-chain Merkle root — the reader validates the whole per-DID chain, so per-DID proofs are
-redundant (the future trustless-root read, finding 4c, becomes a storage proof over the op
-storage); (3) keep the Cairo `op_verify`/`recovery`/`state`/`merkle` modules as the
-differential-green PLC **reference** the read side mirrors (deletion deferred).
+`diverged`". **Load-bearing decisions:** (1) the witness DECODES the on-chain bytes itself (new
+strict `decodeDagCbor`) so the confirmed head is derived independent of the directory — the one
+net-new consensus module, and the security-critical one (see below); (2) drop the on-chain Merkle
+root — the reader validates the whole per-DID chain, so per-DID proofs are redundant (the future
+trustless-root read, finding 4c, becomes a storage proof over the op storage); (3) keep the Cairo
+`op_verify`/`recovery`/`state`/`merkle` modules as the differential-green PLC **reference** the read
+side mirrors (deletion deferred).
+
+**Security correction (2026-07-03) — why the decoder is not optional.** An interim build had the
+witness validate the anchor chain by *content-addressed cross-reference* against op bodies fetched
+from the directory (to avoid writing a decoder). That is unsound against the primary threat: an
+equivocating directory serves a forged log and therefore never serves the anchored head's op body,
+so `deriveAnchorHeads` couldn't resolve/validate the real head and silently lowered the derived
+confirmed head to the last op the equivocator agreed on — which is by construction on the
+directory's chain → `tentative-consistent`, **suppressing the `diverged` alarm exactly when it
+should fire.** (The old in-contract design didn't have this: the contract computed the confirmed
+head from validated state, independent of the directory.) The suppression is a false *negative*, so
+it never violates "never a false `diverged`", but it guts the guarantee against a hostile directory.
+The fix is to derive the head from bytes only the *anchor* controls — hence `decodeDagCbor`. Caught
+in design review before the v2 mainnet cutover; the offline scenarios missed it because they inject
+the anchor head via the `deriveAnchor` seam, so `nullified.test.ts` now exercises the real decode
+path (equivocation/garbage) and `adversarial/live.test.ts` derives heads through `check()`.
 
 **Status:** offline-green (`witness-test`/`console-test`/`rust-test`/`adversarial`, incl. `ingest
 --features live` compile). The Cairo contract + rewritten `tests/anchor.cairo` need `make cairo-test`

@@ -85,8 +85,8 @@ interface LiveOp {
 }
 
 /** A replayable op: a directory `AuditEntry` satisfies this, and the anchor path constructs the
- * same shape from on-chain bytes (op body cross-referenced content-addressed, `createdAt` = the
- * anchor's block time, `imported` = its provenance flag). */
+ * same shape from on-chain bytes (op body = `decodeDagCbor(signed)`, `createdAt` = the anchor's
+ * block time, `imported` = its provenance flag). */
 export interface ReplayEntry {
   operation: unknown;
   createdAt: string;

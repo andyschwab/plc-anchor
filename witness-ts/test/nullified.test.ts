@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { deriveLiveChain, deriveNullified, RECOVERY_WINDOW_MS, type AuditEntry } from "../src/directory.ts";
-import { cidForOp, encodeDagCbor } from "../src/dagcbor.ts";
+import { encodeDagCbor } from "../src/dagcbor.ts";
 import { verifySig } from "../src/crypto.ts";
 import { type AnchorView, check, deriveAnchorHeads } from "../src/status.ts";
 import type { AnchorOp } from "../src/starknet.ts";
@@ -147,25 +147,20 @@ test("status: directory floats a weaker-key fork as live — re-derivation rejec
 // ── deriveAnchorHeads: the REAL verify-on-read path over on-chain bytes (docs/ONCHAIN-REARCH) ──
 //
 // Synthesize the anchor's `chain(did)` return from a real signed chain: `signed` = the op's DRISL
-// bytes, `created_at` = the block time (here the entry's own time), `imported` = provenance. The
-// op bodies are cross-referenced content-addressed exactly as `check()` does. This exercises the
-// crypto re-derivation + block-time confirmed-head + the read-side recovery-of-imported guard —
-// what the contract used to do in Cairo, now proven read-side.
+// bytes, `created_at` = the block time (here the entry's own time), `imported` = provenance.
+// `deriveAnchorHeads` DECODES those bytes itself (no directory input), then runs the crypto
+// re-derivation + block-time confirmed-head + the read-side recovery-of-imported guard — what the
+// contract used to do in Cairo, now proven read-side and independent of any directory.
 
 const anchorOpsFrom = (log: AuditEntry[], imported = false): AnchorOp[] =>
   log.map((e) => ({ signed: encodeDagCbor(e.operation), createdAt: Date.parse(e.createdAt), imported }));
-const bodiesFrom = (log: AuditEntry[]): Map<string, unknown> => {
-  const m = new Map<string, unknown>();
-  for (const e of log) m.set(cidForOp(e.operation), e.operation);
-  return m;
-};
 const FAR_FUTURE = Date.parse("2099-01-01T00:00:00Z");
 
 test("deriveAnchorHeads: re-derives the live recovery head from on-chain bytes", () => {
   const s = scenario("valid-recovery");
   const R = s.expectedHeadCid as string;
   const ops = anchorOpsFrom(s.auditLog);
-  const heads = deriveAnchorHeads(ops, bodiesFrom(s.auditLog), { now: FAR_FUTURE, did: fixture.did });
+  const heads = deriveAnchorHeads(ops, { now: FAR_FUTURE, did: fixture.did });
   assert.equal(heads.tentativeHead, R, "tentative tip should be the recovery head");
   assert.equal(heads.confirmedHead, R, "past the window the recovery head is confirmed");
 });
@@ -176,7 +171,7 @@ test("deriveAnchorHeads: nothing is confirmed before any window closes (block-ti
   const ops = anchorOpsFrom(s.auditLog);
   // `now` earlier than every op's block time → no window has closed.
   const beforeAll = Math.min(...ops.map((o) => o.createdAt)) - 1;
-  const heads = deriveAnchorHeads(ops, bodiesFrom(s.auditLog), { now: beforeAll, did: fixture.did });
+  const heads = deriveAnchorHeads(ops, { now: beforeAll, did: fixture.did });
   assert.equal(heads.tentativeHead, R, "tentative tip is always the live head");
   assert.equal(heads.confirmedHead, "", "nothing confirmed before the window closes");
 });
@@ -187,13 +182,30 @@ test("deriveAnchorHeads: a recovery may NOT nullify imported/settled history (SE
   // is refused, so the live tip stays below it — NOT the recovery head R.
   const s = scenario("valid-recovery");
   const R = s.expectedHeadCid as string;
-  const imported = deriveAnchorHeads(anchorOpsFrom(s.auditLog, true), bodiesFrom(s.auditLog), {
-    now: FAR_FUTURE,
-    did: fixture.did,
-  });
+  const imported = deriveAnchorHeads(anchorOpsFrom(s.auditLog, true), { now: FAR_FUTURE, did: fixture.did });
   assert.notEqual(imported.tentativeHead, R, "recovery-of-imported must be rejected read-side");
   assert.notEqual(imported.confirmedHead, R, "and so the imported recovery head is never confirmed");
   // Contrast: live-observed, the same recovery IS honored (the previous test) — the guard is what
   // changed the outcome, exactly as on-chain.
   assert.ok(RECOVERY_WINDOW_MS > 0);
+});
+
+test("deriveAnchorHeads: an equivocating directory can't suppress the head (decoded from anchor bytes)", () => {
+  // The security fix: heads come from DECODING the on-chain bytes, so no directory input is even
+  // taken here — a withholding/forging directory cannot lower the derived confirmed head. Same real
+  // chain, no bodies provided anywhere: the recovery head is still derived.
+  const s = scenario("valid-recovery");
+  const R = s.expectedHeadCid as string;
+  const heads = deriveAnchorHeads(anchorOpsFrom(s.auditLog), { now: FAR_FUTURE, did: fixture.did });
+  assert.equal(heads.confirmedHead, R, "confirmed head derived from anchor bytes alone");
+});
+
+test("deriveAnchorHeads: garbage on-chain bytes truncate, never becoming a head", () => {
+  // A permissionless writer appends non-canonical / undecodable bytes after a real chain. They
+  // decode-fail → truncate; the head stays the last valid op, and junk never confirms.
+  const s = scenario("valid-recovery");
+  const ops = anchorOpsFrom(s.auditLog);
+  const withGarbage = [...ops, { signed: Uint8Array.from([0xff, 0x00, 0x13, 0x37]), createdAt: FAR_FUTURE, imported: false }];
+  const heads = deriveAnchorHeads(withGarbage, { now: FAR_FUTURE + 1, did: fixture.did });
+  assert.equal(heads.tentativeHead, s.expectedHeadCid, "garbage tail is dropped; tip is the real head");
 });

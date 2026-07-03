@@ -7,13 +7,23 @@ NOT relitigate*), driven by the measured mainnet cost evidence below. `REFERENCE
 carry the amendment banners; this file is the rationale of record.
 
 **As-built deltas from this proposal (see §7):** (1) the reader validates the anchor chain by
-**content-addressed cross-reference** against op bodies it already fetches (no new on-chain DRISL
-decoder — reuses `deriveLiveChain`); (2) the on-chain **Merkle root/proofs are dropped** (the
-reader validates the whole per-DID chain, so per-DID inclusion proofs are redundant); (3) the
-contract keeps a **cheap `sha256` DID derivation** (not EC crypto — negligible cost) so the
-`import`/`submit_op` signatures and the `ingest` sink are unchanged; (4) the Cairo
+**decoding the on-chain bytes itself** — a new strict DRISL/dag-cbor decoder in `witness-ts`
+(`decodeDagCbor`), the inverse of the existing encoder, so the confirmed head is derived from the
+anchor's own bytes **independent of the directory**; (2) the on-chain **Merkle root/proofs are
+dropped** (the reader validates the whole per-DID chain, so per-DID inclusion proofs are
+redundant); (3) the contract keeps a **cheap `sha256` DID derivation** (not EC crypto — negligible
+cost) so the `import`/`submit_op` signatures and the `ingest` sink are unchanged; (4) the Cairo
 `op_verify`/`recovery`/`state`/`merkle` modules are **retained as the differential-green PLC
 reference** the read side mirrors (deleting them is a follow-up, not this change).
+
+> **Design-review correction (2026-07-03).** An earlier build validated the anchor chain by
+> *content-addressed cross-reference* against op bodies fetched from the directory (delta 1, to
+> avoid the decoder). That is **unsound for the core threat**: an equivocating directory serves a
+> forged log and so never serves the anchored head's body, which silently lowers (or empties) the
+> witness's derived confirmed head → `diverged` is suppressed exactly when it should fire. The
+> witness must derive the anchor's head from bytes only the *anchor* controls, so the decoder is
+> not optional — it is the fix. (The suppression is a false *negative*, so it never breaks
+> "never a false `diverged`", but it guts the guarantee against a hostile directory.)
 
 **Author context:** written 2026-07-02, immediately after the V1 mainnet bring-up (Phases 1–3 of
 [`MAINNET-CHECKLIST.md`] live: contract `0x04db…d9aa`, one canary DID anchored & witnessed).
@@ -145,22 +155,28 @@ Implemented on `claude/rearchitecture-rfc-review-3ra7en`, **offline-green** (`wi
 `console-test`, `rust-test`, `adversarial`); the Cairo contract + tests are written but need a
 `make cairo-test` on a Scarb-equipped box (the sandbox has no toolchain), then the v2 deploy.
 
-**§5.1 crux (read-side recovery adjudication) — resolved the cheap way.** The reader *already*
-re-derives PLC recovery for the directory (`deriveLiveChain`, differential-green vs `@did-plc/lib`).
-So the anchor chain runs through the **same** validator: `deriveLiveChain` gained an inert
-`imported` guard (the read-side mirror of `state::apply_op`'s `recovery-of-imported`) and now
-returns its live ops; `deriveAnchorHeads` (`status.ts`) feeds it the on-chain ops — bodies
-cross-referenced content-addressed, `createdAt` = the anchor's block time — and derives the
-confirmed head (latest live op past the 72h window). No new consensus module. Pinned in
-`witness-ts/test/nullified.test.ts` (real signed chains, incl. the read-side recovery-of-imported).
+**§5.1 crux (read-side recovery adjudication) — reuses the existing validator.** The reader
+*already* re-derives PLC recovery for the directory (`deriveLiveChain`, differential-green vs
+`@did-plc/lib`). So the anchor chain runs through the **same** validator: `deriveLiveChain` gained
+an inert `imported` guard (the read-side mirror of `state::apply_op`'s `recovery-of-imported`) and
+now returns its live ops; `deriveAnchorHeads` (`status.ts`) **decodes each on-chain op's bytes**
+(`decodeDagCbor`), feeds them to `deriveLiveChain` with `createdAt` = the anchor's block time, and
+derives the confirmed head (latest live op past the 72h window) — entirely from the anchor's bytes,
+no directory input. The **one net-new consensus module is the strict decoder** (`decodeDagCbor`,
+the inverse of `encodeDagCbor`); it is what makes the derivation independent of the directory (see
+the design-review correction in §1). Pinned in `witness-ts/test/dagcbor.test.ts` (decode∘encode over
+the corpus + strictness) and `nullified.test.ts` (real signed chains, incl. read-side
+recovery-of-imported and equivocation/garbage cases).
 
 **What shipped, by file:**
 - `cairo/packages/plc_core/src/anchor.cairo` — store-only: `import_genesis`/`import`/`submit_op`
   push bytes (block-time + `imported`); new `chain(did)` view; dropped head/root/proof views + all
   EC verification. `tests/anchor.cairo` rewritten to the storage contract.
-- `witness-ts` — `directory.ts` (generalized `deriveLiveChain` + `imported` guard + live ops);
-  `status.ts` (`deriveAnchorHeads`, chain-based `AnchorView`, `deriveAnchor` seam); `starknet.ts`
-  (`chain(did)` read via `decodeChain`, proof/root reads removed); `merkle.ts` deleted; `index.ts`.
+- `witness-ts` — `dagcbor.ts` (**new strict `decodeDagCbor`**, the inverse of the encoder);
+  `directory.ts` (generalized `deriveLiveChain` + `imported` guard + live ops); `status.ts`
+  (`deriveAnchorHeads` decodes on-chain bytes → directory-independent; chain-based `AnchorView`,
+  `deriveAnchor` seam); `starknet.ts` (`chain(did)` read via `decodeChain`, proof/root reads
+  removed); `merkle.ts` deleted; `index.ts`. Tests: `dagcbor.test.ts` (new).
 - `ingest` — `starknet_sink.rs` gains `call_chain`/`StoredOpView`; sink calldata unchanged;
   `gen_selectors` → `{is_anchored, chain}`; `live_e2e.rs` asserts byte-identical storage.
 - `adversarial` + `conformance/src/gen-adversarial-scenarios.mjs` — de-Merkled; read scenarios use

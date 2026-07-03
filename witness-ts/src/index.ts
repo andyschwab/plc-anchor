@@ -27,6 +27,7 @@ export {
   httpCall,
   type StarknetCall,
 } from "./starknet.ts";
+export { cidForBytes, cidForOp, decodeDagCbor, didForGenesisOp, encodeDagCbor } from "./dagcbor.ts";
 export {
   type AnchorHeads,
   type AnchorView,

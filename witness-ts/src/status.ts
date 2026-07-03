@@ -7,13 +7,14 @@
 //! ## Verify-on-read (docs/ONCHAIN-REARCH-PLAN.md)
 //!
 //! The anchor contract stores raw op bytes only — it runs no EC verification and adjudicates no
-//! forks. So the witness re-derives the anchor's live chain and confirmed head **here**, from the
-//! on-chain bytes, exactly as it already re-derives the directory's (`deriveLiveChain`). The op
-//! *bodies* are content-addressed: the witness recomputes each on-chain op's CID from its bytes
-//! and cross-references the op body it already fetches from the directory/mirror (a body whose
-//! hash ≠ the on-chain CID simply doesn't match, so it can't be substituted). The anchor's
-//! contribution is its **independent, block-time** stamp per op — the clock the confirmed-head
-//! 72h window measures against (`createdAt` is not in the signed op; §1) — plus non-equivocation.
+//! forks. So the witness re-derives the anchor's live chain and confirmed head **here**, by
+//! DECODING the on-chain bytes itself (`decodeDagCbor`) and running the same PLC validator it runs
+//! on the directory (`deriveLiveChain`). Decoding the anchor's own bytes — rather than borrowing op
+//! bodies from the directory it is checking — is what lets it catch an equivocating directory: the
+//! directory can serve a forged log, but it cannot alter the non-equivocable bytes the anchor
+//! stored, so the confirmed head is derived from the anchor alone. The anchor's contribution is
+//! that non-equivocation plus its **independent, block-time** stamp per op — the clock the
+//! confirmed-head 72h window measures against (`createdAt` is not in the signed op; §1).
 //!
 //! ## Governing invariant — never a false `diverged` (Phase 5 plan §0)
 //!
@@ -27,7 +28,7 @@
 //! near-edge recovery + anchor lag could explain it). The horizon is V1's stand-in for the
 //! precise skew bound deferred in the plan — generous on purpose.
 
-import { cidForBytes, cidForOp } from "./dagcbor.ts";
+import { decodeDagCbor } from "./dagcbor.ts";
 import { deriveLiveChain, RECOVERY_WINDOW_MS, type AuditEntry, type LiveChain } from "./directory.ts";
 import type { AnchorOp } from "./starknet.ts";
 
@@ -71,25 +72,30 @@ export interface DirectorySource {
 }
 
 /**
- * Re-derive the anchor's confirmed + tentative heads from its on-chain op log. Reuses the exact
- * PLC chain validator `deriveLiveChain` (signatures, linkage, 72h recovery, recovery-of-imported)
- * over entries built from the on-chain bytes: each op's body is cross-referenced content-addressed
- * (`bodiesByCid`, keyed on the *recomputed* CID), stamped with the anchor's **block time**, and
- * flagged with its provenance. An op whose body isn't available truncates the validated chain
- * (linkage would break there anyway) — a strictly conservative, §0-safe degradation.
+ * Re-derive the anchor's confirmed + tentative heads from its on-chain op log — **independently of
+ * the directory**. Reuses the exact PLC chain validator `deriveLiveChain` (signatures, linkage,
+ * 72h recovery, recovery-of-imported) over entries built by DECODING each op's on-chain bytes
+ * (`decodeDagCbor`), stamped with the anchor's **block time** and flagged with its provenance.
+ *
+ * Decoding the on-chain bytes (not borrowing op bodies from the directory being checked) is what
+ * lets the witness catch an equivocating directory: the directory can serve a forged log, but it
+ * cannot alter the non-equivocable bytes the anchor stored, so the confirmed head is derived from
+ * the anchor alone. An op whose bytes don't decode canonically (necessarily not a directory-served
+ * op — a permissionless writer's garbage) truncates the validated chain — a strictly conservative,
+ * §0-safe degradation. A validly-signed op is still required to advance the head, so a bogus
+ * on-chain append can never become the confirmed head (no false `diverged`).
  */
-export function deriveAnchorHeads(
-  ops: readonly AnchorOp[],
-  bodiesByCid: Map<string, unknown>,
-  ctx: { now: number; did: string },
-): AnchorHeads {
+export function deriveAnchorHeads(ops: readonly AnchorOp[], ctx: { now: number; did: string }): AnchorHeads {
   const entries: { operation: unknown; createdAt: string; imported: boolean }[] = [];
   for (const op of ops) {
-    const cid = cidForBytes(op.signed);
-    const body = bodiesByCid.get(cid);
-    if (body === undefined) break; // no content-addressed body → can't validate further; truncate
+    let operation: unknown;
+    try {
+      operation = decodeDagCbor(op.signed);
+    } catch {
+      break; // non-canonical / undecodable bytes → can't validate further; truncate
+    }
     entries.push({
-      operation: body,
+      operation,
       createdAt: new Date(op.createdAt).toISOString(),
       imported: op.imported,
     });
@@ -122,14 +128,11 @@ export interface CheckOptions {
   deriveLive?: (log: readonly AuditEntry[], did: string) => LiveChain;
   /**
    * How the anchor's confirmed/tentative heads are derived from its on-chain op log. The default
-   * (`deriveAnchorHeads`) runs the real crypto re-derivation; tests that isolate the status ladder
-   * inject one that returns chosen heads (the label is the test input, mirroring `deriveLive`).
+   * (`deriveAnchorHeads`) decodes the on-chain bytes and runs the real crypto re-derivation; tests
+   * that isolate the status ladder inject one that returns chosen heads (the label is the test
+   * input, mirroring `deriveLive`).
    */
-  deriveAnchor?: (
-    ops: readonly AnchorOp[],
-    bodiesByCid: Map<string, unknown>,
-    ctx: { now: number; did: string },
-  ) => AnchorHeads;
+  deriveAnchor?: (ops: readonly AnchorOp[], ctx: { now: number; did: string }) => AnchorHeads;
 }
 
 const DEFAULT_SKEW_HORIZON_MS = 14 * 24 * 60 * 60 * 1000;
@@ -163,13 +166,9 @@ export async function check(
 
   const [anchorOps, log] = await Promise.all([anchor.chain(did), directory.auditLog(did)]);
 
-  // Content-addressed op bodies: recompute each directory entry's CID (never trust its `cid`
-  // field) and index the op body by it, so the anchor's on-chain CIDs resolve to hash-pinned
-  // bodies. A body whose hash ≠ its claimed CID simply won't be found by an anchor CID.
-  const bodiesByCid = new Map<string, unknown>();
-  for (const e of log) bodiesByCid.set(cidForOp(e.operation), e.operation);
-
-  const { confirmedHead, tentativeHead } = deriveAnchor(anchorOps, bodiesByCid, { now: now(), did });
+  // The anchor's heads are re-derived from its own on-chain bytes (decoded), independent of the
+  // directory — so an equivocating directory can't suppress the alarm by withholding op bodies.
+  const { confirmedHead, tentativeHead } = deriveAnchor(anchorOps, { now: now(), did });
   const { liveCids, head: dirHead } = deriveLive(log, did);
 
   const ev: CheckResult["evidence"] = {
