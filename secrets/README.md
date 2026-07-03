@@ -1,40 +1,51 @@
 # secrets/
 
-Per-network operator config for the **deployed runtime** (the Fly console + the e2e CI job) —
-the environments that can't read `deployments/*.json` or the sncast accounts file at run time.
+Per-network operator config for the **deployed runtimes** — the Fly console and the e2e-sepolia CI
+job — the environments that can't read `deployments/*.json` or the sncast accounts file at run time.
+Everything keys off the one `NETWORK=sepolia|mainnet` switch, the same switch `deploy.sh`,
+`wallet.sh`, and `ingest.sh` use.
+
+## Files
 
 - **`<network>.env`** — the single local source of truth for a network. **Gitignored; never
   pushed.** Create it from the template: `cp secrets/sepolia.env.example secrets/sepolia.env`.
-- **`<network>.env.example`** — tracked template (blank values). Keeps both networks symmetric.
+- **`<network>.env.example`** — tracked template (blank values); keeps both networks symmetric.
 
-The operator **private key is never in these files** — it lives only in sncast's accounts file
-(`~/.starknet_accounts/…`). Everything here keys off the one `NETWORK=sepolia|mainnet` switch, the
-same switch `scripts/deploy.sh`, `scripts/wallet.sh`, and `scripts/ingest.sh` use.
-
-## What actually needs to live here
-
-Only two values have no other home — pin these:
+Each `<network>.env` holds only the two values that have no other home:
 
 | Key | Why it lives here |
 |---|---|
 | `STARKNET_RPC` | the keyed 0.10.x endpoint (not in any committed file) |
 | `CONSOLE_ADMIN_TOKEN` | generated once (`openssl rand -hex 32`); console fail-closes writes without it |
 
-The other two are **copies of canonical sources** and drift on redeploy — for local `ingest`
-runs you don't need them at all (`scripts/ingest.sh` resolves both from source):
+Everything else is **derived at push time** from its canonical source — never hand-copied, so a
+redeploy can't leave a stale value in a pushed secret:
 
-| Key | Canonical source |
+| Value | Canonical source |
 |---|---|
 | `ANCHOR_CONTRACT_ADDRESS` | `deployments/<network>.json` `.contractAddress` |
 | `STARKNET_ACCOUNT_ADDRESS` | sncast accounts file, account `plc-<network>` |
+| `STARKNET_ACCOUNT_PRIVATE_KEY` | sncast accounts file (never written to any env file) |
 
-They are pinned here only for the deployed console/CI. When `scripts/secrets.sh` lands (Phase 5)
-it should **derive** them from those sources (reuse `anchor_contract_address` / `account_address`
-in `scripts/lib/starknet-common.sh`) rather than trust a hand-copied value.
+## `scripts/secrets.sh` — one command per environment
 
-## Local vs deployed — which path uses what
+| Command | Pushes | To |
+|---|---|---|
+| `NETWORK=mainnet scripts/secrets.sh push-fly` | 5 secrets | fly app `didmarc-console-prod` |
+| `NETWORK=sepolia scripts/secrets.sh push-fly` | 5 secrets | fly app `didmarc-console` |
+| `NETWORK=sepolia scripts/secrets.sh push-gh`  | 4 secrets (+ `WITNESS_LIVE_DID` var) | GitHub repo → e2e-sepolia.yml |
+| `NETWORK=<net> scripts/secrets.sh show`       | nothing | presence-only audit (never prints a value) |
 
-- **Local CLI** (`scripts/ingest.sh`, `deploy.sh`, `wallet.sh`): resolve everything from `NETWORK`
-  + `deployments/<net>.json` + the sncast account. **They do not read `secrets/<net>.env`.**
-- **Deployed console + e2e CI**: read the pushed env (Fly secrets / GitHub secrets), sourced from
-  `secrets/<net>.env` by `scripts/secrets.sh` (Phase 5).
+- **`push-gh` is Sepolia-only** — it refuses mainnet, so CI can never hold mainnet funds.
+- If a `<network>.env` still carries an old `ANCHOR_CONTRACT_ADDRESS` / `STARKNET_ACCOUNT_ADDRESS`
+  copy that disagrees with the canonical source, `push-*` **warns and uses the canonical value**.
+- `WITNESS_LIVE_DID` (the non-secret adversarial-live target) is set by `push-gh` only if you pass
+  it inline: `WITNESS_LIVE_DID=did:plc:… NETWORK=sepolia scripts/secrets.sh push-gh`.
+- Needs `jq`; `push-fly`/`show` need `flyctl`; `push-gh` needs `gh` (`gh auth login`).
+
+## Local vs deployed — which path reads what
+
+- **Local CLI** (`ingest.sh`, `deploy.sh`, `wallet.sh`): resolve everything from `NETWORK` +
+  `deployments/<net>.json` + the sncast account. **They do not read `secrets/<net>.env`.**
+- **Deployed console + e2e CI**: read the pushed secrets (Fly / GitHub), synced from
+  `secrets/<net>.env` by `scripts/secrets.sh`.

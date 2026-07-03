@@ -90,16 +90,16 @@ Goal: stop juggling critical bits. Each secret has **exactly one home** and one 
 - **The operator private key lives only in sncast's accounts file** (`~/.starknet_accounts/…`,
   already `.gitignore`d). It is never typed twice, never in an env file, never in GitHub. The
   sync script reads it from there with `jq` when it needs to set the Fly secret.
-- **Everything else per network** lives in a gitignored `secrets/<network>.env`
-  (`STARKNET_RPC`, `ANCHOR_CONTRACT_ADDRESS`, `STARKNET_ACCOUNT_ADDRESS`, `CONSOLE_ADMIN_TOKEN`).
-  `ANCHOR_CONTRACT_ADDRESS` is copied from `deployments/<network>.json` after each deploy.
-- **`scripts/secrets.sh`** (built in Phase 5) maps `NETWORK → Fly app` and pushes the right subset:
+- **Only two values per network** live in a gitignored `secrets/<network>.env`: `STARKNET_RPC`
+  (the keyed endpoint) and `CONSOLE_ADMIN_TOKEN` (generated once). The two addresses
+  (`ANCHOR_CONTRACT_ADDRESS`, `STARKNET_ACCOUNT_ADDRESS`) are **not** hand-copied here — the sync
+  tool derives them at push time from `deployments/<network>.json` and the sncast account, so a
+  redeploy can't leave a stale copy. (Templates: `secrets/<network>.env.example`, tracked.)
+- **`scripts/secrets.sh`** maps `NETWORK → Fly app` and pushes the right subset:
   - `NETWORK=mainnet scripts/secrets.sh push-fly` → `fly secrets import` to `didmarc-console-prod`
   - `NETWORK=sepolia scripts/secrets.sh push-gh` → `gh secret set` for the `e2e-sepolia.yml` job
-    **(testnet only — mainnet is never pushed to GitHub, so CI can never spend real funds)**
+    **(testnet only — push-gh refuses mainnet, so CI can never spend real funds)**
   - `NETWORK=<net> scripts/secrets.sh show` → presence-only audit, no values printed
-
-`secrets/` and `*.env` get added to `.gitignore` in Phase 5.
 
 ---
 
@@ -147,9 +147,9 @@ The wallet both deploys the contract and pays for `ingest --submit`. One funded 
       Declares the class, deploys an instance (no constructor), writes `deployments/mainnet.json`.
 - [ ] Verify the printed **Contract Address** on `https://starkscan.co/contract/<addr>` (deployed,
       class hash matches).
-- [ ] Copy `contractAddress` from `deployments/mainnet.json` into `secrets/mainnet.env` as
-      `ANCHOR_CONTRACT_ADDRESS`.
-- [ ] Commit `deployments/mainnet.json` (public data — addresses/hashes only, no keys).
+- [ ] Commit `deployments/mainnet.json` (public data — addresses/hashes only, no keys). This is the
+      canonical anchor address; `scripts/ingest.sh` and `scripts/secrets.sh` read it from here, so
+      there is **no** `ANCHOR_CONTRACT_ADDRESS` to hand-copy into `secrets/mainnet.env`.
 - [ ] Sanity read against mainnet: an empty-roster head/root view returns cleanly (no DIDs yet).
 
 **✅ Gate:** `deployments/mainnet.json` committed; contract verified on-chain; empty-roster read OK.
@@ -203,20 +203,27 @@ Keep `didmarc-console` (Sepolia) exactly as-is. Stand up a **separate** prod app
 
 ---
 
-## Phase 5 — Secrets tooling
+## Phase 5 — Secrets tooling  ✅ built
 
-- [ ] Add `secrets/` and `*.env` to `.gitignore`.
-- [ ] Write `scripts/secrets.sh` (reuse `scripts/lib/starknet-common.sh` for `resolve_network`
-      and the `NETWORK → app` map: sepolia→`didmarc-console`, mainnet→`didmarc-console-prod`):
-      - `push-fly` — load `secrets/<network>.env`, pull the operator key from the sncast accounts
-        file (`account_address`/jq), `fly secrets import` to the network's app.
-      - `push-gh` — **sepolia only** (`confirm_mainnet`-style refusal for mainnet): `gh secret set`
-        the four `e2e-sepolia.yml` secrets + the `WITNESS_LIVE_DID` var.
-      - `show` — presence-only audit (`fly secrets list` names, never values).
+- [x] `.gitignore`: `secrets/*` ignored; tracked `*.env.example` + `secrets/README.md` kept so the
+      structure is version-controlled and symmetric across networks.
+- [x] `scripts/secrets.sh` (reuses `scripts/lib/starknet-common.sh` `resolve_network` + the
+      `NETWORK → FLY_APP` map: sepolia→`didmarc-console`, mainnet→`didmarc-console-prod`):
+      - `push-fly` — `fly secrets import` the 5 console secrets to the network's app. RPC + admin
+        token come from `secrets/<net>.env`; the anchor address, operator address, and **operator
+        key** are DERIVED at push time (`anchor_contract_address` / `account_address` /
+        `account_private_key`), so nothing is hand-copied and a redeploy can't ship a stale value.
+      - `push-gh` — **sepolia only** (refuses mainnet): `gh secret set` the four `e2e-sepolia.yml`
+        secrets + optional `WITNESS_LIVE_DID` repo variable.
+      - `show` — presence-only audit (local sources + `fly secrets list` / `gh secret list` names,
+        never a value).
+      Also `make ingest` / `make secrets` wrap the two scripts (`ARGS=` / `CMD=`).
 - [ ] Dry-run `NETWORK=sepolia scripts/secrets.sh show` against the existing app to validate the
       app map before trusting it for mainnet.
 
-**✅ Gate:** one command re-syncs each environment's secrets; the key still has a single home.
+**✅ Gate:** one command re-syncs each environment's secrets; the operator key still has a single
+home (sncast) and the two addresses derive from their canonical sources. **Remaining:** the live
+`show` dry-run against the real Sepolia app (needs flyctl + auth locally).
 
 ---
 
