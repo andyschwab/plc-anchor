@@ -8,11 +8,18 @@ import { AnchorReader, CachingAnchorView, check, DirectoryClient } from "../../w
 import type { AuditEntry, IdentityResolver } from "./enrich.ts";
 import type { CheckOutcome, StatusChecker } from "./refresh.ts";
 
+/** A 32-byte root as plain hex — an opaque, comparable snapshot key for the refresher's
+ * root-change gate (not felt-stripped like `starknet.ts`'s calldata encoding; leading zero bytes
+ * must stay distinguishable here). */
+const toHex = (bytes: Uint8Array): string =>
+  Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
 /** Wraps the witness `check(did)` for the refresher.
  *
  * `confirmedRoot`/`tentativeRoot` are contract-wide values shared by every DID in a refresh
  * cycle, so reads go through a `CachingAnchorView` that memoizes them for the cycle — `beginCycle`
- * resets it, called once per `refreshAll()` rather than once per DID (RPC cost optimization). */
+ * resets it, called once per `refreshAll()` rather than once per DID (RPC cost optimization).
+ * `currentRoots()` surfaces those same (cached) reads to the refresher's root-change gate. */
 export class WitnessChecker implements StatusChecker {
   readonly #anchor: CachingAnchorView;
   readonly #directory: DirectoryClient;
@@ -24,6 +31,14 @@ export class WitnessChecker implements StatusChecker {
 
   beginCycle(): void {
     this.#anchor.reset();
+  }
+
+  async currentRoots(): Promise<{ confirmedRoot: string; tentativeRoot: string }> {
+    const [confirmedRoot, tentativeRoot] = await Promise.all([
+      this.#anchor.confirmedRoot(),
+      this.#anchor.tentativeRoot(),
+    ]);
+    return { confirmedRoot: toHex(confirmedRoot), tentativeRoot: toHex(tentativeRoot) };
   }
 
   async check(did: string): Promise<CheckOutcome> {

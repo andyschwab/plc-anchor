@@ -56,8 +56,10 @@ test("refreshAll checks every active DID and returns the diverged count", async 
       return { status: did.includes("aaaa") ? "diverged" : "confirmed", reason: "r", headCid: null };
     },
   };
-  const divergedCount = await new RefreshService(s, checker).refreshAll();
-  assert.equal(divergedCount, 1);
+  const result = await new RefreshService(s, checker).refreshAll();
+  assert.equal(result.diverged, 1);
+  assert.equal(result.checked, 3);
+  assert.equal(result.skipped, 0);
   assert.equal(checked.length, 3, "the two anchored DIDs and the candidate are checked");
   assert.ok(!checked.some((d) => d.includes("dddd")), "removed DIDs are skipped");
 });
@@ -91,8 +93,69 @@ test("refreshAll works when the checker has no beginCycle (optional hook)", asyn
   const checker: StatusChecker = {
     check: async (): Promise<CheckOutcome> => ({ status: "confirmed", reason: "r", headCid: null }),
   };
-  const divergedCount = await new RefreshService(s, checker).refreshAll();
-  assert.equal(divergedCount, 0);
+  const result = await new RefreshService(s, checker).refreshAll();
+  assert.equal(result.diverged, 0);
+});
+
+test("root-change gate: an unchanged root skips already-checked DIDs on the next cycle", async () => {
+  const s = RosterStore.open();
+  anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+  anchored(s, "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
+
+  let checkCalls = 0;
+  const checker: StatusChecker = {
+    currentRoots: async () => ({ confirmedRoot: "c1", tentativeRoot: "t1" }),
+    check: async (): Promise<CheckOutcome> => {
+      checkCalls += 1;
+      return { status: "confirmed", reason: "r", headCid: null };
+    },
+  };
+  const svc = new RefreshService(s, checker);
+
+  const first = await svc.refreshAll();
+  assert.equal(first.checked, 2, "first cycle: nothing checked yet, so everything is checked");
+  assert.equal(first.skipped, 0);
+
+  const second = await svc.refreshAll();
+  assert.equal(checkCalls, 2, "no new RPC checks on an unchanged root");
+  assert.equal(second.checked, 0);
+  assert.equal(second.skipped, 2, "both already-checked DIDs are skipped");
+});
+
+test("root-change gate: a moved root forces a full re-check", async () => {
+  const s = RosterStore.open();
+  anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+  anchored(s, "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
+
+  let root = "c1";
+  const checker: StatusChecker = {
+    currentRoots: async () => ({ confirmedRoot: root, tentativeRoot: "t1" }),
+    check: async (): Promise<CheckOutcome> => ({ status: "confirmed", reason: "r", headCid: null }),
+  };
+  const svc = new RefreshService(s, checker);
+  await svc.refreshAll();
+
+  root = "c2"; // e.g. a new op anchored, or the 72h confirmation cutover
+  const second = await svc.refreshAll();
+  assert.equal(second.checked, 2, "root moved, so every active DID is re-checked");
+  assert.equal(second.skipped, 0);
+});
+
+test("root-change gate: a new DID is always checked even when the root is unchanged", async () => {
+  const s = RosterStore.open();
+  anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+
+  const checker: StatusChecker = {
+    currentRoots: async () => ({ confirmedRoot: "c1", tentativeRoot: "t1" }),
+    check: async (): Promise<CheckOutcome> => ({ status: "confirmed", reason: "r", headCid: null }),
+  };
+  const svc = new RefreshService(s, checker);
+  await svc.refreshAll();
+
+  anchored(s, "did:plc:cccccccccccccccccccccccc"); // onboarded after the first cycle
+  const second = await svc.refreshAll();
+  assert.equal(second.checked, 1, "only the never-checked DID is checked");
+  assert.equal(second.skipped, 1);
 });
 
 test("a candidate observed anchored on-chain is reflected and shows status", async () => {
