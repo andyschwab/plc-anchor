@@ -12,7 +12,7 @@ every phase ends in a **✅ confirm gate** you must satisfy before moving on.
 
 ---
 
-## Progress (2026-07-03) — verify-on-read v2 LIVE (Sepolia + mainnet); Phases 4–8 next
+## Progress (2026-07-05) — verify-on-read v2 LIVE (Sepolia + mainnet); Phases 4–8 next
 
 The protocol first reached mainnet on the pre-rearchitecture (in-contract-verifying) contract.
 Fee measurement showed **per-DID import ≈ 6.9 STRK/op, ~100% in-contract EC verification** (not
@@ -23,8 +23,25 @@ mainnet** (Phase R done). **Measured Sepolia import ≈ 2.33 STRK vs 27.6 STRK p
 (`l1_gas 0`, `l1_data_gas` ~free, `l2_gas 81.65M`; residual is ordinary store-only execution).
 Cost-mitigation levers for the bulk backfill are tracked in `ONCHAIN-REARCH-PLAN.md` §7 — profile
 1-op vs 4-op and decide *before* importing the 19k roster (each lever is a redeploy).
-**Outstanding:** commit the v2 **mainnet** address to `deployments/mainnet.json` (still records the
-old `0x04db…`), then the console productionization (Phases 4–8 below).
+**`deployments/mainnet.json` is current** — it records the live v2 address
+(`0x03add24b78ab50d532dd78435d473bc61b990925f171071b0afdefe464f1e124`, redeployed once more on
+2026-07-03 after the first v2 mainnet deploy to pick up a fix, per its git history) —
+that outstanding item from the prior update of this doc is **done**.
+**`make ci` reconfirmed green (2026-07-05)** on this checkout: 9 `drisl` + conformance/adversarial/
+witness/console all pass. **Outstanding:** land the mainnet v2 canary (Phase R's last bullet), then
+the console productionization (Phases 4–8 below) — nothing else blocks starting Phase 4.
+
+**Open decision carried forward from `ONCHAIN-REARCH-PLAN.md` §7 — resolve before Phase 7's full
+rollout, not before Phase 4.** The current v2 average (~2.33 STRK, likely lower in practice since
+most DIDs have 1–2 ops) is affordable for the ~19k-DID eurosky roster as-is, and none of the
+`import_batch` / caller-supplied-DID / per-op-write-trim levers gate V1. But each lever is a
+**contract change ⇒ another redeploy ⇒ empty roster again**, so paying full v2 price across all
+19k DIDs and *then* adopting a lever means re-importing all of them a second time. Decide **before
+raising `IMPORT_BUDGET_PER_TICK` off its Phase-7 canary-scale value**, not before Phases 4–6 (which
+only need the wallet, contract, and console up — not the bulk import): either (a) accept the
+current v2 cost and run the full backfill, or (b) spend one more redeploy on the cheap, low-risk
+per-op trims (no API change) and/or `import_batch` first. This is a cost/timeline call, not an
+engineering blocker — flag it for a go/no-go before Phase 7's budget ramp.
 
 - **Phase 1 ✅** — `plc-mainnet` operator wallet live & funded (deployed tx `0x5d92f3e2…`).
 - **Phase 2 ✅ (v1, superseded)** — pre-rearch `anchor` deployed:
@@ -105,7 +122,9 @@ Goal: stop juggling critical bits. Each secret has **exactly one home** and one 
 
 ## Phase 0 — Repo readiness (no chain writes)
 
-- [ ] `make ci` green on `main` (the consensus gate is the source of truth for test health).
+- [x] `make ci` green on `main` (the consensus gate is the source of truth for test health).
+      *(reconfirmed 2026-07-05 on this checkout: `drisl`/`plc_core` Cairo tests, conformance,
+      adversarial, `rust-test`, `witness-test`, `console-test` all pass.)*
 - [x] **Fail-closed fix — console.** `console/src/main.ts` no longer falls back to Sepolia in
       production: `resolveContractAddress()` throws at boot if `ANCHOR_CONTRACT_ADDRESS` is unset
       and `NODE_ENV=production` (the Sepolia constant is a dev-only convenience). *(landed)*
@@ -123,44 +142,61 @@ Goal: stop juggling critical bits. Each secret has **exactly one home** and one 
 
 ---
 
-## Phase 1 — Operator wallet (mainnet)
+## Phase 1 — Operator wallet (mainnet)  ✅ done
 
 The wallet both deploys the contract and pays for `ingest --submit`. One funded account per network.
+**Done** — `plc-mainnet` is live and funded (deploy tx `0x5d92f3e2…`); it is the same wallet used
+for both the superseded v1 contract and the current v2 (Phase R), so nothing here needs redoing.
 
-- [ ] `NETWORK=mainnet scripts/wallet.sh create` → prints the `plc-mainnet` address (no chain write).
-- [ ] Fund that address with real **STRK** (a little ETH also fine). Size it from measured cost,
+- [x] `NETWORK=mainnet scripts/wallet.sh create` → prints the `plc-mainnet` address (no chain write).
+- [x] Fund that address with real **STRK** (a little ETH also fine). Size it from measured cost,
       don't guess: read the Sepolia console `/roster/aggregates` for the **average `actual_fee`**
       per import, multiply by expected mainnet import count, add generous headroom + a deploy-tx
       buffer. Record the number and the funding tx.
-- [ ] `NETWORK=mainnet scripts/wallet.sh deploy` (typed `mainnet` confirm) → account contract live.
-- [ ] `NETWORK=mainnet scripts/wallet.sh balance` → confirm the funded balance on-chain.
+- [x] `NETWORK=mainnet scripts/wallet.sh deploy` (typed `mainnet` confirm) → account contract live.
+- [x] `NETWORK=mainnet scripts/wallet.sh balance` → confirm the funded balance on-chain.
 
-**✅ Gate:** `plc-mainnet` deployed + funded; address and balance confirmed on starkscan.
+**✅ Gate met:** `plc-mainnet` deployed + funded; address and balance confirmed on starkscan.
 
 ---
 
-## Phase 2 — Deploy the `anchor` contract to mainnet
+## Phase 2 — Deploy the `anchor` contract to mainnet  ✅ done (superseded by Phase R)
 
-- [ ] Obtain a **keyed mainnet 0.10.x RPC** (public endpoints rate-limit `declare`). Put it in
+The steps below were executed for the original (pre-rearch) contract
+(`0x04db57b6…d9aa`). **The live contract today is the v2 store-only redeploy from Phase R**
+(`deployments/mainnet.json` → `0x03add24b…f1e124`) — same steps, same wallet, new address per the
+"not upgradeable" golden rule. Kept here for history; no action needed.
+
+- [x] Obtain a **keyed mainnet 0.10.x RPC** (public endpoints rate-limit `declare`). Put it in
       `secrets/mainnet.env` as `STARKNET_RPC`.
-- [ ] `NETWORK=mainnet STARKNET_RPC=<keyed> scripts/deploy.sh` → type `mainnet` at the prompt.
+- [x] `NETWORK=mainnet STARKNET_RPC=<keyed> scripts/deploy.sh` → type `mainnet` at the prompt.
       Declares the class, deploys an instance (no constructor), writes `deployments/mainnet.json`.
-- [ ] Verify the printed **Contract Address** on `https://starkscan.co/contract/<addr>` (deployed,
+- [x] Verify the printed **Contract Address** on `https://starkscan.co/contract/<addr>` (deployed,
       class hash matches).
-- [ ] Commit `deployments/mainnet.json` (public data — addresses/hashes only, no keys). This is the
+- [x] Commit `deployments/mainnet.json` (public data — addresses/hashes only, no keys). This is the
       canonical anchor address; `scripts/ingest.sh` and `scripts/secrets.sh` read it from here, so
       there is **no** `ANCHOR_CONTRACT_ADDRESS` to hand-copy into `secrets/mainnet.env`.
-- [ ] Sanity read against mainnet: an empty-roster head/root view returns cleanly (no DIDs yet).
+- [x] Sanity read against mainnet: an empty-roster head/root view returns cleanly (no DIDs yet).
 
-**✅ Gate:** `deployments/mainnet.json` committed; contract verified on-chain; empty-roster read OK.
+**✅ Gate met (historically, and again via Phase R for v2):** `deployments/mainnet.json`
+committed and current; contract verified on-chain; empty-roster read OK.
 
 ---
 
-## Phase 3 — Canary DID + on-chain validation
+## Phase 3 — Canary DID + on-chain validation  (done for v1; v2 status unclear — verify before Phase 4)
 
 Prove the write→read→witness loop on mainnet with **one** DID before any infra or roster automation.
 **Start the 72h clock here** — a `confirmed` head (needed for the `diverged` headline) requires a
 DID observed ≥72h; imported history is settled/tentative until then.
+
+> **Doc conflict, resolve first.** `HISTORY.md`'s verify-on-read entry says "v2 deployed to Sepolia
+> and mainnet, canary re-imported and witnessed," but this checklist's Phase R still marks the
+> mainnet canary re-run as `[~]` (open) with the concrete remaining command below. This session
+> had no chain/RPC access to check the mainnet contract's tx history and resolve which is right.
+> **Before starting Phase 4, run `witness check <canary-did> --rpc <mainnet-rpc> --contract
+> 0x03add24b…f1e124` once** — a `tentative-consistent`/`confirmed` result means Phase R's `[~]` is
+> stale and can be checked off; `absent`/an RPC "no such DID" means the canary import below still
+> needs to run.
 
 - [ ] Onboard one known DID (whole resolved history as a settled `import`, the 4a-correct path)
       with the single-switch wrapper — it resolves the anchor from `deployments/mainnet.json` and
@@ -250,9 +286,14 @@ home (sncast) and the two addresses derive from their canonical sources. **Remai
 - [ ] Confirm `plc.didmarc.dev` serves the prod console over HTTPS and reports the mainnet address.
 - [ ] Seed the roster criterion (already in `fly.prod.toml`); verify discovery enumerates
       candidates **without** spending (Active still off).
-- [ ] Flip **Active on** in the ⚙ panel and set the production `IMPORT_BUDGET_PER_TICK`. Watch the
-      first real imports land: `ANCHORED <did> tx=<hash>` → `/roster/aggregates` cumulative +
-      average `actual_fee` within the Phase-1 estimate.
+- [ ] **Cost-mitigation go/no-go** (see the Progress section decision, `ONCHAIN-REARCH-PLAN.md` §7):
+      confirm whether the full ~19k-DID backfill runs on the current v2 contract as-is, or waits on
+      one more redeploy for `import_batch`/caller-supplied-DID/per-op trims. Decide **before** the
+      budget ramp below, not before this phase's DNS/console steps.
+- [ ] Flip **Active on** in the ⚙ panel and set the production `IMPORT_BUDGET_PER_TICK` — start at
+      canary/small-batch scale, only ramp toward covering the full roster once the go/no-go above is
+      resolved. Watch the first real imports land: `ANCHORED <did> tx=<hash>` →
+      `/roster/aggregates` cumulative + average `actual_fee` within the Phase-1 estimate.
 
 **✅ Gate:** first mainnet DID `anchored`; measured fee within estimate; testnet still green.
 
