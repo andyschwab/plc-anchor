@@ -85,6 +85,31 @@ fn import_stores_the_whole_chain_settled() {
 }
 
 #[test]
+fn import_stamps_all_ops_with_one_block_time() {
+    // §7 per-op write trim: an `import` reads the block time once and shares it across every op
+    // in the chain (they all land in the same tx / block). Pin that all stored ops carry the same
+    // `created_at`, matching the block time at import.
+    let vectors = op_verify_vectors();
+    let chain_in = array![
+        from_hex(vectors.at(ALICE_GENESIS).signed_drisl_hex),
+        from_hex(vectors.at(ALICE_UPDATE).signed_drisl_hex),
+        from_hex(vectors.at(ALICE_TOMBSTONE).signed_drisl_hex),
+    ];
+
+    let mut state = contract_state_for_testing();
+    set_block_timestamp(4321); // seconds; the contract stamps ms (× 1000)
+    let did = AnchorImpl::import(ref state, chain_in);
+
+    let stored = AnchorImpl::chain(@state, did.clone());
+    assert!(stored.len() == 3, "all three ops stored");
+    let mut i = 0;
+    while i < stored.len() {
+        assert!(*stored.at(i).created_at == 4321 * 1000, "every op shares the import block time");
+        i += 1;
+    }
+}
+
+#[test]
 fn store_only_accepts_unverified_bytes() {
     // The defining v2 behavior: the contract does NOT validate. An op that would fail signature /
     // linkage checks is still STORED (the witness rejects it read-side; it never becomes a live
