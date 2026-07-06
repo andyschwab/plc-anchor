@@ -5,18 +5,15 @@
 //! invariant lives in the witness library; here we only persist what it returns and surface
 //! `diverged` as the alarm (`RosterStore.diverged()`).
 //!
-//! ## Root-change gate (RPC cost) — never a false skip
+//! ## RPC cost — the event-gated cache lives below this seam
 //!
-//! `confirmedRoot`/`tentativeRoot` are a single commitment over *every* tracked DID; if both are
-//! byte-identical to the last cycle's, the entire committed state is provably unchanged (a Merkle
-//! root is sensitive to any leaf), so no previously-checked DID's on-chain evidence could have
-//! changed either — skipping its RPC re-check is safe, not a heuristic. `confirmed_root` is also a
-//! read-time view (recomputed against the current block timestamp, not a stored value bumped by a
-//! transaction — see `anchor.cairo`), so comparing consecutive reads catches a pure 72h-window
-//! rollover too, not just new ops. A DID never checked before (`statusCheckedAt === null`) is
-//! always checked regardless — the gate only skips *re*-checks, never a first check. When the
-//! roots did move, every active DID is re-checked (the gate can't tell *which* DID changed, only
-//! that at least one did) — conservative, but only as often as the chain actually changes.
+//! Every active DID is still `check()`ed every cycle: status can shift purely from the directory
+//! changing (a new un-anchored op) or the 72h window rolling over, neither of which touches the
+//! anchor — so skipping a DID here could miss a real divergence. The RPC saving instead lives in
+//! the checker's `AnchorView`: `beginCycle()` probes whether *any* anchor op log changed since last
+//! cycle and, if not, serves every DID's on-chain log from cache (`witness.ts` /
+//! `EventCachingAnchorView`). So the per-DID `check()` still runs, but its anchor read costs nothing
+//! when the chain is unchanged. `cycleStats()` reports how many logs were actually re-read.
 
 import type { RosterStore } from "./roster.ts";
 import type { WitnessStatus } from "./types.ts";
@@ -28,28 +25,30 @@ export interface CheckOutcome {
   headCid: string | null;
 }
 
+/** Per-cycle RPC accounting from the checker's cache (see `EventCachingAnchorView`). */
+export interface RefreshCycleStats {
+  /** On-chain op logs actually re-read from RPC this cycle (the cost metric). */
+  refetched: number;
+}
+
 /** Anything that can resolve a DID to its graduated status. `witness.ts` provides the real one. */
 export interface StatusChecker {
   check(did: string): Promise<CheckOutcome>;
   /** Called once at the start of a `refreshAll()` pass, before any `check()` — lets the checker
-   * reset any per-cycle caching (e.g. the shared confirmed/tentative root reads). Optional so
-   * mocks in tests don't need to implement it. */
-  beginCycle?(): void;
-  /** The two commitment roots as opaque, comparable strings (e.g. hex). Optional: a checker that
-   * doesn't implement it just gets no root-change gate (every DID is re-checked every cycle, the
-   * pre-existing behavior). */
-  currentRoots?(): Promise<{ confirmedRoot: string; tentativeRoot: string }>;
+   * prime its per-cycle cache (probe the anchor's events, decide what to refetch). Optional and may
+   * be async; a mock that doesn't implement it just gets no gating. */
+  beginCycle?(): void | Promise<void>;
+  /** Per-cycle RPC stats, read after the pass. Optional (mocks may omit it). */
+  cycleStats?(): RefreshCycleStats;
 }
 
 export interface RefreshResult {
   diverged: number;
-  /** DIDs actually re-checked against the anchor this cycle. */
+  /** DIDs `check()`ed this cycle (every active DID). */
   checked: number;
-  /** Already-checked DIDs skipped because the roots proved nothing could have changed. */
-  skipped: number;
+  /** On-chain logs actually re-read from RPC (the rest were served from cache). */
+  refetched: number;
 }
-
-const LAST_ROOTS_META_KEY = "refresh:last_roots";
 
 export class RefreshService {
   readonly #store: RosterStore;
@@ -74,41 +73,17 @@ export class RefreshService {
     }
   }
 
-  /** Refresh every active (non-removed) DID against the anchor — skipping already-checked DIDs
-   * when the root-change gate proves nothing could have changed since last cycle. Returns the
-   * `diverged` alarm count plus how many DIDs were actually checked vs. skipped, so the gate's
-   * real hit rate is observable (worker status) rather than assumed. */
+  /** Refresh every active (non-removed) DID against the anchor. Returns the `diverged` alarm count
+   * plus how many DIDs were checked and how many on-chain logs were actually re-read (the rest came
+   * from the event-gated cache), so the gate's real hit rate is observable rather than assumed. */
   async refreshAll(): Promise<RefreshResult> {
-    this.#checker.beginCycle?.();
-
-    // The gate is a pure optimization on top of the required per-DID checks below — a failure
-    // reading the roots (e.g. an RPC/entrypoint problem) must never abort the cycle. Degrade to
-    // "unchanged" unproven (full re-check), not a thrown error.
-    let unchanged = false;
-    try {
-      const roots = await this.#checker.currentRoots?.();
-      if (roots) {
-        const key = `${roots.confirmedRoot}:${roots.tentativeRoot}`;
-        unchanged = this.#store.getMeta(LAST_ROOTS_META_KEY) === key;
-        this.#store.setMeta(LAST_ROOTS_META_KEY, key);
-      }
-    } catch (err) {
-      console.error(
-        "[refresh] root-change gate unavailable this cycle, checking every DID:",
-        err instanceof Error ? err.message : err,
-      );
-    }
-
+    await this.#checker.beginCycle?.();
     let checked = 0;
-    let skipped = 0;
     for (const entry of this.#store.listActive()) {
-      if (unchanged && entry.statusCheckedAt !== null) {
-        skipped += 1;
-        continue;
-      }
       checked += 1;
       await this.refresh(entry.did);
     }
-    return { diverged: this.#store.diverged().length, checked, skipped };
+    const refetched = this.#checker.cycleStats?.().refetched ?? checked;
+    return { diverged: this.#store.diverged().length, checked, refetched };
   }
 }

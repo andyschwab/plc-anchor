@@ -20,12 +20,16 @@ export {
 export {
   type AnchorOp,
   AnchorReader,
+  type BlockNumberCall,
   decodeByteArray,
   decodeChain,
   encodeByteArray,
   encodeString,
+  httpBlockNumber,
   httpCall,
+  httpStoredEventProbe,
   type StarknetCall,
+  type StoredEventProbe,
 } from "./starknet.ts";
 export { cidForBytes, cidForOp, decodeDagCbor, didForGenesisOp, encodeDagCbor } from "./dagcbor.ts";
 export {
@@ -38,4 +42,9 @@ export {
   type DirectorySource,
   type Status,
 } from "./status.ts";
-export { CachingAnchorView } from "./caching-anchor.ts";
+export {
+  type AnchorEventView,
+  type ChainCache,
+  type CycleStats,
+  EventCachingAnchorView,
+} from "./event-cache.ts";

@@ -149,7 +149,7 @@ function summarize(name: string, result: unknown): string {
       case "onboard":
         return r.active ? `${r.anchored ?? 0}/${r.attempted ?? 0} anchored (budget ${r.budget})` : "inactive";
       case "refresh":
-        return `${r.diverged ?? 0} diverged · ${r.checked ?? 0} checked / ${r.skipped ?? 0} skipped (root unchanged)`;
+        return `${r.diverged ?? 0} diverged · ${r.checked ?? 0} checked · ${r.refetched ?? 0} RPC log reads`;
       case "reconcile":
         return `reset ${r.reset ?? 0} → approved`;
       default:
@@ -259,11 +259,14 @@ actions.reconcile = instrument("reconcile", async () => ({
 // --- Refresh (read side): §4 status + the diverged alarm. Needs an RPC. ---
 if (rpc) {
   actions.refresh = instrument("refresh", async () => {
-    const refresher = new RefreshService(store, new WitnessChecker(rpc, contractAddress, settings.get().directoryUrl));
-    const { diverged, checked, skipped } = await refresher.refreshAll();
+    const refresher = new RefreshService(
+      store,
+      new WitnessChecker(store, rpc, contractAddress, settings.get().directoryUrl),
+    );
+    const { diverged, checked, refetched } = await refresher.refreshAll();
     lastRefreshAt = Date.now();
     if (diverged > 0) console.error(`[refresh] ${diverged} DID(s) DIVERGED`);
-    return { diverged, checked, skipped, lastRefreshAt };
+    return { diverged, checked, refetched, lastRefreshAt };
   });
   loop(() => settings.get().refreshIntervalMs, actions.refresh);
 } else {

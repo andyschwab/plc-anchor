@@ -204,6 +204,27 @@ test("reconcileForContract re-queues anchored/onboarding and clears on-chain pro
   assert.equal(s.reconcileForContract(), 0);
 });
 
+test("chain cache round-trips and is dropped on a contract switch", () => {
+  const s = store();
+  assert.equal(s.getChainCache("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"), null, "empty until set");
+
+  s.setChainCache("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", '[{"signed":"AQ==","createdAt":1,"imported":false}]');
+  s.setMeta("anchorcache:cursor", "4200");
+  assert.equal(
+    s.getChainCache("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"),
+    '[{"signed":"AQ==","createdAt":1,"imported":false}]',
+  );
+
+  // upsert overwrites in place (a re-fetch of the same DID).
+  s.setChainCache("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "[]");
+  assert.equal(s.getChainCache("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"), "[]");
+
+  // A contract switch invalidates the whole cache + the event cursor (chains are contract-bound).
+  s.reconcileForContract();
+  assert.equal(s.getChainCache("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"), null, "cache cleared");
+  assert.equal(s.getMeta("anchorcache:cursor"), null, "event cursor cleared");
+});
+
 test("setEnrichment records the off-criterion flag; aggregates + query surface it", () => {
   const s = store();
   for (const d of ["did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb"]) {
