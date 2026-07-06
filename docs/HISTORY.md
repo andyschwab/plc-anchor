@@ -346,7 +346,9 @@ further cuts are the tracked cost-mitigation follow-ups below (each a redeploy �
   not per DID); (b) **caller-supplied DID** — `import(did, chain)` stores under a caller-provided
   `did` and drops the on-chain `sha256` (the witness already re-derives + verifies the DID↔genesis
   binding read-side), removing the only remaining on-chain crypto; (c) **per-op write trims**
-  (free) — one `Stored` event + one `now_ms()` per `import` instead of per op. The old
+  (free) — **✅ landed in-tree** (`anchor.cairo`: `import` reads `now_ms()` once and emits one
+  `Stored` per call, not per op; pinned by `import_stamps_all_ops_with_one_block_time`). Ships on
+  the next redeploy; (a)/(b) remain deferred behind the 1-op-vs-4-op profile. The old
   `import_append` note (splitting a long chain across txs to dodge the per-tx L2 *verification* cap)
   is **obsolete**: v2 does no per-op verification, so long chains fit in one `import`.
   (`ONCHAIN-REARCH-PLAN.md` §7.)
