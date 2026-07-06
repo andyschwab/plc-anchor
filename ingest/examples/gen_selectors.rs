@@ -15,16 +15,10 @@ use std::path::Path;
 
 use starknet::core::utils::get_selector_from_name;
 
-/// The anchor view entrypoints the witness reads (REFERENCE.md §3; `anchor.cairo`).
-const VIEWS: &[&str] = &[
-    "is_anchored",
-    "head_cid",
-    "confirmed_head",
-    "tentative_root",
-    "confirmed_root",
-    "tentative_proof",
-    "confirmed_proof",
-];
+/// The anchor view entrypoints the witness reads (REFERENCE.md §3; `anchor.cairo`). Verify-on-read:
+/// the witness reads the raw op log (`chain`) and re-derives heads itself — no head/root/proof
+/// views.
+const VIEWS: &[&str] = &["is_anchored", "chain"];
 
 fn main() {
     let mut entries = String::new();

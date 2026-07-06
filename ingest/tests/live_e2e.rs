@@ -1,8 +1,10 @@
 //! End-to-end test against a live `anchor` contract on Starknet.
 //!
 //! Drives a real genesis op from the conformance corpus through [`StarknetSink`] into the deployed
-//! contract, then reads it back via the on-chain views. Proves the full off-chain → on-chain path:
-//! canonical DRISL bytes → `ByteArray` calldata → `import_genesis` → state + commitment root.
+//! contract, then reads the raw op log back via the `chain` view. Proves the full off-chain →
+//! on-chain path under verify-on-read: canonical DRISL bytes → `ByteArray` calldata →
+//! `import_genesis` → stored **byte-identical** on-chain (the non-equivocation the witness then
+//! validates read-side).
 //!
 //! Gated by the `live` feature and `#[ignore]` — it needs network + a funded account. Run with:
 //!
@@ -27,9 +29,6 @@ const CORPUS: &str = concat!(
     "/../conformance/vectors/plc-ops/corpus.json"
 );
 
-/// sha256("") — the empty-roster commitment root the contract returns before anything is anchored.
-const EMPTY_ROOT_HEX: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-
 #[test]
 #[ignore = "needs a live contract + funded account (see module docs)"]
 fn genesis_anchors_on_chain() {
@@ -45,6 +44,7 @@ fn genesis_anchors_on_chain() {
     let did = genesis["did"].as_str().expect("did").to_string();
     let signed =
         hex::decode(genesis["drisl_hex"].as_str().expect("drisl_hex")).expect("decode drisl_hex");
+    let expected = signed.clone();
     eprintln!("e2e: target DID {did} ({} signed bytes)", signed.len());
 
     let mut sink = StarknetSink::new(StarknetConfig::from_env().expect("env config"))
@@ -68,25 +68,23 @@ fn genesis_anchors_on_chain() {
         "DID must be anchored after import_genesis"
     );
 
-    let head = sink
-        .call_byte_array_view("head_cid", did.as_bytes())
-        .expect("head_cid view");
-    let head_cid = String::from_utf8(head).expect("head_cid is utf8");
-    let expected_cid = genesis["cid"].as_str().expect("corpus cid");
+    // Verify-on-read: read the raw op log and confirm the stored genesis bytes are byte-identical
+    // to what we submitted (non-equivocation), settled (imported), and block-time stamped.
+    let chain = sink.call_chain(&did).expect("chain view");
+    assert_eq!(chain.len(), 1, "exactly one op stored after genesis import");
     assert_eq!(
-        head_cid, expected_cid,
-        "head CID must match the corpus genesis CID"
+        chain[0].signed, expected,
+        "stored genesis bytes must be byte-identical to the submitted DRISL"
     );
-    eprintln!("e2e: head_cid = {head_cid} ✓ (matches corpus)");
-
-    let root = sink
-        .call_byte_array_view("tentative_root", &[])
-        .expect("tentative_root view");
-    assert_eq!(root.len(), 32, "root is a 32-byte sha256 digest");
-    let root_hex = hex::encode(&root);
-    assert_ne!(
-        root_hex, EMPTY_ROOT_HEX,
-        "tentative_root must change from sha256(\"\") once a DID is anchored"
+    assert!(
+        chain[0].imported,
+        "genesis import is settled (imported: true)"
     );
-    eprintln!("e2e: tentative_root = {root_hex} ✓ (non-empty)");
+    assert!(chain[0].created_at > 0, "op carries a block-time stamp");
+    eprintln!(
+        "e2e: chain[0] {} bytes, imported={}, created_at={} ✓ (byte-identical to corpus)",
+        chain[0].signed.len(),
+        chain[0].imported,
+        chain[0].created_at
+    );
 }

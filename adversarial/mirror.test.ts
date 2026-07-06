@@ -6,13 +6,11 @@
 
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { leafHash } from "../witness-ts/src/merkle.ts";
 import { directoryHead, type AuditEntry, DirectoryClient, type LiveChain } from "../witness-ts/src/directory.ts";
-import { type AnchorView, check } from "../witness-ts/src/status.ts";
+import { type AnchorView, check, type CheckOptions } from "../witness-ts/src/status.ts";
 import { startMaliciousMirror } from "./mirror.ts";
 
 const DID = "did:plc:ewvi7nxzyoun6zhxrhs64oiz";
-const ZERO = new Uint8Array(32);
 
 const entry = (cid: string, createdAt: string, nullified = false): AuditEntry => ({ did: DID, cid, createdAt, nullified, operation: {} });
 
@@ -23,18 +21,13 @@ const flagLive = (log: readonly AuditEntry[]): LiveChain => ({
   head: directoryHead(log),
 });
 
-// A fake anchor with a single-leaf commitment, so an empty proof verifies trivially and each
-// assertion isolates the directory/transport behavior, not the Merkle math. The leaf is built
-// over `did` (the subject `check` is called with), so the inclusion proof verifies.
-function fakeAnchor(did: string, confirmedHead: string): AnchorView {
-  return {
-    isAnchored: async () => true,
-    confirmedProof: async () => ({ head: confirmedHead, proof: [] }),
-    tentativeProof: async () => ({ head: confirmedHead, proof: [] }),
-    confirmedRoot: async () => (confirmedHead === "" ? ZERO : leafHash(did, confirmedHead)),
-    tentativeRoot: async () => (confirmedHead === "" ? ZERO : leafHash(did, confirmedHead)),
-  };
-}
+// A fake anchor (anchored, empty raw chain); the confirmed head is supplied via `deriveAnchor`, so
+// each assertion isolates the directory/transport behavior, not the anchor's chain re-derivation.
+const fakeAnchor: AnchorView = { isAnchored: async () => true, chain: async () => [] };
+const withHead = (confirmedHead: string): CheckOptions => ({
+  deriveLive: flagLive,
+  deriveAnchor: () => ({ confirmedHead, tentativeHead: confirmedHead }),
+});
 
 const mirror = await startMaliciousMirror(
   new Map([
@@ -62,20 +55,20 @@ test("a DID the mirror doesn't list reads as an empty log (404 → [])", async (
 });
 
 test("end-to-end through real fetch: honest mirror → confirmed", async () => {
-  const r = await check(DID, fakeAnchor(DID, "bafyCONFIRMED"), directory, { deriveLive: flagLive });
+  const r = await check(DID, fakeAnchor, directory, withHead("bafyCONFIRMED"));
   assert.equal(r.status, "confirmed");
   assert.equal(r.reason, "confirmed-head-match");
 });
 
 test("end-to-end through real fetch: equivocating mirror (old, omits confirmed head) → diverged", async () => {
   const equiv = "did:plc:equivocator0000000000000";
-  const r = await check(equiv, fakeAnchor(equiv, "bafyCONFIRMED"), directory, { deriveLive: flagLive });
+  const r = await check(equiv, fakeAnchor, directory, withHead("bafyCONFIRMED"));
   assert.equal(r.status, "diverged");
   assert.equal(r.reason, "confirmed-head-absent");
 });
 
 test("end-to-end through real fetch: vanishing DID (404) with a confirmed head → diverged", async () => {
   const gone = "did:plc:neverlistedheredoesnotexist";
-  const r = await check(gone, fakeAnchor(gone, "bafyCONFIRMED"), directory, { deriveLive: flagLive });
+  const r = await check(gone, fakeAnchor, directory, withHead("bafyCONFIRMED"));
   assert.equal(r.status, "diverged");
 });

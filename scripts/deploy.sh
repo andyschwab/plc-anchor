@@ -6,8 +6,9 @@
 # WHY A FRESH DEPLOY EACH TIME: the `anchor` contract is NOT upgradeable (no `replace_class_hash`
 # — REFERENCE.md §6, governance deferred). A contract change means a NEW class + a FRESH instance
 # at a NEW address, starting with an EMPTY roster. Re-import is cheap and idempotent (chains are
-# self-certifying, replayed from genesis):
-#     NETWORK=<net> cargo run -p ingest --features live -- --did did:plc:<…> --submit
+# self-certifying, replayed from genesis) — use scripts/ingest.sh so the live-sink env resolves
+# from the same single NETWORK switch (never hand-swap STARKNET_* between networks):
+#     NETWORK=<net> scripts/ingest.sh --did did:plc:<…> --submit
 #
 # PREREQS (run locally — sncast is not in the agent sandbox):
 #   - sncast 0.61.0 + a deployed operator account (scripts/wallet.sh).
@@ -18,9 +19,11 @@
 #   NETWORK=mainnet STARKNET_RPC=https://<keyed> scripts/deploy.sh   # asks you to type 'mainnet'
 #
 # AFTER A SUCCESSFUL DEPLOY:
-#   1. deployments/<network>.json is updated (committed source of truth).
-#   2. Point ANCHOR_CONTRACT_ADDRESS at the new address (Fly secret / GitHub secret / local env).
-#   3. Re-import any DIDs onto the fresh (empty) roster.
+#   1. deployments/<network>.json is updated (committed source of truth) — COMMIT it.
+#   2. Re-import any DIDs onto the fresh (empty) roster: NETWORK=<net> scripts/ingest.sh --did … --submit
+#      (scripts/ingest.sh reads the new address straight from deployments/<net>.json, so there is
+#      no ANCHOR_CONTRACT_ADDRESS to update by hand for local runs). For the deployed console/Fly,
+#      still update the ANCHOR_CONTRACT_ADDRESS Fly/GitHub secret.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/starknet-common.sh

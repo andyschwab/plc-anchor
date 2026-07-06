@@ -1,17 +1,15 @@
 //! Offline runner: drive `check()` over each adversarial scenario from the generated fixture.
 //!
 //! The fixture (`scenarios.generated.json`, built by conformance/gen-adversarial-scenarios.mjs)
-//! carries real did:plc chains, the anchor's real Merkle roots + inclusion proofs, the malicious
-//! mirror's served audit log, and the expected graduated status. This runner reconstructs the
-//! `AnchorView` from those bytes (the proofs are verified by the witness's own `verifyProof`, so
-//! a wrong root/format fails here exactly as it would on a real resolver) and the
-//! `MaliciousDirectory` from the served log, then runs the real `check()`. No fakes of the
-//! decision logic — only the transport (chain reads, directory fetch) is local.
+//! carries real did:plc chains, the anchor's re-derived confirmed/tentative heads (verify-on-read:
+//! no on-chain commitment), the malicious mirror's served audit log, and the expected graduated
+//! status. This runner reconstructs the `AnchorView` from those bytes and the `MaliciousDirectory`
+//! from the served log, then runs the real `check()`. No fakes of the decision logic — only the
+//! transport (anchor chain reads, directory fetch) is local.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ProofStep } from "../witness-ts/src/merkle.ts";
 import { directoryHead, type AuditEntry, type LiveChain } from "../witness-ts/src/directory.ts";
 import { type AnchorView, check, type CheckResult } from "../witness-ts/src/status.ts";
 import { MaliciousDirectory } from "./mirror.ts";
@@ -28,16 +26,14 @@ const flagLive = (log: readonly AuditEntry[]): LiveChain => ({
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(HERE, "scenarios.generated.json");
 
-/** Anchor reads for a read-class scenario (real roots + inclusion proofs). */
+/** Anchor reads for a read-class scenario. Verify-on-read: the witness re-derives the confirmed
+ * head from the on-chain op log, so a scenario supplies the derived heads directly (the fixture's
+ * legacy `confirmedRoot`/`*Proof` fields, from the pre-rearchitecture Merkle model, are ignored). */
 export interface ScenarioAnchor {
   did: string;
   anchored: boolean;
   confirmedHead: string;
   tentativeHead: string;
-  confirmedRoot: string;
-  confirmedProof: { sibling: string; siblingIsLeft: boolean }[];
-  tentativeRoot: string;
-  tentativeProof: { sibling: string; siblingIsLeft: boolean }[];
 }
 
 /** The defender's verdict on a write-class adversarial submission. */
@@ -91,20 +87,12 @@ export interface ScenarioOutcome {
   pass: boolean;
 }
 
-const hexToBytes = (h: string): Uint8Array =>
-  Uint8Array.from(h.match(/.{2}/g)?.map((b) => parseInt(b, 16)) ?? []);
-
-const decodeProof = (steps: { sibling: string; siblingIsLeft: boolean }[]): ProofStep[] =>
-  steps.map((s) => ({ sibling: hexToBytes(s.sibling), siblingIsLeft: s.siblingIsLeft }));
-
-/** Reconstruct an `AnchorView` from a read-class scenario's fixture bytes (proofs stay real). */
+/** Reconstruct an `AnchorView` from a read-class scenario: anchored + an empty raw chain (the
+ * confirmed/tentative heads are injected via `deriveAnchor` in `runScenario`). */
 export function anchorViewFor(a: ScenarioAnchor): AnchorView {
   return {
     isAnchored: async () => a.anchored,
-    confirmedProof: async () => ({ head: a.confirmedHead, proof: decodeProof(a.confirmedProof) }),
-    tentativeProof: async () => ({ head: a.tentativeHead, proof: decodeProof(a.tentativeProof) }),
-    confirmedRoot: async () => hexToBytes(a.confirmedRoot),
-    tentativeRoot: async () => hexToBytes(a.tentativeRoot),
+    chain: async () => [],
   };
 }
 
@@ -117,10 +105,12 @@ export async function runScenario(s: Scenario, fixture: Fixture): Promise<Scenar
   if (!s.anchor || !s.directory || !s.expect) {
     throw new Error(`runScenario: ${s.id} is not a read-class scenario`);
   }
-  const actual = await check(s.anchor.did, anchorViewFor(s.anchor), new MaliciousDirectory(s.directory.auditLog), {
+  const anchor = s.anchor;
+  const actual = await check(anchor.did, anchorViewFor(anchor), new MaliciousDirectory(s.directory.auditLog), {
     now: () => fixture.now,
     skewHorizonMs: fixture.skewHorizonMs,
     deriveLive: flagLive,
+    deriveAnchor: () => ({ confirmedHead: anchor.confirmedHead, tentativeHead: anchor.tentativeHead }),
   });
   const pass = actual.status === s.expect.status && actual.reason === s.expect.reason;
   return { scenario: s, actual, pass };

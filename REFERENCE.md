@@ -16,6 +16,20 @@ DMARC. It is an anchor, **not** a replacement for the directory.
 
 ---
 
+> **Amendment — verify-on-read (adopted 2026-07-02).** Mainnet fee measurement showed per-DID
+> import cost was ~100% in-contract EC verification (secp256k1/r1), not storage/DA (which is
+> ~free) — six figures of STRK to *re-run crypto the op log already self-certifies*, for a backup
+> witness. So verification **moved from write-time (the contract) to read-time (the witness)**.
+> The contract is now a **store-only, block-timestamped, append-only op log** — no
+> `sha256`(beyond DID derivation)/`secp256k1`/`secp256r1`, no fork adjudication, no on-chain
+> Merkle commitment. The witness re-derives each DID's live/confirmed head from the on-chain bytes
+> (`deriveLiveChain`/`deriveAnchorHeads`), exactly as it already re-derives the directory's, and
+> rejects any bogus chain read-side. **What's preserved:** non-equivocation (identical bytes on
+> the public chain), trustlessness (the reader re-derives everything), the independent block-time
+> confirmed head, and "never a false `diverged`". **What changed** is marked inline below with
+> *(amended: verify-on-read)*. Rationale, evidence, and the migration are in
+> [`docs/ONCHAIN-REARCH-PLAN.md`](docs/ONCHAIN-REARCH-PLAN.md).
+
 ## 1. What this is
 
 PLC (Public Ledger of Credentials) is the default DID method for atproto. Every account's
@@ -43,7 +57,10 @@ that opt in (a PDS naturally anchors its own users).
   is measured from when *we observed* the op, not when it was authored (§4). A weaker
   dependency than "trust their clock," but a real one: our window lags the directory's.
 
-Per-op validity is **proven**, not assumed.
+Per-op validity is **proven**, not assumed — *(amended: verify-on-read)* re-derived by the
+witness from the on-chain op bytes on read, rather than checked in-contract on write. The bytes
+are non-equivocable (identical for everyone on the public chain) and the anchor's block-time
+stamp is the contract's own, so the derived confirmed head stays independent of the directory.
 
 ### Read-path trust — what the witness proves vs. trusts (findings 4b, 4c)
 
@@ -112,27 +129,33 @@ Three facts make the design simple:
 1. **PLC per-DID chains are self-certifying and independent.** A DID *is* the hash of its
    genesis op; every op is signed by a then-valid rotation key and hash-links to its
    predecessor. So a DID's entire history can be verified from genesis in isolation.
-2. **Cairo has native secp256k1, secp256r1, and sha-256.** In-contract verification of a
-   PLC op signature and CID is a library call.
+2. **PLC ops self-certify, so verification is a pure re-derivation from the bytes.** *(amended:
+   verify-on-read)* Originally: "Cairo has native secp256k1/r1/sha-256, so in-contract
+   verification is a library call." True, but measured mainnet cost made that library call ~100%
+   of the fee — so verification runs **read-side** in the witness (`node:crypto`) over the raw
+   on-chain bytes instead. The contract keeps only the cheap `sha256` DID derivation; it verifies
+   no signatures.
 3. **Starknet gives validity proofs + Ethereum settlement for free.** A contract's state
    transition is STARK-proven by the network and settled on L1.
 
 From these:
 
-- **One permissionless endpoint (a Starknet contract).** `import(did, chain)` verifies a
-  DID's full op log from genesis and commits its head; `submit_op(op)` appends a new
-  signed op. Anyone may import any DID's (public, self-certifying) history; **new** ops are
-  authorized by the op's **embedded rotation-key signature, verified in-contract** — never
-  by the Starknet transaction signer or fee payer, who may be anyone (that is the
-  permissionless property). Native account abstraction and paymasters are gas/UX only (who
-  *pays*), never authorization (who may *write*); do not require the PLC key to be the
-  Starknet account signer. In witness mode the indexer (§3.4) supplies ops mirrored from the
-  directory; `submit_op`'s permissionless authorization is the **backstop** (escape hatch,
-  and the seed of Modes 2–3, §1a) — one primitive serving both the normal and the
-  adversarial path.
-- **Verification runs as a contract.** The network proves the blocks and settles to
-  Ethereum. We run no bespoke prover and — initially — no sequencer (deploy on public
-  Starknet first; an appchain is a later option, §6).
+- **One permissionless endpoint (a Starknet contract).** `import(chain)` stores a DID's full
+  op log from genesis; `submit_op(did, op)` appends a new op; `chain(did)` exposes the raw log.
+  *(amended: verify-on-read)* The contract **stores** these bytes verbatim (block-timestamped +
+  provenance-flagged) without verifying them; authorization is still the op's **embedded
+  rotation-key signature**, but it is checked **read-side** by the witness — never by the
+  Starknet transaction signer or fee payer, who may be anyone (that is the permissionless
+  property). Native account abstraction and paymasters are gas/UX only (who *pays*), never
+  authorization (who may *write*). An invalid op can be stored but is inert — the witness's
+  re-derivation drops it. In witness mode the indexer (§3.4) supplies ops mirrored from the
+  directory; `submit_op`'s permissionless path is the **backstop** (escape hatch, and the seed
+  of Modes 2–3, §1a).
+- **Validity is re-derived on read; the network still proves *storage*.** *(amended:
+  verify-on-read)* Starknet proves the blocks and settles to Ethereum, so the stored op log is
+  non-equivocable and its block-time stamps are trustworthy; the witness re-derives per-op
+  validity + the confirmed head from those bytes. We run no bespoke prover and — initially — no
+  sequencer (deploy on public Starknet first; an appchain is a later option, §6).
 - **Per-DID verification is lazy and on-demand.** No bulk genesis replay, no trusted
   snapshot. Each anchored DID is proven from its own genesis — the strongest trust
   property, kept exactly where it matters.
@@ -167,15 +190,19 @@ library (5), but it stands on 1–4.
    the DRISL-encoded unsigned op; did:key parsing; `prev` linkage; the 72h
    higher-priority-key nullification. Differential-tested vs `@did-plc/lib`.
    → `cairo/packages/plc_core`
-3. **State commitment + anchor endpoint.** Per-DID head; a commitment over the DID→document
-   map (resolution = root + inclusion proof — the witness substrate); confirmed/tentative
-   tiers (§4); the `import` / `submit_op` entrypoint with embedded-signature authorization
-   (`submit_op` = the backstop write path, §2). → `cairo/packages/plc_core`
+3. **Anchor endpoint (store-only).** *(amended: verify-on-read)* Per-DID append-only op log,
+   block-timestamped + provenance-flagged; the `import` / `submit_op` / `chain` entrypoints.
+   No on-chain Merkle commitment and no in-contract verification/adjudication — the witness
+   re-derives the head, confirmed/tentative tiers (§4), and the recovery decision read-side from
+   the raw bytes. Components 1–2 (`drisl` CID + `op_verify`/`recovery`) remain as the
+   differential-green PLC reference the read side mirrors; the contract itself uses only `drisl`
+   for DID derivation. (`submit_op` = the backstop write path, §2.) → `cairo/packages/plc_core`
 4. **Sync indexer (off-chain, Rust).** Consume a PLC mirror's `/export/stream` (Eurosky /
    microcosm) by sequence cursor; for anchored DIDs, submit deltas. **The normal anchoring
    path in witness mode**, and where ongoing update cost lives and is allocated. → `ingest/`
-5. **Witness / resolver verification library — the V1 product.** Given a DID, return the
-   document + an inclusion proof against the published root, as the graduated status
+5. **Witness / resolver verification library — the V1 product.** Given a DID, re-derive its
+   live/confirmed head from the anchor's on-chain op log *(amended: verify-on-read — was: verify
+   an inclusion proof against the published root)* and return the graduated status
    (`confirmed` / `tentative-consistent` / `diverged` / `absent`, §4). This is "atproto
    identity DMARC" (§1a Mode 1) — the adoption surface and the headline deliverable, even
    though it is built last because it stands on 1–4. Must be cheap; an anchor nobody checks
@@ -195,9 +222,12 @@ authority for §1–2 testing.
 
 Within 72h of an op's `createdAt`, a higher-priority rotation key (lower index in
 `rotationKeys`) can sign an op that nullifies a lower-priority branch — PLC's
-fork/recovery mechanism. We surface this rather than hide it:
+fork/recovery mechanism. We surface this rather than hide it. *(amended: verify-on-read —
+these tiers and the recovery adjudication are computed by the witness from the anchor's on-chain
+op log + its block-time stamps; the contract no longer computes a confirmed/tentative head or
+serves a root.)*
 
-- **Confirmed root** — commits ops *past* the window. Immutable; what resolvers treat as
+- **Confirmed head** — the latest op *past* the window. Immutable; what resolvers treat as
   final.
 - **Tentative tip** — within-window ops, still nullifiable. Carried separately and flagged.
 
@@ -349,9 +379,11 @@ Repos: `github.com/eurosky-social` (`u-at-proto`, `eu-haul`).
   reporting).
 - **Starknet** (public network first) · **native account abstraction** + **paymasters**
   (gas/UX and commitment-cost allocation only — never authorization; the op's embedded
-  signature, verified in-contract, is the sole authority).
-- **Crypto:** Cairo corelib `sha256` + `secp256k1` + `secp256r1` (syscalls, in-contract);
-  Garaga only if an exotic curve is ever needed.
+  signature, *(amended: verify-on-read)* verified read-side by the witness, is the sole authority).
+- **Crypto:** *(amended: verify-on-read)* the consensus crypto (secp256k1/r1 ECDSA + sha256 CID)
+  runs **read-side** in the witness (`node:crypto`), over the raw on-chain bytes. The contract
+  uses only Cairo corelib `sha256` for DID derivation — no `secp256k1`/`secp256r1` on the write
+  path. Garaga is not needed.
 - **Off-chain (Rust):** sync indexer + differential oracle (`atproto-dasl`).
 - **Differential references:** `@did-plc/lib`, `atproto-dasl`, `@atcute/cbor`; DASL
   conformance vectors.

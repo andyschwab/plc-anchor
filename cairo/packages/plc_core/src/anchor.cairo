@@ -1,150 +1,133 @@
-//! The permissionless anchor endpoint (REFERENCE.md §2, §3 component 3, §4).
+//! The permissionless anchor endpoint — **verify-on-read** (REFERENCE.md §1, §2, §3
+//! component 3; docs/ONCHAIN-REARCH-PLAN.md).
 //!
-//! A Starknet contract holding a per-DID op chain (the recovery window) with:
-//!   - `import_genesis(genesis_signed)` — verify a self-authorized genesis op, start its
-//!     chain, and return the derived did:plc.
-//!   - `import(chain)` — anchor a DID with existing history in one call: replay genesis +
-//!     each successor (the resolved linear chain) and store it.
-//!   - `submit_op(did, proposed_signed)` — append OR recover: the op may extend the head or
-//!     fork at an earlier op, nullifying what followed, subject to the 72h higher-priority
-//!     rule (`state::apply_op`).
-//!   - views: `head_cid` / `tentative_head` (the tip), `confirmed_head` (immutable past the
-//!     window — §4), `is_anchored`.
+//! A Starknet contract holding a per-DID **append-only log of op bytes**, block-timestamped.
+//! It does **no** signature/CID verification and no fork adjudication: those moved to the
+//! read side (the witness re-derives the whole chain from these bytes — `witness-ts`), because
+//! on-chain EC verification was ~100% of the measured cost while the op log already
+//! self-certifies. The contract's job shrank to *store what was submitted, stamp it with block
+//! time + provenance, and expose it.*
 //!
-//! Authorization is the op's *embedded* signature, verified in-contract against the relevant
-//! op's rotation keys (`state`). The Starknet tx signer / fee payer is irrelevant and may be
-//! anyone — the permissionless property (REFERENCE.md §2); native AA / paymasters are for
-//! gas/UX only, never authorization.
+//!   - `import_genesis(genesis_signed)` — store a genesis op, keyed by its derived did:plc, and
+//!     return the DID. (The DID is `did:plc:` + base32(sha256(signed))[..24] — a hash, not EC
+//!     crypto; it only *keys storage / names the DID*, it does not verify the op.)
+//!   - `import(chain)` — store a DID's resolved history in one call (`chain[0]` = genesis).
+//!     Every stored op is marked **settled** (`imported: true`).
+//!   - `submit_op(did, proposed_signed)` — append one op, observed **live** (`imported:
+//!     false`). No linkage/fork logic: a superseding op is simply appended, exactly like a
+//!     directory audit log; the reader adjudicates recovery/nullification (72h higher-priority
+//!     rule + recovery-of-imported) from the bytes + block-time stamps.
+//!   - views: `is_anchored(did)` and `chain(did)` — the raw ops + their block-time stamps +
+//!     provenance, everything a reader needs to validate independently.
 //!
-//! Each chain entry stores the op's signed DRISL bytes + its anchored timestamp + signer
-//! index; the CID, rotation keys, and tombstone status all derive from the bytes
-//! (`state::record_from_signed`). `now` is the block timestamp in ms (seconds × 1000) — the
-//! pragmatic createdAt the 72h window uses (§1, §4).
-
-use crate::merkle::ProofStep;
+//! **Non-equivocation** is preserved (identical bytes for everyone on the public chain);
+//! **validity** is a read-side property (the reader rejects a bogus chain — sigs won't verify /
+//! won't link — so a bad entry is rejected *by readers*, not by the contract). The
+//! block-timestamp stamp is the anchor's **independent clock** the 72h window measures against
+//! (`createdAt` is not in the signed op; §1, §4), and it is the contract's — not the
+//! submitter's — so the confirmed head a reader derives is still independent of the directory.
+//!
+//! Writes are permissionless (the Starknet tx signer / fee payer may be anyone; §2). A writer
+//! can store unverified/garbage ops, but they are rejected read-side and cost the writer gas;
+//! bulk storage-spam mitigation (operator-gating or fee friction) is off-chain policy for V1
+//! (the permissionless write path is a backstop, not the V1 headline; §1a).
 
 #[starknet::interface]
 pub trait IAnchor<TContractState> {
-    /// Import a genesis op; returns its did:plc. Reverts if the DID is already anchored or
-    /// the op is not a valid self-authorized genesis.
+    /// Store a genesis op; returns its did:plc. Reverts if the DID is already anchored. The op
+    /// is **not** verified here — the reader validates it (a non-genesis / unauthorized op
+    /// stored as "genesis" simply reads back `absent`, since the reader re-derives the DID from
+    /// the bytes and re-checks self-authorization). Marked settled (`imported: true`).
     fn import_genesis(ref self: TContractState, genesis_signed: ByteArray) -> ByteArray;
-    /// Import a DID's existing history in one call: `chain[0]` is the genesis op and
-    /// `chain[1..]` its successors in order (the *resolved* linear history — every op links
-    /// to its immediate predecessor). Verifies genesis (self-authorized) then each successor
-    /// (`prev == head`, signed by the head's rotation keys), and stores the chain. Returns
-    /// the derived did:plc. Reverts on an empty chain, an already-anchored DID, an invalid
-    /// genesis, a broken link/signature, or a forking successor (`import-fork` — pass the
-    /// resolved chain, not an unadjudicated fork). Every op is stamped with the import block
-    /// time (the pragmatic `createdAt`, §1/§4): `createdAt` is not part of the signed op, so
-    /// the anchor uses its own observation time. A freshly imported chain is therefore
-    /// tentative until the anchor has observed it for 72h. Imported ops are marked **settled**:
-    /// a later `submit_op` recovery may not nullify them (`recovery-of-imported`), because their
-    /// import-time stamp is not their real authored time and honoring a recovery there would
-    /// re-open a long-closed window (SECURITY-TODO 4a). This is the onboarding path.
+    /// Store a DID's history in one call: `chain[0]` is the genesis op and `chain[1..]` its
+    /// successors in order. The DID is derived from `chain[0]`. Every op is marked **settled**
+    /// (`imported: true`), so a later `submit_op` recovery may not nullify it read-side
+    /// (`recovery-of-imported`; SECURITY-TODO 4a) — their import-time block stamp is not their
+    /// real authored time. No linkage/signature check: the reader validates the resolved chain.
+    /// Returns the derived did:plc. Reverts on an empty chain or an already-anchored DID. This
+    /// is the onboarding path.
     fn import(ref self: TContractState, chain: Array<ByteArray>) -> ByteArray;
-    /// Append or recover onto `did`. The op is observed **live** (not settled): its block-time
-    /// stamp approximates its real authored time, so the 72h recovery window applies to it.
-    /// Reverts on unknown DID, bad linkage/signature, a tombstoned fork point, an invalid/late
-    /// recovery, or a recovery that would nullify imported/settled history
-    /// (`recovery-of-imported`).
+    /// Append one op to `did`, observed **live** (`imported: false`) — its block-time stamp
+    /// approximates its real authored time, so the reader's 72h recovery window applies to it.
+    /// The op is appended verbatim (a recovery/fork is just another appended entry; the reader
+    /// re-derives which ops are live). Reverts only if the DID is not anchored.
     fn submit_op(ref self: TContractState, did: ByteArray, proposed_signed: ByteArray);
-    /// The current head (tentative tip) CID string for `did`, or "" if not anchored.
-    fn head_cid(self: @TContractState, did: ByteArray) -> ByteArray;
-    /// The confirmed head CID (immutable past the 72h window), or "" if all ops are still
-    /// tentative / the DID is not anchored.
-    fn confirmed_head(self: @TContractState, did: ByteArray) -> ByteArray;
-    /// Whether `did` is anchored.
+    /// Whether `did` is anchored (has at least one stored op).
     fn is_anchored(self: @TContractState, did: ByteArray) -> bool;
-    /// The 32-byte sha256-Merkle commitment over the **tentative** DID→head map (every
-    /// anchored DID's current tip). `sha256("")` when nothing is anchored. The format is
-    /// `merkle` (resolvers verify a DID against this with an inclusion proof).
-    fn tentative_root(self: @TContractState) -> ByteArray;
-    /// The commitment over the **confirmed** DID→head map: only DIDs with at least one op
-    /// past the 72h window, mapped to their confirmed head (§4). Immutable history; the root
-    /// a cautious resolver pins.
-    fn confirmed_root(self: @TContractState) -> ByteArray;
-    /// Inclusion proof for `did`'s **tentative** head against `tentative_root()`: returns
-    /// `(head_cid, steps)`. A resolver rebuilds the leaf as `sha256(0x00 ‖ did ‖ head_cid)`
-    /// and walks `steps` to recompute the root, comparing it to a `tentative_root()` it
-    /// fetched independently — the proof server stays untrusted **so long as the root comes from
-    /// a trusted/independent source** (finding 4c: the proof shows head ∈ root, not root = true
-    /// state; via a single `starknet_call` RPC, root and proof share one trust domain — a
-    /// trustless read needs a storage proof against the L1-settled state root). Returns
-    /// `("", [])` if `did` is not anchored. Root-specific — use this against the tentative root
-    /// only.
-    fn tentative_proof(self: @TContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>);
-    /// Inclusion proof for `did`'s **confirmed** head against `confirmed_root()`. Returns
-    /// `("", [])` if `did` has no confirmed head yet (all ops still within the 72h window).
-    fn confirmed_proof(self: @TContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>);
+    /// The full stored op log for `did` (oldest-first, including any superseded ops), each with
+    /// its block-time stamp (ms) and provenance flag. `[]` if not anchored. This is the reader's
+    /// sole input from the anchor: it **decodes** each op's `signed` bytes itself
+    /// (`decodeDagCbor`), re-derives the live chain + confirmed head (sigs/linkage/72h recovery
+    /// against `created_at`), and compares to the directory — deriving the head from the anchor's
+    /// own bytes, independent of the directory, so a hostile directory can't suppress the alarm
+    /// (SECURITY-TODO 4d).
+    /// RPC-trusted for the bytes (finding 4c: a trustless read needs a Starknet storage proof
+    /// against the L1-settled state root).
+    fn chain(self: @TContractState, did: ByteArray) -> Array<OpEntry>;
+}
+
+/// One stored op as returned by `chain`: the signed DRISL bytes, the Starknet block time (ms)
+/// when it was stored (the anchor's independent observation clock the 72h window uses), and
+/// whether it entered settled (`import`/`import_genesis`) or live (`submit_op`).
+#[derive(Drop, Serde)]
+pub struct OpEntry {
+    pub signed: ByteArray,
+    pub created_at: u64,
+    pub imported: bool,
 }
 
 #[starknet::contract]
 pub mod anchor {
     use core::poseidon::poseidon_hash_span;
+    use drisl::cid::derive_did_fragment;
     use starknet::storage::{
-        Map, MutableVecTrait, StoragePathEntry, StoragePointerReadAccess, StoragePointerWriteAccess,
-        Vec, VecTrait,
+        Map, MutableVecTrait, StoragePathEntry, StoragePointerReadAccess, Vec, VecTrait,
     };
-    use super::super::merkle::{leaves_of, merkle_proof, merkle_root, sort_entries, sorted_leaves};
-    use super::super::state::{
-        OpRecord, apply_op, confirmed_head as confirmed_head_of, genesis_record, record_from_signed,
-        tentative_head,
-    };
-    use super::{IAnchor, ProofStep};
+    use super::{IAnchor, OpEntry};
 
     #[storage]
     struct Storage {
-        /// did_key → the per-DID op chain (genesis … head). Empty == not anchored.
+        /// did_key → the per-DID append-only op log (genesis … tip). Empty == not anchored.
         chains: Map<felt252, Vec<StoredOp>>,
-        /// Append-only roster of anchored did_keys, so the commitment root can enumerate the
-        /// map (a `Map` is not iterable). Each DID is pushed once, at genesis import.
-        did_keys: Vec<felt252>,
-        /// did_key → its did:plc string — the leaf preimage needs the DID itself, not just
-        /// its storage hash.
-        did_strs: Map<felt252, ByteArray>,
     }
 
-    /// A chain entry: the op's signed bytes plus the metadata kept alongside it.
+    /// A stored log entry: the op's signed bytes + the block time it was stored + provenance.
+    /// No verification-derived fields (CID / signer index / rotation keys): the reader
+    /// recomputes those from `signed`.
     #[derive(Drop, Serde, starknet::Store)]
     struct StoredOp {
         signed: ByteArray,
         created_at: u64,
-        signer_index: usize,
-        /// Provenance (SECURITY-TODO 4a): `true` for ops that entered via `import`/
-        /// `import_genesis` (settled backfill), `false` for ops observed live via `submit_op`.
-        /// A recovery may not nullify an imported op — see `state::apply_op`.
+        /// `true` for ops stored via `import`/`import_genesis` (settled backfill), `false` for
+        /// ops observed live via `submit_op`. The reader refuses a recovery that nullifies an
+        /// imported op (SECURITY-TODO 4a).
         imported: bool,
     }
 
     #[event]
     #[derive(Drop, starknet::Event)]
     enum Event {
-        Imported: Imported,
-        Applied: Applied,
+        Stored: Stored,
     }
 
+    /// Emitted **once per store call** (a single `import` of an N-op chain emits one event, not
+    /// N), keyed by DID, carrying how many ops the log now holds after the call — a cheap index
+    /// for off-chain followers (no head CID: the contract does not derive it).
     #[derive(Drop, starknet::Event)]
-    struct Imported {
+    struct Stored {
         #[key]
         did_key: felt252,
-        head_cid: ByteArray,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct Applied {
-        #[key]
-        did_key: felt252,
-        head_cid: ByteArray,
-        signer_index: usize,
-        nullified_count: usize,
+        op_count: usize,
+        imported: bool,
     }
 
     #[abi(embed_v0)]
     pub impl AnchorImpl of IAnchor<ContractState> {
         fn import_genesis(ref self: ContractState, genesis_signed: ByteArray) -> ByteArray {
-            let now = now_ms();
-            let (key, did, record) = self.store_genesis(@genesis_signed, now);
-            self.emit(Imported { did_key: key, head_cid: record.cid.clone() });
+            let did = did_of_genesis(@genesis_signed);
+            let key = self.seed_did(@did);
+            self.append_op(key, genesis_signed, now_ms(), true);
+            self.emit_stored(key, true);
             did
         }
 
@@ -152,227 +135,104 @@ pub mod anchor {
             if chain.len() == 0 {
                 core::panic_with_felt252('empty-chain');
             }
-            let now = now_ms();
-            // Genesis seeds the DID and the running chain we replay successors against.
-            let (key, did, genesis_rec) = self.store_genesis(chain.at(0), now);
-            let mut records: Array<OpRecord> = array![genesis_rec];
-
-            let mut i: usize = 1;
+            let did = did_of_genesis(chain.at(0));
+            let key = self.seed_did(@did);
+            // One block-time read for the whole chain: every op in a tx shares the block time, so
+            // reading `now_ms()` once (not per op) is both correct and cheaper (§7 per-op trim).
+            let created_at = now_ms();
+            let mut i: usize = 0;
             while i < chain.len() {
-                let signed = chain.at(i);
-                let outcome = match apply_op(@records, signed, now) {
-                    Result::Ok(o) => o,
-                    Result::Err(e) => core::panic_with_felt252(e),
-                };
-                // A resolved history is pure appends; a successor that forks earlier (and so
-                // would nullify ops) is not a clean import — reject it.
-                if outcome.nullified_count != 0 {
-                    core::panic_with_felt252('import-fork');
-                }
-                let signer_index = outcome.new_record.signer_index;
-                self
-                    .chains
-                    .entry(key)
-                    .push(
-                        StoredOp {
-                            signed: signed.clone(), created_at: now, signer_index, imported: true,
-                        },
-                    );
-                records.append(outcome.new_record);
+                // `chain.at(i).clone()` — store each op verbatim, settled.
+                self.append_op(key, chain.at(i).clone(), created_at, true);
                 i += 1;
             }
-
-            self.emit(Imported { did_key: key, head_cid: tentative_head(@records) });
+            // One event for the whole import (not one per op).
+            self.emit_stored(key, true);
             did
         }
 
         fn submit_op(ref self: ContractState, did: ByteArray, proposed_signed: ByteArray) {
             let key = did_key(@did);
-            let chain = self.load_chain(key);
-            if chain.len() == 0 {
+            if self.chains.entry(key).len() == 0 {
                 core::panic_with_felt252('did-not-anchored');
             }
-            let now = now_ms();
-            let outcome = match apply_op(@chain, @proposed_signed, now) {
-                Result::Ok(o) => o,
-                Result::Err(e) => core::panic_with_felt252(e),
-            };
-            let head_cid = outcome.new_record.cid.clone();
-            let signer_index = outcome.new_record.signer_index;
-            let nullified_count = outcome.nullified_count;
-
-            // Truncate the stored chain to the fork point, then append the new op.
-            let vec = self.chains.entry(key);
-            let keep = outcome.fork_index + 1;
-            while vec.len().try_into().unwrap() > keep {
-                let _ = vec.pop();
-            }
-            // Observed live: `submit_op` is the only path that stamps `imported: false`, so the
-            // 72h recovery window is measured against a block time that approximates this op's
-            // real authored time (SECURITY-TODO 4a). Truncation only ever removes live ops (a
-            // recovery cannot fork below an imported op), so the imported prefix stays intact.
-            vec
-                .push(
-                    StoredOp {
-                        signed: proposed_signed, created_at: now, signer_index, imported: false,
-                    },
-                );
-
-            self.emit(Applied { did_key: key, head_cid, signer_index, nullified_count });
-        }
-
-        fn head_cid(self: @ContractState, did: ByteArray) -> ByteArray {
-            tentative_head(@self.load_chain(did_key(@did)))
-        }
-
-        fn confirmed_head(self: @ContractState, did: ByteArray) -> ByteArray {
-            confirmed_head_of(@self.load_chain(did_key(@did)), now_ms())
+            self.append_op(key, proposed_signed, now_ms(), false);
+            self.emit_stored(key, false);
         }
 
         fn is_anchored(self: @ContractState, did: ByteArray) -> bool {
             self.chains.entry(did_key(@did)).len() != 0
         }
 
-        fn tentative_root(self: @ContractState) -> ByteArray {
-            self.commitment_root(false, 0)
-        }
-
-        fn confirmed_root(self: @ContractState) -> ByteArray {
-            self.commitment_root(true, now_ms())
-        }
-
-        fn tentative_proof(self: @ContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>) {
-            self.tier_proof(did, false, 0)
-        }
-
-        fn confirmed_proof(self: @ContractState, did: ByteArray) -> (ByteArray, Array<ProofStep>) {
-            self.tier_proof(did, true, now_ms())
-        }
-    }
-
-    #[generate_trait]
-    impl Internal of InternalTrait {
-        /// Verify a genesis op, register the DID (chain seed + roster + did-string), and
-        /// return `(key, did, genesis_record)`. Shared by `import_genesis` and `import`.
-        /// Reverts if the op is not a valid self-authorized genesis or the DID already exists.
-        fn store_genesis(
-            ref self: ContractState, genesis_signed: @ByteArray, now: u64,
-        ) -> (felt252, ByteArray, OpRecord) {
-            let (did, record) = match genesis_record(genesis_signed, now) {
-                Result::Ok(r) => r,
-                Result::Err(e) => core::panic_with_felt252(e),
-            };
-            let key = did_key(@did);
-            if self.chains.entry(key).len() != 0 {
-                core::panic_with_felt252('already-anchored');
-            }
-            self
-                .chains
-                .entry(key)
-                .push(
-                    StoredOp {
-                        signed: genesis_signed.clone(),
-                        created_at: now,
-                        signer_index: 0,
-                        imported: true,
-                    },
-                );
-            // Roster + did-string, so the commitment root can enumerate this DID.
-            self.did_keys.push(key);
-            self.did_strs.entry(key).write(did.clone());
-            (key, did, record)
-        }
-
-        /// Build the DID→head commitment root over the whole roster. `confirmed` selects the
-        /// confirmed head (past the 72h window at `now`) vs the tentative tip; DIDs with no
-        /// qualifying head (no confirmed op yet) are omitted from the map. O(total ops) in
-        /// hashing — a read-time view, so the recovery-window writes stay cheap (the write
-        /// vs proof cost tradeoff, REFERENCE.md §4).
-        fn commitment_root(self: @ContractState, confirmed: bool, now: u64) -> ByteArray {
-            merkle_root(@sorted_leaves(self.collect_entries(confirmed, now)))
-        }
-
-        /// The `{did → head}` map at one tier: every anchored DID whose selected head is
-        /// non-empty (`confirmed` → the head past the 72h window at `now`, else the tentative
-        /// tip), in roster order. The shared substrate of both the root and the inclusion
-        /// proof, so they commit to the identical entry set. O(total ops) — a read-time view.
-        fn collect_entries(
-            self: @ContractState, confirmed: bool, now: u64,
-        ) -> Array<(ByteArray, ByteArray)> {
-            let n = self.did_keys.len();
-            let mut entries: Array<(ByteArray, ByteArray)> = array![];
-            let mut i: u64 = 0;
-            while i < n {
-                let key = self.did_keys.at(i).read();
-                let chain = self.load_chain(key);
-                let head = if confirmed {
-                    confirmed_head_of(@chain, now)
-                } else {
-                    tentative_head(@chain)
-                };
-                if head.len() != 0 {
-                    entries.append((self.did_strs.entry(key).read(), head));
-                }
-                i += 1;
-            }
-            entries
-        }
-
-        /// Inclusion proof for `did` at one tier: collect the same entry set the root commits
-        /// to, sort it canonically, locate `did`'s leaf, and return `(head, merkle_proof)`.
-        /// `("", [])` if `did` has no head at this tier (not anchored, or no confirmed op
-        /// yet). Sorting once and deriving the leaves from the sorted entries keeps the proof
-        /// path and the root in lockstep (`merkle`).
-        fn tier_proof(
-            self: @ContractState, did: ByteArray, confirmed: bool, now: u64,
-        ) -> (ByteArray, Array<ProofStep>) {
-            let sorted = sort_entries(self.collect_entries(confirmed, now));
-            let m = sorted.len();
-            let mut idx = 0;
-            let mut head_out: ByteArray = "";
-            let mut found = false;
-            let mut i = 0;
-            while i < m {
-                let (d, h) = sorted.at(i).clone();
-                if d == did {
-                    idx = i;
-                    head_out = h;
-                    found = true;
-                    break;
-                }
-                i += 1;
-            }
-            if !found {
-                return ("", array![]);
-            }
-            (head_out, merkle_proof(@leaves_of(@sorted), idx))
-        }
-
-        /// Materialize the stored chain as `OpRecord`s (CID + rotation keys decoded from each
-        /// op's bytes).
-        fn load_chain(self: @ContractState, key: felt252) -> Array<OpRecord> {
-            let vec = self.chains.entry(key);
+        fn chain(self: @ContractState, did: ByteArray) -> Array<OpEntry> {
+            let vec = self.chains.entry(did_key(@did));
             let n = vec.len();
-            let mut out: Array<OpRecord> = array![];
+            let mut out: Array<OpEntry> = array![];
             let mut i: u64 = 0;
             while i < n {
                 let stored = vec.at(i).read();
-                let record =
-                    match record_from_signed(
-                        @stored.signed, stored.created_at, stored.signer_index, stored.imported,
-                    ) {
-                    Result::Ok(r) => r,
-                    Result::Err(e) => core::panic_with_felt252(e),
-                };
-                out.append(record);
+                out
+                    .append(
+                        OpEntry {
+                            signed: stored.signed,
+                            created_at: stored.created_at,
+                            imported: stored.imported,
+                        },
+                    );
                 i += 1;
             }
             out
         }
     }
 
-    /// Block timestamp in milliseconds (seconds × 1000) — the pragmatic createdAt the 72h
-    /// window measures against (§1, §4).
+    #[generate_trait]
+    impl Internal of InternalTrait {
+        /// Register a fresh DID (revert if it already has any stored op). Returns its storage key.
+        fn seed_did(ref self: ContractState, did: @ByteArray) -> felt252 {
+            let key = did_key(did);
+            if self.chains.entry(key).len() != 0 {
+                core::panic_with_felt252('already-anchored');
+            }
+            key
+        }
+
+        /// Append one op to a DID's log with the given block-time stamp and provenance. Does not
+        /// emit — the caller emits one `Stored` per store call (so an N-op `import` reads the
+        /// block time once and emits once, not per op; §7 per-op write trim).
+        fn append_op(
+            ref self: ContractState,
+            key: felt252,
+            signed: ByteArray,
+            created_at: u64,
+            imported: bool,
+        ) {
+            self.chains.entry(key).push(StoredOp { signed, created_at, imported });
+        }
+
+        /// Emit one `Stored` for a completed store call, reading the log length (the new op count)
+        /// once.
+        fn emit_stored(ref self: ContractState, key: felt252, imported: bool) {
+            self
+                .emit(
+                    Stored {
+                        did_key: key,
+                        op_count: self.chains.entry(key).len().try_into().unwrap(),
+                        imported,
+                    },
+                );
+        }
+    }
+
+    /// The did:plc for a genesis op: `did:plc:` + base32(sha256(signed))[..24]. A hash of the
+    /// bytes (no EC crypto, no decode) — it names/keys the DID; it does not verify the op.
+    fn did_of_genesis(genesis_signed: @ByteArray) -> ByteArray {
+        let mut did: ByteArray = "did:plc:";
+        did.append(@derive_did_fragment(genesis_signed));
+        did
+    }
+
+    /// Block timestamp in milliseconds (seconds × 1000) — the anchor's independent observation
+    /// clock the read-side 72h window measures against (§1, §4).
     fn now_ms() -> u64 {
         starknet::get_block_timestamp() * 1000
     }
