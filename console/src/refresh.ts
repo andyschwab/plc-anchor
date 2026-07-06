@@ -25,10 +25,13 @@ export interface CheckOutcome {
   headCid: string | null;
 }
 
-/** Per-cycle RPC accounting from the checker's cache (see `EventCachingAnchorView`). */
+/** Per-cycle cost accounting from the checker's caches. */
 export interface RefreshCycleStats {
-  /** On-chain op logs actually re-read from RPC this cycle (the cost metric). */
+  /** On-chain op logs actually re-read from RPC this cycle (the network-cost metric). */
   refetched: number;
+  /** Op chains actually re-validated — signature verification ran — this cycle (the CPU-cost
+   * metric; the rest were served from the derivation memo). */
+  verified: number;
 }
 
 /** Anything that can resolve a DID to its graduated status. `witness.ts` provides the real one. */
@@ -48,6 +51,8 @@ export interface RefreshResult {
   checked: number;
   /** On-chain logs actually re-read from RPC (the rest were served from cache). */
   refetched: number;
+  /** Op chains actually re-validated — crypto ran — (the rest were served from the derivation memo). */
+  verified: number;
 }
 
 export class RefreshService {
@@ -83,7 +88,9 @@ export class RefreshService {
       checked += 1;
       await this.refresh(entry.did);
     }
-    const refetched = this.#checker.cycleStats?.().refetched ?? checked;
-    return { diverged: this.#store.diverged().length, checked, refetched };
+    const stats = this.#checker.cycleStats?.();
+    const refetched = stats?.refetched ?? checked;
+    const verified = stats?.verified ?? checked;
+    return { diverged: this.#store.diverged().length, checked, refetched, verified };
   }
 }

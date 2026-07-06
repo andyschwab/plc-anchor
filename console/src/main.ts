@@ -149,7 +149,7 @@ function summarize(name: string, result: unknown): string {
       case "onboard":
         return r.active ? `${r.anchored ?? 0}/${r.attempted ?? 0} anchored (budget ${r.budget})` : "inactive";
       case "refresh":
-        return `${r.diverged ?? 0} diverged · ${r.checked ?? 0} checked · ${r.refetched ?? 0} RPC log reads`;
+        return `${r.diverged ?? 0} diverged · ${r.checked ?? 0} checked · ${r.refetched ?? 0} RPC reads · ${r.verified ?? 0} re-verified`;
       case "reconcile":
         return `reset ${r.reset ?? 0} → approved`;
       default:
@@ -258,15 +258,24 @@ actions.reconcile = instrument("reconcile", async () => ({
 
 // --- Refresh (read side): §4 status + the diverged alarm. Needs an RPC. ---
 if (rpc) {
+  // Hold the checker across ticks so its in-memory chain + derivation caches survive — rebuilding
+  // it per tick (the old shape) would throw the memo away every cycle and re-verify every chain.
+  // Only a directory-URL change (the one runtime-editable input it binds) forces a rebuild.
+  let checker: WitnessChecker | null = null;
+  let checkerDirUrl: string | null = null;
+  const currentChecker = (dirUrl: string): WitnessChecker => {
+    if (checker === null || checkerDirUrl !== dirUrl) {
+      checker = new WitnessChecker(store, rpc, contractAddress, dirUrl);
+      checkerDirUrl = dirUrl;
+    }
+    return checker;
+  };
   actions.refresh = instrument("refresh", async () => {
-    const refresher = new RefreshService(
-      store,
-      new WitnessChecker(store, rpc, contractAddress, settings.get().directoryUrl),
-    );
-    const { diverged, checked, refetched } = await refresher.refreshAll();
+    const refresher = new RefreshService(store, currentChecker(settings.get().directoryUrl));
+    const { diverged, checked, refetched, verified } = await refresher.refreshAll();
     lastRefreshAt = Date.now();
     if (diverged > 0) console.error(`[refresh] ${diverged} DID(s) DIVERGED`);
-    return { diverged, checked, refetched, lastRefreshAt };
+    return { diverged, checked, refetched, verified, lastRefreshAt };
   });
   loop(() => settings.get().refreshIntervalMs, actions.refresh);
 } else {

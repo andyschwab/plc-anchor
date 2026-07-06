@@ -39,9 +39,12 @@ export {
   type CheckOptions,
   type CheckResult,
   deriveAnchorHeads,
+  deriveAnchorLive,
   type DirectorySource,
+  headsFromLive,
   type Status,
 } from "./status.ts";
+export { DerivationCache, type DerivationStats } from "./derivation-cache.ts";
 export {
   type AnchorEventView,
   type ChainCache,

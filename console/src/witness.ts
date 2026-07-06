@@ -9,12 +9,12 @@ import {
   AnchorReader,
   type ChainCache,
   check,
-  type CycleStats,
+  DerivationCache,
   DirectoryClient,
   EventCachingAnchorView,
 } from "../../witness-ts/src/index.ts";
 import type { AuditEntry, IdentityResolver } from "./enrich.ts";
-import type { CheckOutcome, StatusChecker } from "./refresh.ts";
+import type { CheckOutcome, RefreshCycleStats, StatusChecker } from "./refresh.ts";
 import { CHAIN_CACHE_CURSOR_KEY } from "./roster.ts";
 
 /** The slice of `RosterStore` the chain cache needs (so it's trivial to fake in tests). */
@@ -79,15 +79,20 @@ export class StoreChainCache implements ChainCache {
   }
 }
 
-/** Wraps the witness `check(did)` for the refresher.
+/** Wraps the witness `check(did)` for the refresher. Held across cycles (rebuilt only when the
+ * directory URL changes) so its in-memory derivation memo survives — see `main.ts`.
  *
- * The anchor reads go through an `EventCachingAnchorView`: `beginCycle()` (once per `refreshAll`
- * pass) probes the anchor's `Stored` events since the last processed block and, when none fired,
- * serves every DID's op log from the persisted cache instead of re-reading it from RPC — the
- * refresh RPC-cost optimization. `cycleStats()` surfaces how many chains were actually re-read. */
+ * Two caches sit under `check()`, both primed by `beginCycle()` once per `refreshAll` pass:
+ *   - `EventCachingAnchorView` (network): probes the anchor's `Stored` events and, when none fired,
+ *     serves every DID's op log from the persisted chain cache instead of re-reading it from RPC.
+ *   - `DerivationCache` (CPU): memoizes the PLC re-derivation (ECDSA verification) of each DID's
+ *     anchor + directory logs on a content hash, so an unchanged log is not re-verified. This is
+ *     the dominant cost on a shared CPU; the chain cache alone didn't touch it.
+ * `cycleStats()` surfaces both — logs re-read from RPC and chains re-verified. */
 export class WitnessChecker implements StatusChecker {
   readonly #anchor: EventCachingAnchorView;
   readonly #directory: DirectoryClient;
+  readonly #derivation = new DerivationCache();
 
   constructor(store: ChainCacheStore, rpcUrl: string, contractAddress: string, directoryUrl?: string) {
     this.#anchor = new EventCachingAnchorView(
@@ -97,16 +102,23 @@ export class WitnessChecker implements StatusChecker {
     this.#directory = new DirectoryClient(directoryUrl);
   }
 
-  beginCycle(): Promise<void> {
-    return this.#anchor.beginCycle();
+  async beginCycle(): Promise<void> {
+    this.#derivation.beginCycle();
+    await this.#anchor.beginCycle();
   }
 
-  cycleStats(): CycleStats {
-    return this.#anchor.stats();
+  cycleStats(): RefreshCycleStats {
+    return {
+      refetched: this.#anchor.stats().refetched,
+      verified: this.#derivation.stats().verified,
+    };
   }
 
   async check(did: string): Promise<CheckOutcome> {
-    const result = await check(did, this.#anchor, this.#directory);
+    const result = await check(did, this.#anchor, this.#directory, {
+      deriveAnchor: this.#derivation.deriveAnchor,
+      deriveLive: this.#derivation.deriveLive,
+    });
     return {
       status: result.status,
       reason: result.reason,

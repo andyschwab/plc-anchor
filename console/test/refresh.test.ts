@@ -101,20 +101,22 @@ test("refreshAll works when the checker has no beginCycle/cycleStats (optional h
   assert.equal(result.refetched, 2);
 });
 
-test("refreshAll reports the checker's refetched count (cache hit rate)", async () => {
+test("refreshAll reports the checker's refetched + verified counts (cache hit rate)", async () => {
   const s = RosterStore.open();
   anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
   anchored(s, "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
   anchored(s, "did:plc:cccccccccccccccccccccccc");
   const checker: StatusChecker = {
     beginCycle: () => {},
-    // e.g. one DID's log changed on-chain; the other two were served from cache.
-    cycleStats: () => ({ refetched: 1 }),
+    // e.g. one DID's log changed on-chain (re-read + re-verified); the other two came from cache,
+    // and one of those still had a directory-side change forcing a re-verify.
+    cycleStats: () => ({ refetched: 1, verified: 2 }),
     check: async (): Promise<CheckOutcome> => ({ status: "confirmed", reason: "r", headCid: null }),
   };
   const result = await new RefreshService(s, checker).refreshAll();
   assert.equal(result.checked, 3, "every active DID is still checked (directory/window may shift)");
   assert.equal(result.refetched, 1, "only the changed DID's log was re-read from RPC");
+  assert.equal(result.verified, 2, "only changed logs were re-verified (crypto)");
 });
 
 test("a candidate observed anchored on-chain is reflected and shows status", async () => {
