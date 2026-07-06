@@ -81,12 +81,22 @@ export class RefreshService {
   async refreshAll(): Promise<RefreshResult> {
     this.#checker.beginCycle?.();
 
-    const roots = await this.#checker.currentRoots?.();
+    // The gate is a pure optimization on top of the required per-DID checks below — a failure
+    // reading the roots (e.g. an RPC/entrypoint problem) must never abort the cycle. Degrade to
+    // "unchanged" unproven (full re-check), not a thrown error.
     let unchanged = false;
-    if (roots) {
-      const key = `${roots.confirmedRoot}:${roots.tentativeRoot}`;
-      unchanged = this.#store.getMeta(LAST_ROOTS_META_KEY) === key;
-      this.#store.setMeta(LAST_ROOTS_META_KEY, key);
+    try {
+      const roots = await this.#checker.currentRoots?.();
+      if (roots) {
+        const key = `${roots.confirmedRoot}:${roots.tentativeRoot}`;
+        unchanged = this.#store.getMeta(LAST_ROOTS_META_KEY) === key;
+        this.#store.setMeta(LAST_ROOTS_META_KEY, key);
+      }
+    } catch (err) {
+      console.error(
+        "[refresh] root-change gate unavailable this cycle, checking every DID:",
+        err instanceof Error ? err.message : err,
+      );
     }
 
     let checked = 0;

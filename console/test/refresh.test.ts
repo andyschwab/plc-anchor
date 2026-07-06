@@ -97,6 +97,22 @@ test("refreshAll works when the checker has no beginCycle (optional hook)", asyn
   assert.equal(result.diverged, 0);
 });
 
+test("root-change gate: a currentRoots() failure degrades to a full check, not a thrown error", async () => {
+  const s = RosterStore.open();
+  anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+  anchored(s, "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
+
+  const checker: StatusChecker = {
+    currentRoots: async () => {
+      throw new Error("starknet_call tentative_root: entrypoint does not exist");
+    },
+    check: async (): Promise<CheckOutcome> => ({ status: "confirmed", reason: "r", headCid: null }),
+  };
+  const result = await new RefreshService(s, checker).refreshAll();
+  assert.equal(result.checked, 2, "a broken gate never blocks the required per-DID checks");
+  assert.equal(result.skipped, 0);
+});
+
 test("root-change gate: an unchanged root skips already-checked DIDs on the next cycle", async () => {
   const s = RosterStore.open();
   anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
