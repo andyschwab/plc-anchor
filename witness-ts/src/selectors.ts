@@ -11,3 +11,10 @@ export const SELECTORS = {
 } as const;
 
 export type ViewName = keyof typeof SELECTORS;
+
+/** First-key selector (felt hex) for each anchor event the witness filters `getEvents` on. */
+export const EVENT_KEYS = {
+  Stored: "0x1c41500b684f4ab7d1025598c040b0c7b1858dbfffdf9a3081390e49eabee11",
+} as const;
+
+export type EventName = keyof typeof EVENT_KEYS;

@@ -2,11 +2,11 @@
   "network": "sepolia",
   "contract": "anchor",
   "package": "plc_core",
-  "classHash": "0x513df4e369d9acb836b0972835279345ff7f9d1180390124669944f1220c4c1",
-  "contractAddress": "0x06b16c52751fad7cda27ea7ce52f150307eb3bc4caef2759daaa695ba3f9bca0",
-  "deployTx": "0x01d62df07ed5364a5c76a645d19dfe4036e5315dc39b852eeb9d4bd3d45c44b2",
+  "classHash": "0x04b6f5ffbdaf6e00c70289eb8e872fb6d2acd2d2836c91c8dedb22fdeab78549",
+  "contractAddress": "0x000e0251ea5bddc8e2f80fa3ad9f5480a215bc277bff5af2d87d111d7176eae0",
+  "deployTx": "0x0429831bc627efcce29b4056d423671a9d359de20162e5978fc6528bbaa5dc5f",
   "account": "plc-sepolia",
-  "deployedAt": "2026-07-03T06:42:41Z",
-  "explorer": "https://sepolia.starkscan.co/contract/0x06b16c52751fad7cda27ea7ce52f150307eb3bc4caef2759daaa695ba3f9bca0",
+  "deployedAt": "2026-07-06T17:10:02Z",
+  "explorer": "https://sepolia.starkscan.co/contract/0x000e0251ea5bddc8e2f80fa3ad9f5480a215bc277bff5af2d87d111d7176eae0",
   "note": "anchor is not upgradeable; a redeploy is a new address with an empty roster (re-import DIDs)."
 }

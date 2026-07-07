@@ -49,8 +49,14 @@ primary_region = "fra"
     method = 'GET'
     path = '/healthz'
 
+# Dedicated (not shared) vCPU: the refresh loop re-derives PLC op chains (ECDSA verification) for
+# the roster, a sustained-CPU workload that a burstable shared vCPU starves — and its steal makes
+# the box unresponsive (health checks time out → restarts). `performance` gives a full dedicated
+# core; Fly requires ≥2 GB RAM per performance vCPU. The derivation cache (verify-on-read status
+# memoization) cuts the steady-state work, but the cold cycle after a fresh-contract import still
+# verifies every chain once, and dedicated CPU keeps that from stalling the machine.
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
+  memory = '2gb'
+  cpu_kind = 'performance'
   cpus = 1
-  memory_mb = 1024
+  memory_mb = 2048

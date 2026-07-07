@@ -86,6 +86,18 @@ export interface DirectorySource {
  * on-chain append can never become the confirmed head (no false `diverged`).
  */
 export function deriveAnchorHeads(ops: readonly AnchorOp[], ctx: { now: number; did: string }): AnchorHeads {
+  return headsFromLive(deriveAnchorLive(ops, ctx.did), ctx.now);
+}
+
+/**
+ * The **expensive, clock-independent** half of `deriveAnchorHeads`: decode the anchor's on-chain
+ * bytes and run the full PLC validator (signature verification, linkage, 72h recovery). Its result
+ * — the validated live chain — depends only on the op bytes, *not* on `now`, so a caller that knows
+ * the op log is unchanged (e.g. the event-gated chain cache) can reuse it across cycles instead of
+ * re-verifying every signature (`DerivationCache`). Split out purely to make that memoization
+ * possible; `deriveAnchorHeads` composes it with `headsFromLive` exactly as before.
+ */
+export function deriveAnchorLive(ops: readonly AnchorOp[], did: string): LiveChain {
   const entries: { operation: unknown; createdAt: string; imported: boolean }[] = [];
   for (const op of ops) {
     let operation: unknown;
@@ -100,14 +112,20 @@ export function deriveAnchorHeads(ops: readonly AnchorOp[], ctx: { now: number; 
       imported: op.imported,
     });
   }
+  return deriveLiveChain(entries, did);
+}
 
-  const live = deriveLiveChain(entries, ctx.did);
+/**
+ * The **cheap, clock-dependent** half: pick the confirmed head (latest live op whose block-time 72h
+ * window has fully closed — immutable, §4; the read-side mirror of `state::confirmed_head`) and the
+ * tentative tip from an already-validated live chain. No crypto, so it is safe to re-run every cycle
+ * over a memoized `deriveAnchorLive` result.
+ */
+export function headsFromLive(live: LiveChain, now: number): AnchorHeads {
   const liveOps = live.ops ?? [];
-  // Confirmed head: the latest live op whose block-time 72h window has fully closed (immutable —
-  // §4; the read-side mirror of `state::confirmed_head`).
   let confirmedHead = "";
   for (const o of liveOps) {
-    if (ctx.now > Date.parse(o.createdAt) + RECOVERY_WINDOW_MS) confirmedHead = o.cid;
+    if (now > Date.parse(o.createdAt) + RECOVERY_WINDOW_MS) confirmedHead = o.cid;
   }
   return { confirmedHead, tentativeHead: live.head?.cid ?? "" };
 }
