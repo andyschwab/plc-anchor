@@ -110,8 +110,9 @@ pub mod anchor {
         Stored: Stored,
     }
 
-    /// Emitted once per store call, keyed by DID, carrying how many ops the log now holds — a
-    /// cheap index for off-chain followers (no head CID: the contract does not derive it).
+    /// Emitted **once per store call** (a single `import` of an N-op chain emits one event, not
+    /// N), keyed by DID, carrying how many ops the log now holds after the call — a cheap index
+    /// for off-chain followers (no head CID: the contract does not derive it).
     #[derive(Drop, starknet::Event)]
     struct Stored {
         #[key]
@@ -125,7 +126,8 @@ pub mod anchor {
         fn import_genesis(ref self: ContractState, genesis_signed: ByteArray) -> ByteArray {
             let did = did_of_genesis(@genesis_signed);
             let key = self.seed_did(@did);
-            self.push_op(key, genesis_signed, true);
+            self.append_op(key, genesis_signed, now_ms(), true);
+            self.emit_stored(key, true);
             did
         }
 
@@ -135,12 +137,17 @@ pub mod anchor {
             }
             let did = did_of_genesis(chain.at(0));
             let key = self.seed_did(@did);
+            // One block-time read for the whole chain: every op in a tx shares the block time, so
+            // reading `now_ms()` once (not per op) is both correct and cheaper (§7 per-op trim).
+            let created_at = now_ms();
             let mut i: usize = 0;
             while i < chain.len() {
                 // `chain.at(i).clone()` — store each op verbatim, settled.
-                self.push_op(key, chain.at(i).clone(), true);
+                self.append_op(key, chain.at(i).clone(), created_at, true);
                 i += 1;
             }
+            // One event for the whole import (not one per op).
+            self.emit_stored(key, true);
             did
         }
 
@@ -149,7 +156,8 @@ pub mod anchor {
             if self.chains.entry(key).len() == 0 {
                 core::panic_with_felt252('did-not-anchored');
             }
-            self.push_op(key, proposed_signed, false);
+            self.append_op(key, proposed_signed, now_ms(), false);
+            self.emit_stored(key, false);
         }
 
         fn is_anchored(self: @ContractState, did: ByteArray) -> bool {
@@ -188,10 +196,22 @@ pub mod anchor {
             key
         }
 
-        /// Append one op to a DID's log with the current block time and the given provenance,
-        /// and emit the running op count.
-        fn push_op(ref self: ContractState, key: felt252, signed: ByteArray, imported: bool) {
-            self.chains.entry(key).push(StoredOp { signed, created_at: now_ms(), imported });
+        /// Append one op to a DID's log with the given block-time stamp and provenance. Does not
+        /// emit — the caller emits one `Stored` per store call (so an N-op `import` reads the
+        /// block time once and emits once, not per op; §7 per-op write trim).
+        fn append_op(
+            ref self: ContractState,
+            key: felt252,
+            signed: ByteArray,
+            created_at: u64,
+            imported: bool,
+        ) {
+            self.chains.entry(key).push(StoredOp { signed, created_at, imported });
+        }
+
+        /// Emit one `Stored` for a completed store call, reading the log length (the new op count)
+        /// once.
+        fn emit_stored(ref self: ContractState, key: felt252, imported: bool) {
             self
                 .emit(
                     Stored {

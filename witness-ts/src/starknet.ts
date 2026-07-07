@@ -22,7 +22,7 @@
 //! state root — deferred, Mode-2-adjacent infra. Until then: **run your own full node, or trust
 //! your RPC.** (REFERENCE.md §1; SECURITY-TODO 4c.)
 
-import { SELECTORS, type ViewName } from "./selectors.ts";
+import { EVENT_KEYS, SELECTORS, type ViewName } from "./selectors.ts";
 
 // ---- felt helpers -----------------------------------------------------------
 
@@ -152,18 +152,95 @@ export function httpCall(rpcUrl: string, contractAddress: string): StarknetCall 
   };
 }
 
+// ---- Block-number + event transports (the refresh cost gate) ----------------
+//
+// The console's refresh loop uses these to ask "did any anchored DID's log change since the last
+// block I processed?" with one `getEvents` query, instead of re-reading every DID's `chain` every
+// cycle. Both are injectable (like `StarknetCall`) so `AnchorReader` stays offline-testable.
+
+/** The node's latest block number (`starknet_blockNumber`). */
+export type BlockNumberCall = () => Promise<number>;
+
+/** Count of the anchor's `Stored` events in `[fromBlock, toBlock]` (existence is enough; the
+ * caller only branches on `> 0`). Backed by `starknet_getEvents`, filtered on the `Stored` key. */
+export type StoredEventProbe = (fromBlock: number, toBlock: number) => Promise<number>;
+
+/** A `starknet_blockNumber` transport over a JSON-RPC endpoint. */
+export function httpBlockNumber(rpcUrl: string): BlockNumberCall {
+  return async () => {
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "starknet_blockNumber", params: [] }),
+    });
+    const body = await res.text();
+    if (!res.ok) throw new Error(`starknet_blockNumber: HTTP ${res.status} — ${body.slice(0, 200)}`);
+    const json = JSON.parse(body) as { result?: number; error?: { message: string } };
+    if (json.error) throw new Error(`starknet_blockNumber: ${json.error.message}`);
+    if (typeof json.result !== "number") throw new Error("starknet_blockNumber: no result");
+    return json.result;
+  };
+}
+
+/** A `starknet_getEvents` transport filtered on the anchor's `Stored` event key. Returns how many
+ * such events fall in `[fromBlock, toBlock]` (capped by `chunkSize` — the caller only needs "any",
+ * so one chunk suffices). An inverted range (`fromBlock > toBlock`: no new blocks) short-circuits
+ * to 0 without a network call. */
+export function httpStoredEventProbe(
+  rpcUrl: string,
+  contractAddress: string,
+  chunkSize = 1,
+): StoredEventProbe {
+  return async (fromBlock, toBlock) => {
+    if (fromBlock > toBlock) return 0;
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "starknet_getEvents",
+        params: {
+          filter: {
+            from_block: { block_number: fromBlock },
+            to_block: { block_number: toBlock },
+            address: contractAddress,
+            keys: [[EVENT_KEYS.Stored]],
+            chunk_size: chunkSize,
+          },
+        },
+      }),
+    });
+    const body = await res.text();
+    if (!res.ok) throw new Error(`starknet_getEvents: HTTP ${res.status} — ${body.slice(0, 200)}`);
+    const json = JSON.parse(body) as { result?: { events?: unknown[] }; error?: { message: string } };
+    if (json.error) throw new Error(`starknet_getEvents: ${json.error.message}`);
+    return json.result?.events?.length ?? 0;
+  };
+}
+
 // ---- Anchor view reads ------------------------------------------------------
 
-/** Typed reads of the anchor's witness views over an injectable `StarknetCall`. */
+/** Typed reads of the anchor's witness views over an injectable `StarknetCall`. The optional
+ * block-number + event probes back the refresh cost gate; a reader built without them (e.g. a test)
+ * simply can't gate and re-reads every cycle. */
 export class AnchorReader {
   readonly #call: StarknetCall;
+  readonly #blockNumber?: BlockNumberCall;
+  readonly #storedEvents?: StoredEventProbe;
 
-  constructor(call: StarknetCall) {
+  constructor(call: StarknetCall, blockNumber?: BlockNumberCall, storedEvents?: StoredEventProbe) {
     this.#call = call;
+    this.#blockNumber = blockNumber;
+    this.#storedEvents = storedEvents;
   }
 
   static http(rpcUrl: string, contractAddress: string): AnchorReader {
-    return new AnchorReader(httpCall(rpcUrl, contractAddress));
+    return new AnchorReader(
+      httpCall(rpcUrl, contractAddress),
+      httpBlockNumber(rpcUrl),
+      httpStoredEventProbe(rpcUrl, contractAddress),
+    );
   }
 
   #read(view: ViewName, calldata: string[] = []): Promise<string[]> {
@@ -180,5 +257,19 @@ export class AnchorReader {
    * head from this (`status.ts`); no on-chain head/root is trusted. */
   async chain(did: string): Promise<AnchorOp[]> {
     return decodeChain(await this.#read("chain", encodeString(did)), 0);
+  }
+
+  /** The node's latest block number. Throws if this reader was built without a block-number
+   * transport (an injected test reader that doesn't gate). */
+  blockNumber(): Promise<number> {
+    if (!this.#blockNumber) throw new Error("AnchorReader: no block-number transport configured");
+    return this.#blockNumber();
+  }
+
+  /** Whether the anchor emitted ≥1 `Stored` event in `[fromBlock, toBlock]` — i.e. any DID's log
+   * changed. Throws if built without an event transport. */
+  async hasStoredEventsSince(fromBlock: number, toBlock: number): Promise<boolean> {
+    if (!this.#storedEvents) throw new Error("AnchorReader: no event transport configured");
+    return (await this.#storedEvents(fromBlock, toBlock)) > 0;
   }
 }

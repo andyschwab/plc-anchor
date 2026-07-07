@@ -105,7 +105,18 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS anchor_chain (
+  did        TEXT PRIMARY KEY,
+  ops        TEXT NOT NULL,
+  fetched_at INTEGER NOT NULL
+);
 `;
+
+// The refresh loop's event-cursor lives in `meta` under this prefix, so a contract switch can drop
+// it (and the cached chains) in one sweep — the cache is bound to a specific anchor contract.
+const CHAIN_CACHE_META_PREFIX = "anchorcache:";
+/** Meta key holding the last block whose `Stored` events the refresh gate has accounted for. */
+export const CHAIN_CACHE_CURSOR_KEY = `${CHAIN_CACHE_META_PREFIX}cursor`;
 
 /** Indexes on columns added after the initial schema. Created **after** `#migrate()` — on a
  * pre-existing DB the `CREATE TABLE IF NOT EXISTS` above is a no-op, so these columns don't exist
@@ -515,6 +526,27 @@ export class RosterStore {
       .run(error, this.#now(), did);
   }
 
+  // ---- anchor chain cache (the refresh RPC-cost gate) ---------------------
+  // Opaque JSON per DID — the witness adapter owns the AnchorOp⇆JSON encoding. Bound to the
+  // current anchor contract: `reconcileForContract` drops it on a contract switch.
+
+  /** The cached on-chain op log for `did` as stored JSON, or `null` if never fetched. */
+  getChainCache(did: string): string | null {
+    const row = this.#db.prepare("SELECT ops FROM anchor_chain WHERE did = ?").get(did) as
+      | { ops: string }
+      | undefined;
+    return row ? row.ops : null;
+  }
+
+  setChainCache(did: string, ops: string): void {
+    this.#db
+      .prepare(
+        `INSERT INTO anchor_chain (did, ops, fetched_at) VALUES (?, ?, ?)
+         ON CONFLICT(did) DO UPDATE SET ops = excluded.ops, fetched_at = excluded.fetched_at`,
+      )
+      .run(did, ops, this.#now());
+  }
+
   /** Reflect that `did` is anchored on-chain (observed by the refresher, however it got there):
    * promote candidate/approved/onboarding → anchored. Idempotent; a no-op for removed DIDs. */
   markObservedAnchored(did: string): void {
@@ -541,6 +573,12 @@ export class RosterStore {
          WHERE state IN ('anchored', 'onboarding')`,
       )
       .run(this.#now());
+    // The cached chains + event cursor describe the *old* contract's state; drop them so the
+    // refresh loop cold-starts (full refetch) against the new one rather than serving stale logs.
+    this.#db.exec("DELETE FROM anchor_chain");
+    this.#db
+      .prepare("DELETE FROM meta WHERE key LIKE ? ESCAPE '\\'")
+      .run(`${CHAIN_CACHE_META_PREFIX.replace(/[\\%_]/g, "\\$&")}%`);
     return Number(res.changes);
   }
 

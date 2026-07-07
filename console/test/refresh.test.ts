@@ -56,10 +56,67 @@ test("refreshAll checks every active DID and returns the diverged count", async 
       return { status: did.includes("aaaa") ? "diverged" : "confirmed", reason: "r", headCid: null };
     },
   };
-  const divergedCount = await new RefreshService(s, checker).refreshAll();
-  assert.equal(divergedCount, 1);
+  const result = await new RefreshService(s, checker).refreshAll();
+  assert.equal(result.diverged, 1);
+  assert.equal(result.checked, 3);
   assert.equal(checked.length, 3, "the two anchored DIDs and the candidate are checked");
   assert.ok(!checked.some((d) => d.includes("dddd")), "removed DIDs are skipped");
+});
+
+test("refreshAll awaits the checker's beginCycle exactly once, before any check", async () => {
+  const s = RosterStore.open();
+  anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+  anchored(s, "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
+
+  let beginCycleCalls = 0;
+  let checksAtFirstBeginCycle = -1;
+  let checkCount = 0;
+  const checker: StatusChecker = {
+    beginCycle: async () => {
+      // Yield to prove refreshAll awaits it before running any check.
+      await Promise.resolve();
+      beginCycleCalls += 1;
+      checksAtFirstBeginCycle = checkCount;
+    },
+    check: async (): Promise<CheckOutcome> => {
+      checkCount += 1;
+      return { status: "confirmed", reason: "r", headCid: null };
+    },
+  };
+  await new RefreshService(s, checker).refreshAll();
+  assert.equal(beginCycleCalls, 1, "beginCycle runs once per refreshAll pass, not once per DID");
+  assert.equal(checksAtFirstBeginCycle, 0, "beginCycle completes before any per-DID check");
+});
+
+test("refreshAll works when the checker has no beginCycle/cycleStats (optional hooks)", async () => {
+  const s = RosterStore.open();
+  anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+  anchored(s, "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
+  const checker: StatusChecker = {
+    check: async (): Promise<CheckOutcome> => ({ status: "confirmed", reason: "r", headCid: null }),
+  };
+  const result = await new RefreshService(s, checker).refreshAll();
+  assert.equal(result.diverged, 0);
+  // No cycleStats() → refetched conservatively reported as "all checked".
+  assert.equal(result.refetched, 2);
+});
+
+test("refreshAll reports the checker's refetched + verified counts (cache hit rate)", async () => {
+  const s = RosterStore.open();
+  anchored(s, "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+  anchored(s, "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb");
+  anchored(s, "did:plc:cccccccccccccccccccccccc");
+  const checker: StatusChecker = {
+    beginCycle: () => {},
+    // e.g. one DID's log changed on-chain (re-read + re-verified); the other two came from cache,
+    // and one of those still had a directory-side change forcing a re-verify.
+    cycleStats: () => ({ refetched: 1, verified: 2 }),
+    check: async (): Promise<CheckOutcome> => ({ status: "confirmed", reason: "r", headCid: null }),
+  };
+  const result = await new RefreshService(s, checker).refreshAll();
+  assert.equal(result.checked, 3, "every active DID is still checked (directory/window may shift)");
+  assert.equal(result.refetched, 1, "only the changed DID's log was re-read from RPC");
+  assert.equal(result.verified, 2, "only changed logs were re-verified (crypto)");
 });
 
 test("a candidate observed anchored on-chain is reflected and shows status", async () => {

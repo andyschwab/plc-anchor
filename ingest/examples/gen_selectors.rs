@@ -20,11 +20,24 @@ use starknet::core::utils::get_selector_from_name;
 /// views.
 const VIEWS: &[&str] = &["is_anchored", "chain"];
 
+/// The anchor event names the witness filters `starknet_getEvents` on. A Cairo event variant's
+/// first key is `starknet_keccak(name)` — the same function as an entrypoint selector — so the
+/// console's refresh loop can ask "did any DID's log change since block N?" with a single events
+/// query instead of re-reading every DID's `chain` each cycle (RPC cost). `Stored` fires on every
+/// `submit_op` / `import` (`anchor.cairo`).
+const EVENTS: &[&str] = &["Stored"];
+
 fn main() {
     let mut entries = String::new();
     for name in VIEWS {
         let selector = get_selector_from_name(name).expect("valid entrypoint name");
         entries.push_str(&format!("  {name}: \"{selector:#x}\",\n"));
+    }
+
+    let mut event_entries = String::new();
+    for name in EVENTS {
+        let key = get_selector_from_name(name).expect("valid event name");
+        event_entries.push_str(&format!("  {name}: \"{key:#x}\",\n"));
     }
 
     let out = format!(
@@ -37,7 +50,12 @@ fn main() {
 /** Selector (felt hex) for each anchor view entrypoint the witness reads. */\n\
 export const SELECTORS = {{\n{entries}}} as const;\n\
 \n\
-export type ViewName = keyof typeof SELECTORS;\n"
+export type ViewName = keyof typeof SELECTORS;\n\
+\n\
+/** First-key selector (felt hex) for each anchor event the witness filters `getEvents` on. */\n\
+export const EVENT_KEYS = {{\n{event_entries}}} as const;\n\
+\n\
+export type EventName = keyof typeof EVENT_KEYS;\n"
     );
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -46,8 +64,9 @@ export type ViewName = keyof typeof SELECTORS;\n"
         .join("witness-ts/src/selectors.ts");
     fs::write(&path, out).expect("write selectors.ts");
     eprintln!(
-        "gen_selectors: wrote {} selectors to {}",
+        "gen_selectors: wrote {} selectors + {} event keys to {}",
         VIEWS.len(),
+        EVENTS.len(),
         path.display()
     );
 }

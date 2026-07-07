@@ -205,9 +205,13 @@ pick the lever *before* spending one; ideally decided before the 19k bulk import
   caller-provided `did` without deriving it; the witness already re-derives the DID from the
   genesis bytes and rejects a mismatch, so the binding stays verified read-side. Removes the only
   remaining on-chain crypto; helps every DID (not amortized). Changes the `import` signature (sink).
-- **Per-op write trims** (free, safe) — emit **one** `Stored` event per `import` (not per op) and
-  read `now_ms()` **once** per import (all ops in a tx share the block time), dropping the per-op
-  event + `chains.len()` read. Fold in with whichever lever wins the redeploy.
+- **Per-op write trims** (free, safe) — **✅ landed in-tree (2026-07-05).** `import` now emits
+  **one** `Stored` event and reads `now_ms()` **once** per call (all ops in a tx share the block
+  time), dropping the per-op event + `chains.len()` read; the append/emit split lives in
+  `anchor.cairo` (`append_op`/`emit_stored`) and is pinned by the
+  `import_stamps_all_ops_with_one_block_time` test. No off-chain consumer parsed the `Stored`
+  event, so the per-op→per-import cadence change is contained. Not yet redeployed — ships with the
+  next `anchor` cut (fold in with whichever of the levers above wins the redeploy).
 
 **Other open follow-ups (non-blocking):** delete the now-off-path Cairo `merkle`/`op_verify`/…
 modules + their `gen-merkle-vectors` once v2 is proven live (kept for now as the differential
