@@ -22,6 +22,7 @@
 //! state root — deferred, Mode-2-adjacent infra. Until then: **run your own full node, or trust
 //! your RPC.** (REFERENCE.md §1; SECURITY-TODO 4c.)
 
+import { readBoundedText } from "./directory.ts";
 import { EVENT_KEYS, SELECTORS, type ViewName } from "./selectors.ts";
 
 // ---- felt helpers -----------------------------------------------------------
@@ -122,6 +123,12 @@ export function decodeChain(felts: string[], offset = 0): AnchorOp[] {
  * the higher-level reads are testable without a live node. */
 export type StarknetCall = (selector: string, calldata: string[]) => Promise<string[]>;
 
+/** Upper bound on a `starknet_call` response body. The `chain(did)` view returns a log a
+ * permissionless writer can bloat (SECURITY-TODO 4e), so the buffer must be bounded even through
+ * an honest RPC. Sized above the felt-JSON encoding (~2.5×) of a `MAX_ANCHOR_LOG_BYTES` log
+ * (`status.ts`), so every log the witness would accept fits; a bigger one fails here first. */
+const MAX_RPC_BODY_BYTES = 32 * 1024 * 1024;
+
 /** A `starknet_call` transport backed by a JSON-RPC endpoint (spec 0.10.x). */
 export function httpCall(rpcUrl: string, contractAddress: string): StarknetCall {
   return async (selector, calldata) => {
@@ -138,7 +145,7 @@ export function httpCall(rpcUrl: string, contractAddress: string): StarknetCall 
         },
       }),
     });
-    const body = await res.text();
+    const body = await readBoundedText(res, MAX_RPC_BODY_BYTES, `starknet_call ${selector}`);
     if (!res.ok) throw new Error(`starknet_call ${selector}: HTTP ${res.status} — ${body.slice(0, 200)}`);
     let json: { result?: string[]; error?: { message: string } };
     try {

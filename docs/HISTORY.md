@@ -325,6 +325,67 @@ the thesis (DA free; the deleted EC verification was the cost). The residual L2 
 store-only execution (account overhead + op-byte storage + one `sha256`), no leftover hotspot;
 further cuts are the tracked cost-mitigation follow-ups below (each a redeploy — profile first).
 
+## Strategy review — verify-on-read reaffirmed; anchor read-path hardening (2026-07-08)
+
+Verify-on-read introduced a spamming surface the old in-contract verification didn't have, which
+prompted a from-first-principles re-examination: **should we find a way back to in-contract
+validation ("only truly valid entries ever exist on-chain"), or is that the wrong expectation?**
+Conclusion: **verify-on-read stands, on the merits — not just on cost.** Recorded here so the
+question isn't reopened without new facts.
+
+**Why in-contract validation is not the right goal:**
+
+1. **The product guarantee is alignment, and alignment is inherently read-side.** DIDMARC proves
+   the directory serves a *complete, current, non-equivocated* history (REFERENCE.md §1). The old
+   verifying contract never proved that — it proved per-op signature validity of whatever it was
+   shown; the directory cross-check, graduated status, and 72h tiering always lived in the witness.
+   The deleted EC verification was a duplicate of PLC's self-certification, not the product.
+2. **It only helps readers who don't verify — and they aren't trustless anyway.** A verifying
+   reader gets identical guarantees under both architectures. A non-verifying reader leaning on
+   "the contract checked it" still trusts its RPC for the contract's state until Starknet storage
+   proofs land (finding 4c). Paying ~12× strengthens a link whose neighbor is still trusted.
+3. **Write-side verification defends against the wrong adversary.** The core threat is an
+   equivocating *directory*. In-contract crypto stops garbage *submitters* — an adversary whose
+   output readers reject at zero marginal cost.
+4. **Consensus rules in a contract are a fork risk.** "An immutable contract with an encoding bug
+   is a permanent fork" (REFERENCE.md §6); PLC's blessed surface is extensible and subtle (the
+   p256 high-S asymmetry, §5). Read-side rules live in software that is differential-tested and
+   can ship a fix in a day; in-contract rules are either frozen (fork risk) or upgradeable
+   (reintroducing governance trust). The chain does what chains are good at — ordering,
+   block-time stamping, non-equivocation, DA — and none of what they're bad at.
+
+**The spam risk, correctly sized (finding 4e).** Appends can never forge a head, cause a false
+`diverged`, or erase history; the residual is *availability*, per-DID, and gas-paid. But the review
+found it sharper than "bounded bloat nuisance": because the witness **truncated** at the first
+undecodable op, one cheap junk append permanently silenced the witness for a targeted DID (all
+later real ops hidden) — and the anchor read path had no bounds at all while the operator-run
+directory path did. Fixed in the witness (skip-don't-truncate + caps + bounded RPC read, overflow →
+non-alarming `error`); the remaining layers are policy: operator-gate `submit_op` (item 6, the
+plan-of-record — the permissionless path is an explicit backstop and a backstop can afford
+friction) and a 7 500-byte per-op structural cap on the next contract cut. Deliberately **not** an
+in-contract per-DID op cap while writes are permissionless: an attacker filling the cap would block
+the DID's real future ops (spam → lockout). Details: `SECURITY-TODO.md` 4e.
+
+**Contingencies recorded (so future modes don't silently assume otherwise):**
+- If a later mode (Mode 3, canonical-source-in-a-partition) ever genuinely requires
+  contract-arbitrated validity, the route is **batched proof verification** (prove off-chain that
+  N ops verify; verify one proof in-contract) — never per-op EC syscalls. Note it re-freezes the
+  consensus rules into an on-chain verifier (reason 4 above), so it is a reluctant choice even then.
+- The honest re-evaluation trigger for the platform choice is **scale, not spam**: Starknet is
+  rented non-equivocation (no witness ecosystem to bootstrap or govern — what preserves unilateral,
+  DMARC-style adoption). At the ~19k roster that rent (~2.33 STRK/import, falling with the tracked
+  levers) is the right trade; at millions of DIDs a coalition-run CT-style transparency log —
+  trading gas for witness-network coordination — would deserve a fresh look.
+
+**What landed (witness-ts, this review):** `deriveLiveChain` gained an `onInvalid: "stop" | "skip"`
+mode (stop = directory semantics, unchanged, oracle-faithful; skip = the permissionless anchor
+log's assembly rule); `deriveAnchorLive` skips junk instead of truncating and enforces
+`MAX_ANCHOR_OPS`/`MAX_ANCHOR_LOG_BYTES` (mirroring the directory caps) before any decode/crypto;
+`httpCall` bounds the RPC response body (32 MiB, shared `readBoundedText`); `check()` maps overflow
+to `error` (`anchor-log-overflow`), never a verdict. Pinned in `nullified.test.ts`: the
+interleaved-junk silencing regression, the decodable-non-op variant, the stop-vs-skip contrast, and
+overflow → `error` end-to-end.
+
 ## Open follow-ups (deliberately deferred)
 
 - **Off-chain prover service** (roster-scale memoization of the inclusion proofs the contract
@@ -352,6 +413,14 @@ further cuts are the tracked cost-mitigation follow-ups below (each a redeploy �
   `import_append` note (splitting a long chain across txs to dodge the per-tx L2 *verification* cap)
   is **obsolete**: v2 does no per-op verification, so long chains fit in one `import`.
   (`ONCHAIN-REARCH-PLAN.md` §7.)
+- **Write-path spam gating (SECURITY-TODO 4e residual).** The read-side half landed (skip +
+  caps, above); the policy half is (a) **operator-gate `submit_op`** via the console roster —
+  item 6 work, already the plan of record (`ONCHAIN-REARCH-PLAN.md` §2 mitigation (a); the
+  permissionless path is a backstop, re-openable later with fee/stake friction for Modes 2–3) —
+  and (b) a **7 500-byte per-op structural cap** in `anchor.cairo` (the PLC max-op size, §5;
+  currently unbounded), a contract change ⇒ fold into whichever cost-mitigation lever wins the
+  next redeploy. Do **not** add a per-DID op-count cap while writes are permissionless
+  (spam → lockout, 4e).
 - **Trustless root reads (SECURITY-TODO 4c)** — the witness reads the anchor root via
   `starknet_call`, which trusts the RPC; a fully trustless read verifies a **Starknet storage
   proof against the L1-settled state root** (read the Starknet core contract on Ethereum +

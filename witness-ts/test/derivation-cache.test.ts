@@ -3,9 +3,10 @@
 //! `headsFromLive` still runs fresh every call so the 72h rollover needs no re-verification.
 //!
 //! The memo wraps the REAL `deriveAnchorLive`/`deriveLiveChain`; feeding undecodable op bytes makes
-//! `deriveAnchorLive` truncate to an empty chain WITHOUT running EC verification (it `break`s on the
-//! first non-canonical op) — enough to exercise the hit/miss bookkeeping without op fixtures. The
-//! end-to-end crypto correctness of the split is covered by the status/nullified differential suites.
+//! `deriveAnchorLive` skip every op (non-canonical junk; SECURITY-TODO 4e) and yield an empty chain
+//! WITHOUT running EC verification — enough to exercise the hit/miss bookkeeping without op
+//! fixtures. The end-to-end crypto correctness of the split is covered by the status/nullified
+//! differential suites.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";

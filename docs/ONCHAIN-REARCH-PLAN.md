@@ -215,6 +215,10 @@ pick the lever *before* spending one; ideally decided before the 19k bulk import
 
 **Other open follow-ups (non-blocking):** delete the now-off-path Cairo `merkle`/`op_verify`/…
 modules + their `gen-merkle-vectors` once v2 is proven live (kept for now as the differential
-reference); optional storage-spam mitigation on the permissionless write path (operator-gating /
-fee friction — readers already reject junk); the future trustless-root read (finding 4c) becomes a
-Starknet storage proof over the op storage directly.
+reference); storage-spam mitigation on the permissionless write path — **the read-side half landed
+2026-07-08** (SECURITY-TODO 4e: the witness skips junk instead of truncating at it, closing a
+one-op per-DID witness-silencing variant, and bounds the anchor read like the directory read;
+overflow → non-alarming `error`), leaving the §2 policy half: operator-gating (mitigation (a)) via
+the console roster, plus a 7 500-byte per-op structural cap on the next contract cut (see
+`HISTORY.md` "Strategy review", which also reaffirmed verify-on-read on the merits); the future
+trustless-root read (finding 4c) becomes a Starknet storage proof over the op storage directly.

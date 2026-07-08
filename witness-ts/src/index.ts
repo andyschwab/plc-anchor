@@ -6,6 +6,7 @@
 
 export {
   type AuditEntry,
+  type DeriveLiveChainOptions,
   deriveLiveChain,
   deriveNullified,
   DirectoryClient,
@@ -34,6 +35,7 @@ export {
 export { cidForBytes, cidForOp, decodeDagCbor, didForGenesisOp, encodeDagCbor } from "./dagcbor.ts";
 export {
   type AnchorHeads,
+  AnchorLogOverflowError,
   type AnchorView,
   check,
   type CheckOptions,
@@ -42,6 +44,8 @@ export {
   deriveAnchorLive,
   type DirectorySource,
   headsFromLive,
+  MAX_ANCHOR_LOG_BYTES,
+  MAX_ANCHOR_OPS,
   type Status,
 } from "./status.ts";
 export { DerivationCache, type DerivationStats } from "./derivation-cache.ts";

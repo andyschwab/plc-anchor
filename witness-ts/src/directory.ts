@@ -94,6 +94,27 @@ export interface ReplayEntry {
   imported?: boolean;
 }
 
+/** How `deriveLiveChain` treats an entry that fails validation.
+ *
+ * - `"stop"` (default) — replay stops at the first invalid entry; everything from it on is
+ *   not-live. This models a log with a single gatekeeping writer (the **directory**): the
+ *   directory would never have accepted an invalid op, so one appearing means the log is broken
+ *   from that point — the same acceptance procedure `@did-plc/lib`'s `assureValidNextOp` runs,
+ *   which this mode stays consensus-faithful to.
+ * - `"skip"` — an invalid entry is dropped and replay continues. This is the **anchor** log's
+ *   assembly rule (SECURITY-TODO 4e): the anchor's writes are permissionless and append-only, so
+ *   interleaved junk is *expected*, and under `"stop"` a single cheap junk append would
+ *   permanently hide every real op stored after it — a one-op, per-DID silencing of the witness.
+ *   Skipping is strictly safe: an entry is only skipped because it failed the very checks that
+ *   would have kept it off the live chain anyway (it can never have advanced the head), so the
+ *   skip-mode result over a log equals the stop-mode result over that log's valid subsequence.
+ *   It is a log-ASSEMBLY policy for a permissionless log, not a change to per-op validity or the
+ *   recovery rule — those stay byte-faithful to the oracle in both modes.
+ */
+export interface DeriveLiveChainOptions {
+  onInvalid?: "stop" | "skip";
+}
+
 /**
  * Replay an op log (oldest-first, INCLUDING nullified/superseded entries — the auditable form) to
  * re-derive the currently-live chain, ignoring any `nullified` claim entirely. Used for BOTH the
@@ -107,7 +128,8 @@ export interface ReplayEntry {
  * nullify a **settled/imported** op (`entry.imported`; SECURITY-TODO 4a) — the read-side mirror of
  * `state::apply_op`'s `recovery-of-imported` guard, inert on directory logs (which carry no
  * imported flag). A structurally invalid, unauthorized, misordered, or out-of-window op cannot
- * have been legitimately accepted, so replay stops there and everything from it on is not-live.
+ * have been legitimately accepted, so by default replay stops there and everything from it on is
+ * not-live — or, for a permissionless log, skips it (`options.onInvalid`, above).
  *
  * The 72h window is measured from the superseding op's own `createdAt` — for the directory the
  * acceptance-time clock (the same input `@did-plc/lib` used; finding 4b); for the anchor the
@@ -117,12 +139,22 @@ export interface ReplayEntry {
  * `expectedDid`, when given, binds the log to a DID: the genesis op's derived `did:plc` fragment
  * must match, else the log is the wrong DID's history and nothing is live.
  */
-export function deriveLiveChain(log: readonly ReplayEntry[], expectedDid?: string): LiveChain {
+export function deriveLiveChain(
+  log: readonly ReplayEntry[],
+  expectedDid?: string,
+  options: DeriveLiveChainOptions = {},
+): LiveChain {
+  const skipInvalid = options.onInvalid === "skip";
   const chain: LiveOp[] = [];
 
+  // Each rejection either stops replay (directory semantics) or skips the entry (anchor
+  // semantics) — see `DeriveLiveChainOptions`. The checks themselves are identical in both modes.
   for (const entry of log) {
     const op = readOp(entry.operation);
-    if (op === null) break; // not a structurally usable op
+    if (op === null) {
+      if (skipInvalid) continue; // not a structurally usable op
+      break;
+    }
 
     const cid = cidForOp(entry.operation);
     const imported = entry.imported ?? false;
@@ -130,23 +162,44 @@ export function deriveLiveChain(log: readonly ReplayEntry[], expectedDid?: strin
     if (chain.length === 0) {
       // Genesis: prev must be null, self-authorized by its own rotation keys, and (if bound) its
       // derived DID must be the one we asked for.
-      if (op.prev !== null) break;
+      if (op.prev !== null) {
+        if (skipInvalid) continue;
+        break;
+      }
       const idx = verifyOpAuthorized(entry.operation, op.rotationKeys);
-      if (idx < 0) break;
-      if (expectedDid !== undefined && didForGenesisOp(entry.operation) !== expectedDid) break;
+      if (idx < 0) {
+        if (skipInvalid) continue;
+        break;
+      }
+      if (expectedDid !== undefined && didForGenesisOp(entry.operation) !== expectedDid) {
+        if (skipInvalid) continue;
+        break;
+      }
       chain.push({ cid, createdAt: entry.createdAt, rotationKeys: op.rotationKeys, tombstone: op.tombstone, signerIndex: idx, imported });
       continue;
     }
 
     // Non-genesis: it must name a live op as `prev`.
-    if (op.prev === null) break; // a second genesis is malformed
+    if (op.prev === null) {
+      if (skipInvalid) continue; // a second genesis is malformed
+      break;
+    }
     const forkIndex = chain.findIndex((c) => c.cid === op.prev);
-    if (forkIndex < 0) break; // prev not on the live chain → misordered
+    if (forkIndex < 0) {
+      if (skipInvalid) continue; // prev not on the live chain → misordered
+      break;
+    }
     const forkPoint = chain[forkIndex];
-    if (forkPoint.tombstone) break; // nothing may build on a tombstone
+    if (forkPoint.tombstone) {
+      if (skipInvalid) continue; // nothing may build on a tombstone
+      break;
+    }
 
     const signerIndex = verifyOpAuthorized(entry.operation, forkPoint.rotationKeys);
-    if (signerIndex < 0) break; // not signed by an authorized key
+    if (signerIndex < 0) {
+      if (skipInvalid) continue; // not signed by an authorized key
+      break;
+    }
     const nullifiedCount = chain.length - 1 - forkIndex;
 
     if (nullifiedCount > 0) {
@@ -157,8 +210,14 @@ export function deriveLiveChain(log: readonly ReplayEntry[], expectedDid?: strin
       // A recovery may not nullify settled/imported history (SECURITY-TODO 4a): the read-side
       // mirror of `state::apply_op`'s `recovery-of-imported`. Imported ops always form the chain's
       // prefix, so the first nullified being imported is sufficient. Inert on directory logs.
-      if (firstNullified.imported) break; // recovery-of-imported
-      if (signerIndex >= firstNullified.signerIndex) break; // recovery-weaker-key
+      if (firstNullified.imported) {
+        if (skipInvalid) continue; // recovery-of-imported
+        break;
+      }
+      if (signerIndex >= firstNullified.signerIndex) {
+        if (skipInvalid) continue; // recovery-weaker-key
+        break;
+      }
       // Window uses the directory's `createdAt` (finding 4b). This is FAITHFUL PLC, not added
       // trust: `@did-plc/lib`'s `assureValidNextOp` measures the window against
       // `firstNullified.createdAt` too — the trust PLC itself places in the directory clock,
@@ -171,7 +230,10 @@ export function deriveLiveChain(log: readonly ReplayEntry[], expectedDid?: strin
       // NaN-is-not-late branch below is deliberately permissive to match the oracle byte-for-byte
       // (changing it would fork this consensus-critical re-derivation). See REFERENCE.md §1.
       const lapsed = Date.parse(entry.createdAt) - Date.parse(firstNullified.createdAt);
-      if (lapsed > RECOVERY_WINDOW_MS) break; // late-recovery (NaN ⇒ not late, matching the oracle)
+      if (lapsed > RECOVERY_WINDOW_MS) {
+        if (skipInvalid) continue; // late-recovery (NaN ⇒ not late, matching the oracle)
+        break;
+      }
       chain.length = forkIndex + 1; // drop the nullified suffix
     }
 
@@ -216,8 +278,10 @@ const MAX_AUDIT_BODY_BYTES = 8 * 1024 * 1024;
 
 /** Read a response body into text, aborting once it exceeds `maxBytes` — so an unbounded (or
  * mis-declared) body can't be buffered whole. Falls back to `res.text()` when no stream is
- * exposed (e.g. a minimal transport double). */
-async function readBoundedText(res: Response, maxBytes: number, ctx: string): Promise<string> {
+ * exposed (e.g. a minimal transport double). Shared with the Starknet RPC transport
+ * (`starknet.ts`), whose `chain(did)` responses are third-party-inflatable the same way a hostile
+ * mirror's audit log is (SECURITY-TODO 4e). */
+export async function readBoundedText(res: Response, maxBytes: number, ctx: string): Promise<string> {
   const declared = res.headers.get("content-length");
   if (declared !== null && Number.isFinite(Number(declared)) && Number(declared) > maxBytes) {
     throw new Error(`${ctx}: declared body ${declared} bytes exceeds cap ${maxBytes}`);

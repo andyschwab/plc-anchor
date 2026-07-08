@@ -1,10 +1,20 @@
 # Security review — findings & resolutions
 
-A ledger of the security findings raised against DIDMARC and how each was resolved. Two rounds:
-the **June 2026 internal audit** (items 1–6) and the **July 2026 design review** (4a–4c). All are
-resolved; the substance lives in the code and in [`HISTORY.md`](HISTORY.md) /
-[`REFERENCE.md`](../REFERENCE.md) — this file is the index the code comments cite by ID. The only
-outstanding work is the one deliberately deferred item (4c), tracked in `HISTORY.md` follow-ups.
+A ledger of the security findings raised against DIDMARC and how each was resolved. Three rounds:
+the **June 2026 internal audit** (items 1–6), the **July 2026 design review** (4a–4d), and the
+**July 2026 strategy review** (4e). All are resolved; the substance lives in the code and in
+[`HISTORY.md`](HISTORY.md) / [`REFERENCE.md`](../REFERENCE.md) — this file is the index the code
+comments cite by ID. The outstanding work is the deliberately deferred item (4c) and 4e's
+policy residual, tracked in `HISTORY.md` follow-ups.
+
+## July 2026 strategy review (4e)
+
+Raised while re-examining verify-on-read against the spam risk it introduced (the review that
+reaffirmed verify-on-read — `HISTORY.md` "Strategy review", 2026-07-08).
+
+| id | sev | finding | resolution |
+|---|---|---|---|
+| **4e** | MEDIUM | **Anchor-log junk = per-DID witness silencing; anchor read path unbounded.** The anchor's writes are permissionless and its log append-only, and the witness *truncated* chain validation at the first undecodable/invalid op (`deriveAnchorLive`). So one cheap junk `submit_op` to a targeted DID permanently froze the witness's view at the pre-junk head — every real op stored after it invisible: a one-op, few-STRK **silencing of the witness for exactly the DID an attacker cares about** (fail-safe — status decays to stale `tentative-consistent`, never a false `diverged` — but it quietly removes the protection). Independently, the anchor read path had **no ops/bytes bounds** (the directory path has `MAX_AUDIT_ENTRIES`/`MAX_AUDIT_BODY_BYTES`), so a gas-paid bloat of one DID's log could push its `chain()` read past RPC/CPU limits and make its status uncomputable — the **more-exposed surface (permissionless writes) was the less-defended one** (the operator-run directory already had caps). | **Fixed (witness), 2026-07-08.** (1) **Skip, don't truncate:** `deriveAnchorLive` skips undecodable bytes and replays the rest in `deriveLiveChain`'s new `onInvalid: "skip"` mode — a log-*assembly* policy for the permissionless anchor log only (per-op validity + the recovery rule are unchanged, and the directory path keeps stop-mode, faithful to `@did-plc/lib`). Safe because a skipped entry failed the very checks that would have kept it off the live chain — skip-mode over a log ≡ stop-mode over its valid subsequence; junk can hide nothing and confirm nothing. (2) **Bounds mirroring the directory's:** `MAX_ANCHOR_OPS` (10 000) / `MAX_ANCHOR_LOG_BYTES` (8 MiB), checked before any decode/crypto, plus a 32 MiB cap on the `starknet_call` response body; overflow → `check()` returns **`error` (`anchor-log-overflow`)** — unavailable, never a verdict (§0-safe). Pinned in `witness-ts/test/nullified.test.ts` (interleaved-junk silencing regression, stop-vs-skip contrast, overflow → `error`). **Policy residual (tracked, `HISTORY.md` follow-ups):** operator-gate `submit_op` via the console roster (item 6 — the permissionless path is an explicit backstop), and a 7 500-byte per-op structural cap in `anchor.cairo` on the next redeploy. Deliberately **no** in-contract per-DID op-count cap while writes are permissionless — an attacker filling it would lock out the DID's real future ops (spam → lockout). |
 
 ## July 2026 design review (4a–4d)
 

@@ -28,9 +28,13 @@
 //! submitter's — so the confirmed head a reader derives is still independent of the directory.
 //!
 //! Writes are permissionless (the Starknet tx signer / fee payer may be anyone; §2). A writer
-//! can store unverified/garbage ops, but they are rejected read-side and cost the writer gas;
-//! bulk storage-spam mitigation (operator-gating or fee friction) is off-chain policy for V1
-//! (the permissionless write path is a backstop, not the V1 headline; §1a).
+//! can store unverified/garbage ops, but they are rejected read-side (the witness SKIPS junk —
+//! it cannot hide later real ops — and bounds the per-DID log it will validate; SECURITY-TODO
+//! 4e) and cost the writer gas; bulk storage-spam mitigation (operator-gating or fee friction)
+//! is off-chain policy for V1 (the permissionless write path is a backstop, not the V1
+//! headline; §1a). Next contract cut (fold in with a cost-mitigation redeploy): a 7500-byte
+//! per-op structural cap (the PLC max-op size, REFERENCE.md §5) — but NO per-DID op-count cap
+//! while writes are permissionless (an attacker filling it would lock out real ops; 4e).
 
 #[starknet::interface]
 pub trait IAnchor<TContractState> {

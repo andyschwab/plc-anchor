@@ -15,7 +15,14 @@ import { test } from "node:test";
 import { deriveLiveChain, deriveNullified, RECOVERY_WINDOW_MS, type AuditEntry } from "../src/directory.ts";
 import { encodeDagCbor } from "../src/dagcbor.ts";
 import { verifySig } from "../src/crypto.ts";
-import { type AnchorView, check, deriveAnchorHeads } from "../src/status.ts";
+import {
+  AnchorLogOverflowError,
+  type AnchorView,
+  check,
+  deriveAnchorHeads,
+  MAX_ANCHOR_LOG_BYTES,
+  MAX_ANCHOR_OPS,
+} from "../src/status.ts";
 import type { AnchorOp } from "../src/starknet.ts";
 
 interface Scenario {
@@ -200,12 +207,88 @@ test("deriveAnchorHeads: an equivocating directory can't suppress the head (deco
   assert.equal(heads.confirmedHead, R, "confirmed head derived from anchor bytes alone");
 });
 
-test("deriveAnchorHeads: garbage on-chain bytes truncate, never becoming a head", () => {
+// ── Anchor-log junk + bounds (SECURITY-TODO 4e): skip-don't-truncate, overflow → error ──
+//
+// The anchor's writes are permissionless and its log append-only, so junk INTERLEAVED with real
+// ops is expected. Junk must be skipped, never a truncation point (one cheap bogus append must not
+// permanently hide the real ops stored after it — the per-DID witness-silencing attack), and a
+// spam-pumped log must degrade to a bounded `error`, never a verdict.
+
+const junkOp = (createdAt: number): AnchorOp => ({
+  signed: Uint8Array.from([0xff, 0x00, 0x13, 0x37]), // undecodable / non-canonical
+  createdAt,
+  imported: false,
+});
+
+test("deriveAnchorHeads: garbage on-chain bytes are skipped, never becoming a head", () => {
   // A permissionless writer appends non-canonical / undecodable bytes after a real chain. They
-  // decode-fail → truncate; the head stays the last valid op, and junk never confirms.
+  // decode-fail → skipped; the head stays the last valid op, and junk never confirms.
   const s = scenario("valid-recovery");
   const ops = anchorOpsFrom(s.auditLog);
-  const withGarbage = [...ops, { signed: Uint8Array.from([0xff, 0x00, 0x13, 0x37]), createdAt: FAR_FUTURE, imported: false }];
+  const withGarbage = [...ops, junkOp(FAR_FUTURE)];
   const heads = deriveAnchorHeads(withGarbage, { now: FAR_FUTURE + 1, did: fixture.did });
   assert.equal(heads.tentativeHead, s.expectedHeadCid, "garbage tail is dropped; tip is the real head");
+});
+
+test("deriveAnchorHeads: junk interleaved mid-chain cannot silence the real ops after it (4e)", () => {
+  // The silencing attack: an attacker appends one undecodable op BEFORE the indexer stores the
+  // DID's next real ops. Under truncate-at-junk the anchor's view would freeze at the pre-junk
+  // head forever; under skip the later real ops are still validated and derived.
+  const s = scenario("valid-recovery");
+  const ops = anchorOpsFrom(s.auditLog);
+  const interleaved = ops.flatMap((op, i) => (i === 1 ? [junkOp(op.createdAt), op] : [op]));
+  const heads = deriveAnchorHeads(interleaved, { now: FAR_FUTURE, did: fixture.did });
+  assert.equal(heads.tentativeHead, s.expectedHeadCid, "real ops after the junk still derive the head");
+  assert.equal(heads.confirmedHead, s.expectedHeadCid, "…and still confirm past the window");
+});
+
+test("deriveAnchorHeads: a decodable-but-invalid op mid-chain is skipped the same way (4e)", () => {
+  // Decodable canonical CBOR that is not a usable PLC op (readOp → null). One level below the
+  // decode gate, same attack: it must be skipped, not end replay.
+  const s = scenario("valid-recovery");
+  const ops = anchorOpsFrom(s.auditLog);
+  const notAnOp: AnchorOp = { signed: encodeDagCbor({ not: "a-plc-op" }), createdAt: ops[0].createdAt, imported: false };
+  const interleaved = [ops[0], notAnOp, ...ops.slice(1)];
+  const heads = deriveAnchorHeads(interleaved, { now: FAR_FUTURE, did: fixture.did });
+  assert.equal(heads.tentativeHead, s.expectedHeadCid, "the non-op is skipped; the real chain derives");
+});
+
+test("deriveLiveChain: stop vs skip — the directory keeps truncate-at-invalid semantics", () => {
+  // The two assembly modes side by side: the anchor path skips (permissionless log), while the
+  // directory path must keep stopping at the first invalid entry — the acceptance procedure
+  // @did-plc/lib models — so the consensus-faithful directory re-derivation is unchanged.
+  const s = scenario("clean-chain");
+  const junkEntry = { operation: { not: "a-plc-op" }, createdAt: s.auditLog[0].createdAt };
+  const interleaved = [s.auditLog[0], junkEntry, ...s.auditLog.slice(1)];
+  const stopped = deriveLiveChain(interleaved, fixture.did);
+  assert.equal(stopped.head?.cid, s.auditLog[0].cid, "stop mode (default): replay ends at the junk");
+  const skipped = deriveLiveChain(interleaved, fixture.did, { onInvalid: "skip" });
+  assert.equal(skipped.head?.cid ?? null, s.expectedHeadCid, "skip mode: junk dropped, chain completes");
+});
+
+test("deriveAnchorHeads: an op-count-bloated log throws AnchorLogOverflowError before any crypto", () => {
+  const bloated: AnchorOp[] = Array.from({ length: MAX_ANCHOR_OPS + 1 }, () => junkOp(0));
+  assert.throws(
+    () => deriveAnchorHeads(bloated, { now: FAR_FUTURE, did: fixture.did }),
+    AnchorLogOverflowError,
+  );
+});
+
+test("deriveAnchorHeads: a byte-bloated log throws AnchorLogOverflowError", () => {
+  const big: AnchorOp = { signed: new Uint8Array(MAX_ANCHOR_LOG_BYTES + 1), createdAt: 0, imported: false };
+  assert.throws(() => deriveAnchorHeads([big], { now: FAR_FUTURE, did: fixture.did }), AnchorLogOverflowError);
+});
+
+test("status: a spam-pumped anchor log degrades to `error` (anchor-log-overflow), never a verdict", async () => {
+  // End-to-end §0 safety: the attacker pumps a victim DID's on-chain log past the bounds. check()
+  // must return the non-alarming `error` — unavailable — not `diverged` (and not hang validating).
+  const s = scenario("clean-chain");
+  const bloatedAnchor: AnchorView = {
+    isAnchored: async () => true,
+    chain: async () => Array.from({ length: MAX_ANCHOR_OPS + 1 }, () => junkOp(0)),
+  };
+  const r = await check(fixture.did, bloatedAnchor, { auditLog: async () => s.auditLog }, { now: () => NOW });
+  assert.equal(r.status, "error");
+  assert.equal(r.reason, "anchor-log-overflow");
+  assert.equal(r.evidence.directoryHead, s.expectedHeadCid, "directory evidence still reported");
 });

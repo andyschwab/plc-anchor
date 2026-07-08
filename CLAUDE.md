@@ -77,7 +77,12 @@ Scarb/Cairo **2.18.0**, Starknet Foundry (snforge) **0.61.0**, universal-sierra-
 > block-timestamped, append-only op log**; all signature/CID verification + fork adjudication run
 > **read-side** in the witness. Bullets touched by this are marked *(amended)* below. Rationale &
 > migration: [`docs/ONCHAIN-REARCH-PLAN.md`](docs/ONCHAIN-REARCH-PLAN.md); design baseline updated
-> in `REFERENCE.md` (§1/§2/§3/§4/§8 amendment banner).
+> in `REFERENCE.md` (§1/§2/§3/§4/§8 amendment banner). **Reaffirmed on the merits 2026-07-08**
+> after a strategy review of the spam risk it introduced (in-contract validation duplicates
+> self-certification, only helps RPC-trusting readers, defends against the wrong adversary, and
+> freezes consensus rules into fork-risk); the spam residual is availability-only and mitigated
+> read-side (witness skip + caps, SECURITY-TODO 4e) with write-gating tracked as policy — don't
+> reopen absent new facts (`docs/HISTORY.md` "Strategy review").
 
 - **V1 is the witness ("atproto identity DMARC"), not the escape hatch.** plc.directory
   stays canonical; the product is the read-side graduated status

@@ -33,10 +33,11 @@ import { deriveLiveChain, RECOVERY_WINDOW_MS, type AuditEntry, type LiveChain } 
 import type { AnchorOp } from "./starknet.ts";
 
 // The four graduated statuses, plus `error`: an *unverifiable* input (e.g. the directory
-// served a head with an unparseable `createdAt`), distinct from any of the four honest
-// verdicts. It never asserts divergence, but it must not be silently absorbed into a
-// non-alarming verdict — a malicious directory could otherwise use malformed data to suppress
-// `diverged` indefinitely (SECURITY-TODO item 4).
+// served a head with an unparseable `createdAt`, or the anchor log exceeds the witness's
+// spam bounds — SECURITY-TODO 4e), distinct from any of the four honest verdicts. It never
+// asserts divergence, but it must not be silently absorbed into a non-alarming verdict — a
+// malicious directory could otherwise use malformed data to suppress `diverged` indefinitely
+// (SECURITY-TODO item 4).
 export type Status = "confirmed" | "tentative-consistent" | "diverged" | "absent" | "error";
 
 export interface CheckResult {
@@ -57,6 +58,30 @@ export interface CheckResult {
 export interface AnchorHeads {
   confirmedHead: string;
   tentativeHead: string;
+}
+
+// ── Anchor-log bounds (SECURITY-TODO 4e) ──
+//
+// The anchor's writes are permissionless, so its op log — unlike the operator-run directory's —
+// can be bloated by anyone willing to pay gas. These caps mirror the directory-path bounds
+// (`MAX_AUDIT_ENTRIES` / `MAX_AUDIT_BODY_BYTES`, `directory.ts`) so the MORE-exposed surface is at
+// least as defended: a pumped log degrades to a bounded, non-alarming `error` (never `diverged`,
+// never an unbounded decode/verify loop or RPC buffer). A real DID's history is tens of ops.
+
+/** Upper bound on anchor-log ops the witness will validate for one DID. */
+export const MAX_ANCHOR_OPS = 10_000;
+
+/** Upper bound on the total signed op bytes the witness will validate for one DID. */
+export const MAX_ANCHOR_LOG_BYTES = 8 * 1024 * 1024;
+
+/** A DID's on-chain op log exceeds the witness's bounds (`MAX_ANCHOR_OPS` /
+ * `MAX_ANCHOR_LOG_BYTES`) — storage spam on the permissionless write path. `check()` maps this to
+ * `error` (`anchor-log-overflow`): unavailable, never a verdict (SECURITY-TODO 4e). */
+export class AnchorLogOverflowError extends Error {
+  constructor(did: string, detail: string) {
+    super(`anchor op log for ${did} exceeds witness bounds: ${detail}`);
+    this.name = "AnchorLogOverflowError";
+  }
 }
 
 /** The anchor reads `check` needs (a subset of `AnchorReader`, so it's fakeable in tests). */
@@ -80,10 +105,15 @@ export interface DirectorySource {
  * Decoding the on-chain bytes (not borrowing op bodies from the directory being checked) is what
  * lets the witness catch an equivocating directory: the directory can serve a forged log, but it
  * cannot alter the non-equivocable bytes the anchor stored, so the confirmed head is derived from
- * the anchor alone. An op whose bytes don't decode canonically (necessarily not a directory-served
- * op — a permissionless writer's garbage) truncates the validated chain — a strictly conservative,
- * §0-safe degradation. A validly-signed op is still required to advance the head, so a bogus
- * on-chain append can never become the confirmed head (no false `diverged`).
+ * the anchor alone. An op that doesn't decode canonically or doesn't validate (necessarily not a
+ * directory-served op — a permissionless writer's garbage) is SKIPPED, not a truncation point
+ * (SECURITY-TODO 4e): the log is append-only, so truncating at junk would let one cheap bogus
+ * append permanently hide every real op stored after it — a per-DID silencing of the witness.
+ * Skipping admits nothing: a validly-signed, correctly-linked op is still required to advance the
+ * head, so a bogus on-chain append can never become the confirmed head (no false `diverged`).
+ *
+ * @throws AnchorLogOverflowError when the log exceeds `MAX_ANCHOR_OPS`/`MAX_ANCHOR_LOG_BYTES`
+ * (checked before any decode/crypto); `check()` maps it to `error`, never a verdict.
  */
 export function deriveAnchorHeads(ops: readonly AnchorOp[], ctx: { now: number; did: string }): AnchorHeads {
   return headsFromLive(deriveAnchorLive(ops, ctx.did), ctx.now);
@@ -98,13 +128,24 @@ export function deriveAnchorHeads(ops: readonly AnchorOp[], ctx: { now: number; 
  * possible; `deriveAnchorHeads` composes it with `headsFromLive` exactly as before.
  */
 export function deriveAnchorLive(ops: readonly AnchorOp[], did: string): LiveChain {
+  // Bounds first, before any decode or EC verification, so a spam-pumped log costs the witness
+  // one cheap length pass, not an unbounded validation loop (SECURITY-TODO 4e).
+  if (ops.length > MAX_ANCHOR_OPS) {
+    throw new AnchorLogOverflowError(did, `${ops.length} ops exceeds cap ${MAX_ANCHOR_OPS}`);
+  }
+  let totalBytes = 0;
+  for (const op of ops) totalBytes += op.signed.byteLength;
+  if (totalBytes > MAX_ANCHOR_LOG_BYTES) {
+    throw new AnchorLogOverflowError(did, `${totalBytes} op bytes exceeds cap ${MAX_ANCHOR_LOG_BYTES}`);
+  }
+
   const entries: { operation: unknown; createdAt: string; imported: boolean }[] = [];
   for (const op of ops) {
     let operation: unknown;
     try {
       operation = decodeDagCbor(op.signed);
     } catch {
-      break; // non-canonical / undecodable bytes → can't validate further; truncate
+      continue; // non-canonical / undecodable bytes → permissionless junk; skip, don't truncate (4e)
     }
     entries.push({
       operation,
@@ -112,7 +153,9 @@ export function deriveAnchorLive(ops: readonly AnchorOp[], did: string): LiveCha
       imported: op.imported,
     });
   }
-  return deriveLiveChain(entries, did);
+  // Skip-mode replay: decodable-but-invalid entries (forged sig, bad linkage, weaker-key/late
+  // recovery) are likewise skipped, for the same 4e reason — junk must not hide later real ops.
+  return deriveLiveChain(entries, did, { onInvalid: "skip" });
 }
 
 /**
@@ -184,10 +227,26 @@ export async function check(
 
   const [anchorOps, log] = await Promise.all([anchor.chain(did), directory.auditLog(did)]);
 
+  const { liveCids, head: dirHead } = deriveLive(log, did);
+
   // The anchor's heads are re-derived from its own on-chain bytes (decoded), independent of the
   // directory — so an equivocating directory can't suppress the alarm by withholding op bodies.
-  const { confirmedHead, tentativeHead } = deriveAnchor(anchorOps, { now: now(), did });
-  const { liveCids, head: dirHead } = deriveLive(log, did);
+  // A spam-bloated log (permissionless writes; SECURITY-TODO 4e) exceeds the witness's bounds and
+  // degrades to `error` — unavailable, never a verdict, exactly like the directory-side caps.
+  let heads: AnchorHeads;
+  try {
+    heads = deriveAnchor(anchorOps, { now: now(), did });
+  } catch (e) {
+    if (e instanceof AnchorLogOverflowError) {
+      return result("error", "anchor-log-overflow", {
+        directoryHead: dirHead?.cid ?? null,
+        anchorConfirmedHead: "",
+        anchorTentativeHead: "",
+      });
+    }
+    throw e;
+  }
+  const { confirmedHead, tentativeHead } = heads;
 
   const ev: CheckResult["evidence"] = {
     directoryHead: dirHead?.cid ?? null,
