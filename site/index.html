@@ -3,27 +3,44 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>DIDMARC — DID Mapping Alignment, Reporting &amp; Conformance</title>
-<meta name="description" content="DIDMARC (DID Mapping Alignment, Reporting & Conformance) — independent, on-chain proof that plc.directory serves a DID's complete, current, non-equivocated history, exposed as a graduated status any resolver or PDS enforces unilaterally." />
+<title>DIDMARC: DID Mapping Alignment, Reporting &amp; Conformance</title>
+<meta name="description" content="DIDMARC gives every did:plc independent, on-chain proof that plc.directory serves its complete, current, non-equivocated history, exposed as a graduated status any resolver or PDS enforces unilaterally." />
 <style>
   :root {
     --bg: #0f1117; --panel: #181b24; --line: #272b36; --fg: #e6e8ee; --muted: #9aa3b2;
     --accent: #5b8cff; --ok: #34c759; --warn: #ffb020; --bad: #ff453a;
   }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body { margin: 0; background: var(--bg); color: var(--fg);
     font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
-  header { padding: 80px 0 48px; }
-  .tag { color: var(--muted); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; }
-  h1 { font-size: 40px; line-height: 1.15; margin: 12px 0 8px; letter-spacing: -.01em; }
-  h1 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .expand { font-size: 15px; color: var(--muted); margin: 0 0 16px; }
-  .expand b { color: var(--fg); font-weight: 600; }
-  .lede { font-size: 19px; color: #cdd2dd; }
-  section { padding: 28px 0; border-top: 1px solid var(--line); }
+
+  /* ── top bar / nav ─────────────────────────────────────────── */
+  .topbar { position: sticky; top: 0; z-index: 20; background: rgba(15,17,23,.82);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line); }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 52px; }
+  .brand { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600;
+    letter-spacing: .02em; color: var(--fg); }
+  .brand:hover { text-decoration: none; }
+  .nav-links { display: flex; gap: 18px; font-size: 13px; }
+  .nav-links a { color: var(--muted); }
+  .nav-links a:hover { color: var(--fg); text-decoration: none; }
+  .nav-toggle, .burger { display: none; }
+
+  /* ── header / intro ────────────────────────────────────────── */
+  header { padding: 72px 0 48px; }
+  h1 { font-size: 44px; line-height: 1.1; margin: 0 0 10px; letter-spacing: .01em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .subtitle { font-size: clamp(11px, 3.3vw, 15px); color: var(--muted); letter-spacing: .01em;
+    margin: 0 0 20px; white-space: nowrap; }
+  .subtitle b { color: var(--fg); font-weight: 600; }
+  .lede { font-size: 20px; line-height: 1.5; color: #cdd2dd; margin: 0 0 22px; }
+
+  section { padding: 28px 0; border-top: 1px solid var(--line); scroll-margin-top: 64px; }
   h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 14px; }
   p { margin: 0 0 14px; }
   .analogy { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -40,69 +57,129 @@
   .bad b { color: var(--bad); } .muted b { color: var(--muted); }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
     background: #11141c; border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+
+  /* ── code block ────────────────────────────────────────────── */
+  pre.code { background: #0c0e14; border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; overflow-x: auto; margin: 0 0 14px; }
+  pre.code code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.7;
+    color: #cdd2dd; white-space: pre; }
+  pre.code .c { color: var(--muted); }
+  pre.code .k { color: var(--accent); }
+
+  /* ── adversarial deep-dive ─────────────────────────────────── */
+  .deep { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 0 0 14px; }
+  .dcard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .dcard.bad { border-left: 3px solid var(--bad); }
+  .dcard.warn { border-left: 3px solid var(--warn); }
+  .dcard h3 { margin: 0 0 6px; font-size: 15px; }
+  .dcard p { margin: 0; color: var(--muted); font-size: 14px; }
+  .verdict { display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; letter-spacing: .02em; padding: 1px 7px; border-radius: 20px; margin-left: 8px;
+    vertical-align: middle; }
+  .verdict.bad { color: var(--bad); background: rgba(255,69,58,.12); }
+  .verdict.warn { color: var(--warn); background: rgba(255,176,32,.12); }
+
   .cta { display: inline-block; background: var(--accent); color: #07101f; font-weight: 600;
     padding: 10px 18px; border-radius: 8px; margin-top: 8px; }
   footer { padding: 40px 0 80px; color: var(--muted); font-size: 13px; }
-  @media (max-width: 560px) { .analogy, .threats { grid-template-columns: 1fr; } h1 { font-size: 32px; } }
+
+  @media (max-width: 560px) {
+    .analogy, .threats, .deep { grid-template-columns: 1fr; }
+    h1 { font-size: 34px; }
+    header { padding: 44px 0 40px; }
+    .subtitle { white-space: normal; }
+
+    /* CSS-only burger */
+    .topbar { position: sticky; }
+    .nav-inner { position: relative; }
+    .burger { display: flex; flex-direction: column; justify-content: center; gap: 5px;
+      width: 26px; height: 26px; cursor: pointer; }
+    .burger span { display: block; height: 2px; width: 100%; background: var(--fg); border-radius: 2px;
+      transition: transform .2s ease, opacity .2s ease; }
+    .nav-links { display: none; position: absolute; top: 52px; left: -24px; right: -24px;
+      flex-direction: column; gap: 0; background: var(--panel); border-bottom: 1px solid var(--line);
+      padding: 4px 24px 8px; }
+    .nav-links a { padding: 13px 2px; border-top: 1px solid var(--line); font-size: 15px; color: var(--fg); }
+    .nav-toggle:checked ~ .nav-links { display: flex; }
+    .nav-toggle:checked ~ .burger span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .nav-toggle:checked ~ .burger span:nth-child(2) { opacity: 0; }
+    .nav-toggle:checked ~ .burger span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+  }
 </style>
 </head>
 <body>
+
+<nav class="topbar">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">DIDMARC</a>
+    <input type="checkbox" id="nav-toggle" class="nav-toggle" aria-hidden="true" />
+    <div class="nav-links">
+      <a href="#gap">Gap</a>
+      <a href="#threats">Threats</a>
+      <a href="#how">How</a>
+      <a href="#status">Status</a>
+      <a href="#use">Use</a>
+      <a href="#adversarial">Adversarial</a>
+      <a href="https://plc.didmarc.dev">Console</a>
+    </div>
+    <label for="nav-toggle" class="burger" aria-label="Toggle menu"><span></span><span></span><span></span></label>
+  </div>
+</nav>
+
 <div class="wrap">
-  <header>
-    <div class="tag">a witness for atproto identity</div>
-    <h1><span class="mono">DIDMARC</span> — hold the directory accountable</h1>
-    <p class="expand"><b>D</b>ID <b>M</b>apping <b>A</b>lignment, <b>R</b>eporting &amp;
-      <b>C</b>onformance — an independent accountability layer for atproto identity.</p>
-    <p class="lede">Independent, on-chain proof that <code>plc.directory</code> serves a DID's
-      <b>complete, current, and non-equivocated</b> history — exposed as a graduated status any
-      resolver or PDS can enforce <b>unilaterally</b>, with no network coordination and no
-      protocol change.</p>
+  <header id="top">
+    <h1>DIDMARC</h1>
+    <p class="subtitle"><b>D</b>ID <b>M</b>apping <b>A</b>lignment, <b>R</b>eporting &amp;
+      <b>C</b>onformance</p>
+    <p class="lede">A tamper-proof, independent record that proves an atproto identity's history
+      has not been quietly rewritten, hidden, or forked.</p>
     <a class="cta" href="https://plc.didmarc.dev">Open the console →</a>
   </header>
 
-  <section>
+  <section id="gap">
     <h2>The gap a signature leaves</h2>
     <p>An atproto identity is a signed, hash-linked log of operations, served from a single
-      directory. Every operation is self-certifying — but a signature only vouches for the
-      operation it's attached to. It can't tell you whether the directory showed you <i>all</i> of
-      them, the <i>latest</i> ones, or the <i>same</i> ones it showed everyone else.</p>
+      directory. Every operation is self-certifying, so a signature vouches for the operation it's
+      attached to. It can't tell you whether the directory showed you <i>all</i> of them, the
+      <i>latest</i> ones, or the <i>same</i> ones it showed everyone else.</p>
     <div class="analogy">
       <div class="card">
         <h3>What a signature proves</h3>
-        <p>This operation is authentic — signed by a key that was valid at the time. PLC already
+        <p>This operation is authentic, signed by a key that was valid at the time. PLC already
           gives you this, per operation.</p>
       </div>
       <div class="card">
         <h3>What it can't</h3>
         <p>That you were shown the <i>complete, current, and non-equivocated</i> history. No
-          signature can speak for the operations it isn't on — including the ones you never saw.</p>
+          signature can speak for the operations it isn't on, including the ones you never saw.</p>
       </div>
     </div>
   </section>
 
-  <section>
+  <section id="threats">
     <h2>What a directory can do to you</h2>
     <p>That gap isn't theoretical. Every operation can be perfectly signed and the directory can
       still deceive you, because it alone decides <i>which</i> operations you see. None of the
-      attacks below needs a stolen key — only control of the directory a resolver trusts:</p>
+      attacks below needs a stolen key. All it takes is control of the directory a resolver
+      trusts:</p>
     <div class="threats">
       <div class="card">
-        <h3>Omission — undo a fix</h3>
+        <h3>Omission: undo a fix</h3>
         <p>Your account key is stolen, so you do the right thing and rotate it out with a new
-          signed operation. The directory serves your history with that one operation missing — so
-          to the rest of the network the stolen key is still live, and the thief keeps signing as
+          signed operation. The directory serves your history with that one operation missing. To
+          the rest of the network the stolen key is still live, and the thief keeps signing as
           you.</p>
         <p class="why"><b>The lie is the operation left out.</b></p>
       </div>
       <div class="card">
-        <h3>Erasure — make someone vanish</h3>
+        <h3>Erasure: make someone vanish</h3>
         <p>The directory simply returns nothing for a DID that plainly exists. Every app that looks
-          the person up sees no such identity — handle dangling, posts unresolvable — with no error
-          to appeal.</p>
+          the person up sees no such identity. Handles dangle, posts won't resolve, and there's no
+          error to appeal.</p>
         <p class="why"><b>Absence carries no proof to check.</b></p>
       </div>
       <div class="card">
-        <h3>Split-view — two faces</h3>
+        <h3>Split-view: two faces</h3>
         <p>Show the victim their real history, while showing one targeted service a forked version
           that points their account at a server the attacker runs. Neither side ever sees the
           other's copy.</p>
@@ -116,42 +193,114 @@
       current history, so a resolver can tell when the directory's answer doesn't add up.</p>
   </section>
 
-  <section>
+  <section id="how">
     <h2>How it works</h2>
-    <p>Each opted-in DID's full operation log is re-verified from genesis inside a Starknet
-      contract — the network proves the computation and settles to Ethereum; there is no bespoke
-      prover and no trusted snapshot. The contract commits a proven DID→document root. A resolver
-      fetches a document from the directory and checks it against that root, getting back a
-      status. <code>plc.directory</code> stays canonical; DIDMARC is a read-side witness that
-      anyone turns on alone — no coordination and no protocol change.</p>
+    <p>Each opted-in DID's full operation log lives on Starknet, block-timestamped and append-only.
+      The network proves the record and settles it to Ethereum, so there is no bespoke prover and
+      no trusted snapshot. On the read side the witness re-derives that DID's confirmed head from
+      the on-chain log, fetches the document the directory serves, and compares the two to produce
+      a status. <code>plc.directory</code> stays canonical. DIDMARC is a read-side witness that
+      anyone turns on alone, with no coordination and no protocol change.</p>
   </section>
 
-  <section>
+  <section id="status">
     <h2>The graduated status</h2>
     <ul class="ladder">
-      <li class="ok"><b>confirmed</b> — head committed past the 72-hour recovery window;
+      <li class="ok"><b>confirmed</b>: head committed past the 72-hour recovery window, so it's
         immutable. The strongest assertion.</li>
-      <li class="warn"><b>tentative-consistent</b> — the on-chain view agrees with the directory,
-        but the head is still within the recovery window (or explained by clock skew).</li>
-      <li class="bad"><b>diverged</b> — the directory's served head <i>contradicts</i> the proven
+      <li class="warn"><b>tentative-consistent</b>: the on-chain view agrees with the directory,
+        but the head is still inside the recovery window, or the gap is small enough that clock
+        skew could explain it.</li>
+      <li class="bad"><b>diverged</b>: the directory's served head <i>contradicts</i> the proven
         head. This is the alarm that fires on <b>omission</b> and <b>erasure</b> above: warn,
         quarantine, or refuse to relay.</li>
-      <li class="muted"><b>absent</b> — DID not anchored; no opinion. DIDMARC has nothing to say
+      <li class="muted"><b>absent</b>: DID not anchored, so no opinion. DIDMARC has nothing to say
         about an identity nobody opted in.</li>
     </ul>
     <p style="margin-top:14px;color:var(--muted);font-size:14px"><b style="color:var(--fg)">Never a
       false <code>diverged</code>.</b> A directory that's merely running ahead, or a contradiction
-      that plain clock skew could explain, stays at <code>tentative-consistent</code> — not an
-      alarm. A false alarm gets the check switched off, so that restraint is exactly what makes
-      <code>diverged</code> mean something.</p>
-    <p style="margin-top:14px;color:var(--muted);font-size:14px">Adoption is a ramp: start by just
-      logging the status, then quarantine on <code>diverged</code>, then refuse to relay — each
+      that plain clock skew could explain, stays at <code>tentative-consistent</code> instead of
+      firing an alarm. A false alarm gets the check switched off, so that restraint is exactly what
+      makes <code>diverged</code> mean something.</p>
+    <p style="margin-top:14px;color:var(--muted);font-size:14px">Adoption is a ramp. Start by just
+      logging the status, then quarantine on <code>diverged</code>, then refuse to relay. Each
       resolver decides on its own, at its own pace.</p>
+  </section>
+
+  <section id="use">
+    <h2>Turn it on</h2>
+    <p>The witness is a small TypeScript library with no external dependencies. Hand it a DID, an
+      anchor reader, and a directory client, and it hands back a status your resolver acts on.</p>
+    <pre class="code"><code><span class="k">import</span> { check, AnchorReader, DirectoryClient } <span class="k">from</span> <span style="color:#a5d6a7">"@plc-anchor/witness"</span>;
+
+<span class="k">const</span> anchor = AnchorReader.http(process.env.STARKNET_RPC, CONTRACT_ADDR);
+<span class="k">const</span> { status, reason } = <span class="k">await</span> check(<span style="color:#a5d6a7">"did:plc:…"</span>, anchor, <span class="k">new</span> DirectoryClient());
+
+<span class="k">switch</span> (status) {
+  <span class="k">case</span> <span style="color:#a5d6a7">"confirmed"</span>:            <span class="c">// proven and immutable; trust the directory's answer</span>
+  <span class="k">case</span> <span style="color:#a5d6a7">"tentative-consistent"</span>: <span class="c">// agrees so far, nothing immutable yet; proceed</span>
+  <span class="k">case</span> <span style="color:#a5d6a7">"absent"</span>:               <span class="c">// not anchored; no opinion, resolve as usual</span>
+    <span class="k">break</span>;
+  <span class="k">case</span> <span style="color:#a5d6a7">"diverged"</span>:             <span class="c">// proven head contradicted; the alarm fired</span>
+    quarantine(reason);
+}</code></pre>
+    <p>Prefer the shell? The CLI exits <code>2</code> on <code>diverged</code> and <code>0</code>
+      otherwise, so it drops straight into a health check or a CI gate:</p>
+    <pre class="code"><code>STARKNET_RPC=https://your-node node cli.ts did:plc:… <span class="c"># [--contract 0x…] [--directory URL]</span></code></pre>
+    <p style="color:var(--muted);font-size:14px">The ladder is the DMARC ramp: log the status
+      first, then quarantine on <code>diverged</code>, then refuse to relay. Every step is a
+      decision one resolver makes alone.</p>
+  </section>
+
+  <section id="adversarial">
+    <h2>Adversarial deep-dive</h2>
+    <p>An alarm is only worth having if it fires on real attacks <i>and</i> stays silent on benign
+      disagreement. Both halves are pinned as real signed did:plc chains, run against the shipping
+      witness in the
+      <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md">adversarial
+      report</a>. Four worth walking through:</p>
+    <div class="deep">
+      <div class="dcard bad">
+        <h3><a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#4-equivocation--a-mirror-omits-a-confirmed-op">Equivocation</a><span class="verdict bad">diverged</span></h3>
+        <p>A mirror serves your history with one <i>confirmed</i> operation quietly omitted. The
+          witness re-derives the confirmed head from the on-chain log and finds it absent from what
+          the directory served. The lie is the operation left out, and the anchor is exactly the
+          second copy that catches it.</p>
+      </div>
+      <div class="dcard bad">
+        <h3><a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#5-vanishing-did--a-mirror-erases-an-anchored-identity">Vanishing DID</a><span class="verdict bad">diverged</span></h3>
+        <p>Erasure taken to the limit: the directory returns nothing at all for an anchored DID.
+          The anchor proves the identity exists and its head is confirmed, so an empty answer is a
+          contradiction rather than an absence. The alarm fires where a bare directory would just
+          shrug.</p>
+      </div>
+      <div class="dcard warn">
+        <h3><a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#6-window-edge-skew--a-contradiction-that-benign-skew-could-explain-the-0-wall">Window-edge skew</a><span class="verdict warn">tentative</span></h3>
+        <p>The restraint half. A head mismatch that ordinary clock skew near the 72-hour boundary
+          could explain stays <code>tentative-consistent</code>, never an alarm. This is the wall
+          that keeps <code>diverged</code> trustworthy, so no operator ever switches the check off
+          over a false positive.</p>
+      </div>
+      <div class="dcard warn">
+        <h3><a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#7-anchor-self-fault--a-corrupt-on-chain-log-yields-no-confirmed-head-never-an-alarm">Anchor self-fault</a><span class="verdict warn">tentative</span></h3>
+        <p>Even when the anchor's own on-chain log is corrupt and yields no confirmed head, the
+          witness degrades to <code>tentative-consistent</code>. A broken witness declines to
+          accuse an honest directory, which is the only safe direction for the failure to fall.</p>
+      </div>
+    </div>
+    <p style="color:var(--muted);font-size:14px">Write-side attacks fare no better. A forged
+      signature, a weaker-key recovery, and a late recovery can each be paid for and stored on
+      chain permissionlessly, yet the witness's read-side re-derivation drops every one, so a
+      forged operation never reaches a resolver. Walk scenarios
+      <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#9-forged-signature--an-unsigned-op-submitted-as-authentic">9</a>
+      through
+      <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#12-recovery-of-imported-history--a-rotated-out-key-exploits-the-import-time-clock-4a">12</a>
+      for the capture attempt that motivated the imported-history guard.</p>
   </section>
 
   <footer>
     <div class="wrap" style="padding:0">
-      DIDMARC is a witness, not a replacement for the directory · V1 verifies on public Starknet ·
+      DIDMARC is a witness, not a replacement for the directory. V1 verifies on public Starknet. ·
       <a href="https://plc.didmarc.dev">console</a> ·
       <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md">adversarial report</a> ·
       <a href="https://github.com/andyschwab/plc-anchor">source</a>
