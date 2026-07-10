@@ -1,10 +1,10 @@
 # @plc-anchor/witness — the read-side witness ("atproto identity DMARC")
 
-The V1 product (`REFERENCE.md` §1a Mode 1): given a `did:plc`, a resolver or PDS checks the
-directory's served document against the on-chain anchor and gets back a **graduated status**
-it enforces unilaterally — `confirmed` / `tentative-consistent` / `diverged` / `absent`. No
-network coordination, no protocol change; a single checker turns it on alone, the way an
-email receiver enables DMARC.
+The V1 product: given a `did:plc`, a resolver or PDS checks the directory's served document
+against the on-chain anchor and gets back a **graduated status** it enforces unilaterally —
+`confirmed` / `tentative-consistent` / `diverged` / `absent`. No network coordination, no
+protocol change; a single checker turns it on alone, the way an email receiver enables DMARC.
+(`REFERENCE.md` §1a, Mode 1.)
 
 > **Governing invariant — never a false `diverged`.** The anchor mitigates a *systemic*
 > risk (single-operator trust in `plc.directory`). A false `diverged` converts that into an
