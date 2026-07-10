@@ -10,8 +10,8 @@ against `@did-plc/lib` and the Cairo contract; the suite composes them into name
 ## Shape
 
 ```
-conformance/src/gen-adversarial-scenarios.mjs   # builds real chains + the anchor's Merkle
-                                                 # commitment + the mirror's served log
+conformance/src/gen-adversarial-scenarios.mjs   # builds real chains + the anchor's view
+                                                 # + the mirror's served log
                                                  #   → adversarial/scenarios.generated.json (committed)
 adversarial/
   mirror.ts        # MaliciousDirectory (in-process DirectorySource) + startMaliciousMirror
@@ -27,8 +27,8 @@ adversarial/
 report, and the live runner. Nothing is mocked but the transport — and even that is exercised for
 real in `mirror.test.ts` (the witness's own `DirectoryClient` fetches the malicious mirror over a
 loopback HTTP socket) and in `live.test.ts` (against Sepolia). The decision logic is the shipping
-`check()`, and the Merkle proofs in the fixture are verified by the witness's own `verifyProof`,
-so a wrong root/format fails here exactly as on a real resolver.
+`check()`, driven by the same anchor-head and directory inputs it sees on a real resolver, so a
+scenario passes or fails here exactly as it would in production.
 
 ## Commands
 
@@ -79,15 +79,16 @@ non-`diverged` status. That restraint is what makes the alarm worth acting on.
 | `anchor-self-fault` | `tentative-consistent` | the witness distrusts its own unproven head |
 | `coverage-gap` | `absent` | honest about scope (opt-in per DID) |
 
-**Write-side** (the contract / ingest gate is the defender — "permissionless ≠ unsafe"),
-ground-truthed against `@did-plc/lib` at generation time:
+**Write-side** ("permissionless ≠ unsafe" — verify-on-read means the contract stores whatever is
+paid for, and the witness's read-side re-derivation drops anything invalid), ground-truthed
+against `@did-plc/lib` at generation time:
 
 | id | reason | defender |
 |---|---|---|
-| `forged-signature` | `invalid-sig` | `plc_core::op_verify` / `sig_verify` |
-| `weaker-key-recovery` | `recovery-weaker-key` | `plc_core::recovery` |
-| `late-recovery` | `late-recovery` | `plc_core::recovery` |
-| `recovery-of-imported` | `recovery-of-imported` | `plc_core::state::apply_op` — the 4a fix: imported history is settled |
+| `forged-signature` | `invalid-sig` | witness re-derivation (`deriveLiveChain` → `opverify`/`crypto`) |
+| `weaker-key-recovery` | `recovery-weaker-key` | witness re-derivation (`deriveLiveChain`) |
+| `late-recovery` | `late-recovery` | witness re-derivation (`deriveLiveChain`) |
+| `recovery-of-imported` | `recovery-of-imported` | witness re-derivation (imported guard) — the 4a fix: imported history is settled |
 | `integrity-mismatch` | `cid-mismatch` | ingest integrity gate (off-chain) |
 
 ## Status

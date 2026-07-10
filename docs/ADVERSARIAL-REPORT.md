@@ -5,7 +5,7 @@
 DIDMARC ("atproto identity DMARC") gives every did:plc an independent, on-chain proof of its complete, current, non-equivocated history, exposed as a graduated status a resolver enforces **unilaterally**. This report puts that claim under adversarial pressure. Every scenario builds a **real signed did:plc chain** and runs a real defense:
 
 - **read-side** scenarios have a **malicious or faulty PLC mirror** serve a forged/lagging history; the defender is the shipping witness `check()`, run here against the real anchor commitment. Nothing is mocked but the transport — the decision logic is the code a resolver runs.
-- **write-side** scenarios are **malicious submissions to the permissionless endpoint**; the defender is the contract (`plc_core::verify` / `recovery`) or the off-chain ingest integrity gate. Each is ground-truthed against `@did-plc/lib` — the same oracle the contract is differential-green against.
+- **write-side** scenarios are **malicious submissions to the permissionless endpoint**; the defender is the witness's read-side re-derivation (verify-on-read: the contract stores the bytes, the witness drops any invalid op) or the off-chain ingest integrity gate. Each is ground-truthed against `@did-plc/lib` — the same oracle the witness re-derivation is differential-green against.
 
 The governing invariant (Phase 5 plan §0): **never a false `diverged`.** A false alarm makes an operator disable the check, removing the very protection it offers — so every ambiguous read-side edge resolves to a non-alarming status. The scenarios below show both halves: the alarm firing when it should, and — just as important — staying silent when the disagreement is benign.
 

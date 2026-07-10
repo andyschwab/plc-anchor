@@ -122,8 +122,9 @@ function renderMarkdown(rendered: Rendered[], fixture: Fixture): string {
   );
   lines.push(
     "- **write-side** scenarios are **malicious submissions to the permissionless endpoint**; the defender is " +
-      "the contract (`plc_core::verify` / `recovery`) or the off-chain ingest integrity gate. Each is " +
-      "ground-truthed against `@did-plc/lib` — the same oracle the contract is differential-green against.",
+      "the witness's read-side re-derivation (verify-on-read: the contract stores the bytes, the witness drops " +
+      "any invalid op) or the off-chain ingest integrity gate. Each is ground-truthed against `@did-plc/lib` — " +
+      "the same oracle the witness re-derivation is differential-green against.",
   );
   lines.push("");
   lines.push(
