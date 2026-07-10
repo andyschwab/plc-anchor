@@ -158,24 +158,22 @@
 
   <section id="threats">
     <h2>What a directory can do to you</h2>
-    <p>That gap isn't theoretical. Every operation can be perfectly signed and the directory can
-      still deceive you, because it alone decides <i>which</i> operations you see. None of the
-      attacks below needs a stolen key. All it takes is control of the directory a resolver
-      trusts:</p>
+    <p>Every operation can be perfectly signed and the directory can still deceive you, because
+      it alone decides <i>which</i> operations you see. None of these attacks needs a stolen key
+      — just control of the directory a resolver trusts:</p>
     <div class="threats">
       <div class="card">
         <h3>Omission: undo a fix</h3>
-        <p>Your account key is stolen, so you do the right thing and rotate it out with a new
-          signed operation. The directory serves your history with that one operation missing. To
-          the rest of the network the stolen key is still live, and the thief keeps signing as
-          you.</p>
+        <p>Your account key is stolen, and you rotate it out with a new signed operation. The
+          directory serves your history with that one operation missing. To the rest of the
+          network the stolen key is still live, and the thief keeps signing as you.</p>
         <p class="why"><b>The lie is the operation left out.</b></p>
       </div>
       <div class="card">
         <h3>Erasure: make someone vanish</h3>
-        <p>The directory simply returns nothing for a DID that plainly exists. Every app that looks
-          the person up sees no such identity. Handles dangle, posts won't resolve, and there's no
-          error to appeal.</p>
+        <p>The directory returns nothing for a DID that exists. Every app that looks the person
+          up sees no such identity. Handles dangle, posts won't resolve, and there's no error to
+          appeal.</p>
         <p class="why"><b>Absence carries no proof to check.</b></p>
       </div>
       <div class="card">
@@ -183,14 +181,14 @@
         <p>Show the victim their real history, while showing one targeted service a forked version
           that points their account at a server the attacker runs. Neither side ever sees the
           other's copy.</p>
-        <p class="why"><b>No one viewer holds both halves.</b></p>
+        <p class="why"><b>No single viewer holds both halves.</b></p>
       </div>
     </div>
     <p style="margin-top:14px;color:var(--muted);font-size:14px">Each of these is a real,
       ground-truthed scenario in the
       <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md">adversarial
-      report</a>. DIDMARC is the layer that catches them: independent, on-chain proof of the whole,
-      current history, so a resolver can tell when the directory's answer doesn't add up.</p>
+      report</a>. DIDMARC catches them with an independent, on-chain copy of the whole, current
+      history: a resolver can tell when the directory's answer doesn't match it.</p>
   </section>
 
   <section id="how">
@@ -199,15 +197,15 @@
       The network proves the record and settles it to Ethereum, so there is no bespoke prover and
       no trusted snapshot. On the read side the witness re-derives that DID's confirmed head from
       the on-chain log, fetches the document the directory serves, and compares the two to produce
-      a status. <code>plc.directory</code> stays canonical. DIDMARC is a read-side witness that
-      anyone turns on alone, with no coordination and no protocol change.</p>
+      a status. <code>plc.directory</code> stays canonical. DIDMARC is a read-side witness any
+      resolver turns on by itself, with no coordination and no protocol change.</p>
   </section>
 
   <section id="status">
     <h2>The graduated status</h2>
     <ul class="ladder">
       <li class="ok"><b>confirmed</b>: head committed past the 72-hour recovery window, so it's
-        immutable. The strongest assertion.</li>
+        immutable. The strongest answer.</li>
       <li class="warn"><b>tentative-consistent</b>: the on-chain view agrees with the directory,
         but the head is still inside the recovery window, or the gap is small enough that clock
         skew could explain it.</li>
@@ -219,12 +217,9 @@
     </ul>
     <p style="margin-top:14px;color:var(--muted);font-size:14px"><b style="color:var(--fg)">Never a
       false <code>diverged</code>.</b> A directory that's merely running ahead, or a contradiction
-      that plain clock skew could explain, stays at <code>tentative-consistent</code> instead of
-      firing an alarm. A false alarm gets the check switched off, so that restraint is exactly what
-      makes <code>diverged</code> mean something.</p>
-    <p style="margin-top:14px;color:var(--muted);font-size:14px">Adoption is a ramp. Start by just
-      logging the status, then quarantine on <code>diverged</code>, then refuse to relay. Each
-      resolver decides on its own, at its own pace.</p>
+      that plain clock skew could explain, stays at <code>tentative-consistent</code>. One false
+      alarm and operators switch the check off, so <code>diverged</code> is reserved for real
+      contradictions.</p>
   </section>
 
   <section id="use">
@@ -247,55 +242,51 @@
     <p>Prefer the shell? The CLI exits <code>2</code> on <code>diverged</code> and <code>0</code>
       otherwise, so it drops straight into a health check or a CI gate:</p>
     <pre class="code"><code>STARKNET_RPC=https://your-node node cli.ts did:plc:… <span class="c"># [--contract 0x…] [--directory URL]</span></code></pre>
-    <p style="color:var(--muted);font-size:14px">The ladder is the DMARC ramp: log the status
-      first, then quarantine on <code>diverged</code>, then refuse to relay. Every step is a
-      decision one resolver makes alone.</p>
+    <p style="color:var(--muted);font-size:14px">Adopt it like DMARC: log the status first, then
+      quarantine on <code>diverged</code>, then refuse to relay. Each step is one resolver's own
+      decision, at its own pace.</p>
   </section>
 
   <section id="adversarial">
     <h2>Adversarial deep-dive</h2>
-    <p>An alarm is only worth having if it fires on real attacks <i>and</i> stays silent on benign
-      disagreement. Both halves are pinned as real signed did:plc chains, run against the shipping
-      witness in the
+    <p>The alarm has to fire on real attacks <i>and</i> stay silent on benign disagreement. The
       <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md">adversarial
-      report</a>. Four worth walking through:</p>
+      report</a> tests both, as real signed did:plc chains run against the shipping witness. Four
+      of its scenarios:</p>
     <div class="deep">
       <div class="dcard bad">
         <h3><a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#4-equivocation--a-mirror-omits-a-confirmed-op">Equivocation</a><span class="verdict bad">diverged</span></h3>
         <p>A mirror serves your history with one <i>confirmed</i> operation quietly omitted. The
-          witness re-derives the confirmed head from the on-chain log and finds it absent from what
-          the directory served. The lie is the operation left out, and the anchor is exactly the
-          second copy that catches it.</p>
+          witness re-derives the confirmed head from the on-chain log, finds it missing from the
+          directory's answer, and flags the mismatch.</p>
       </div>
       <div class="dcard bad">
         <h3><a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#5-vanishing-did--a-mirror-erases-an-anchored-identity">Vanishing DID</a><span class="verdict bad">diverged</span></h3>
-        <p>Erasure taken to the limit: the directory returns nothing at all for an anchored DID.
-          The anchor proves the identity exists and its head is confirmed, so an empty answer is a
-          contradiction rather than an absence. The alarm fires where a bare directory would just
-          shrug.</p>
+        <p>The directory returns nothing at all for an anchored DID. The anchor proves the
+          identity exists with a confirmed head, so the empty answer is a contradiction, not an
+          absence, and the alarm fires.</p>
       </div>
       <div class="dcard warn">
         <h3><a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#6-window-edge-skew--a-contradiction-that-benign-skew-could-explain-the-0-wall">Window-edge skew</a><span class="verdict warn">tentative</span></h3>
-        <p>The restraint half. A head mismatch that ordinary clock skew near the 72-hour boundary
-          could explain stays <code>tentative-consistent</code>, never an alarm. This is the wall
-          that keeps <code>diverged</code> trustworthy, so no operator ever switches the check off
-          over a false positive.</p>
+        <p>A head mismatch that ordinary clock skew near the 72-hour boundary could explain stays
+          <code>tentative-consistent</code>, never an alarm. This rule is what keeps
+          <code>diverged</code> free of false positives.</p>
       </div>
       <div class="dcard warn">
         <h3><a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#7-anchor-self-fault--a-corrupt-on-chain-log-yields-no-confirmed-head-never-an-alarm">Anchor self-fault</a><span class="verdict warn">tentative</span></h3>
         <p>Even when the anchor's own on-chain log is corrupt and yields no confirmed head, the
-          witness degrades to <code>tentative-consistent</code>. A broken witness declines to
-          accuse an honest directory, which is the only safe direction for the failure to fall.</p>
+          witness degrades to <code>tentative-consistent</code>. A broken witness never accuses an
+          honest directory.</p>
       </div>
     </div>
-    <p style="color:var(--muted);font-size:14px">Write-side attacks fare no better. A forged
+    <p style="color:var(--muted);font-size:14px">Write-side attacks fail the same way. A forged
       signature, a weaker-key recovery, and a late recovery can each be paid for and stored on
-      chain permissionlessly, yet the witness's read-side re-derivation drops every one, so a
-      forged operation never reaches a resolver. Walk scenarios
+      chain permissionlessly, but the witness's read-side re-derivation drops every one, so a
+      forged operation never reaches a resolver. Scenarios
       <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#9-forged-signature--an-unsigned-op-submitted-as-authentic">9</a>
       through
       <a href="https://github.com/andyschwab/plc-anchor/blob/main/docs/ADVERSARIAL-REPORT.md#12-recovery-of-imported-history--a-rotated-out-key-exploits-the-import-time-clock-4a">12</a>
-      for the capture attempt that motivated the imported-history guard.</p>
+      cover these, including the capture attempt that motivated the imported-history guard.</p>
   </section>
 
   <footer>
